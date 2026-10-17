@@ -25,8 +25,8 @@ fn noise(p:vec2f)->f32 {
 fn warm(x:f32)->f32 {return smoothstep(-.55,1.1,x);}
 fn heat(x:f32)->vec3f {return mix(vec3f(.12,.52,1.0),vec3f(1.0,.27,.055),warm(x));}
 fn musical()->f32 {return mix(.28,u.scroll_light.x,u.scroll_light.y);}
-fn bass()->f32 {return u.scroll_light.z*u.scroll_light.y;}
-fn attack()->f32 {return u.scroll_light.w*u.scroll_light.y;}
+fn bass()->f32 {return u.scroll_light.z*u.scroll_light.z*u.scroll_light.y;}
+fn attack()->f32 {return pow(u.scroll_light.w,1.5)*u.scroll_light.y;}
 fn lighting(studio:f32,reactive:f32)->f32 {return mix(studio,reactive,u.scroll_light.y);}
 fn clock()->f32 {return max(u.scroller.y,0.0);}
 fn aspect()->f32 {return u.screen.x/u.screen.y;}
@@ -37,6 +37,12 @@ fn field(uv:vec2f)->vec2f {
     return mix(a,b,u.state.w);
 }
 fn uv_at(p:vec2f)->vec2f {return p/vec2f(2.0*aspect(),-1.72)+.5;}
+fn field_coverage(uv:vec2f)->f32 {
+    // Projected light/shadow must fade before the source raster ends. Otherwise
+    // field()'s outside value cuts a moving reflection into a horizontal bar.
+    let edge=min(uv,1.0-uv);
+    return smoothstep(0.0,.045,edge.x)*smoothstep(0.0,.06,edge.y);
+}
 fn ribbon_z(x:f32)->f32 {
     if u.scroller.z>.5 && u.scroller.z<1.5 {return 0.0;}
     // A legible central track, with the ends turning into the chamber.
@@ -97,14 +103,16 @@ fn chamber(ray:vec3f)->vec3f {
     let strip=exp(-pow((refl.x+.62)*13.0,2.0))*.11+exp(-pow((refl.x-.65)*16.0,2.0))*.15;
     color+=heat(p.x)*strip*lighting(.88,.30+musical()*.5+bass()*1.4)*entrance;
     if u.state.x>=8.0 {
-        let f=field(uv_at(p.xy+vec2f(.045,-.065)));
+        let shadow_uv=uv_at(p.xy+vec2f(.045,-.065));
+        let f=field(shadow_uv);
         // Soft projected contact shadows and rough reflected silhouettes.
         // These are analytic approximations, not traced indirect lighting.
-        let shadow=smoothstep(-9.0,4.0,f.x);
+        let shadow=smoothstep(-9.0,4.0,f.x)*field_coverage(shadow_uv);
         color*=1.0-shadow*.65;
-        let reflected=exp(-abs(field(uv_at(p.xy+vec2f(-.035,.12))).x)*.20);
+        let reflection_uv=uv_at(p.xy+vec2f(-.035,.12));
+        let reflected=exp(-abs(field(reflection_uv).x)*.20)*field_coverage(reflection_uv);
         color+=heat(p.x)*reflected*.022;
-        color+=heat(p.x)*exp(-abs(f.y)*.23)*lighting(.0376,.012+musical()*.025+bass()*.14);
+        color+=heat(p.x)*exp(-abs(f.y)*.23)*field_coverage(shadow_uv)*lighting(.0376,.012+musical()*.025+bass()*.14);
     }
     let haze=noise(p.xy*2.5+vec2f(clock()*.055,-clock()*.035));
     color+=heat(p.x)*pow(haze,3.0)*.022*entrance;
@@ -135,7 +143,7 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
     if material>.5 {
         let rim=pow(1.0-max(dot(n0,eye),0.0),2.0);
         let body=.55+.45*max(dot(n0,normalize(vec3f(-.4,.7,1))),0.0);
-        return heat(p.x)*lighting(1.136,.28+energy*.65+bass()*2.0+attack()*.6)*body
+        return heat(p.x)*lighting(1.136,.10+energy*.25+bass()*4.0+attack()*.4)*body
             +vec3f(.10,.12,.14)*(1.0-rim);
     }
     let face=abs(n0.z);
@@ -144,22 +152,23 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
     let rough=mix(.15,.30,smoothstep(.6,.98,face));
     let f0=mix(vec3f(.61,.70,.78),vec3f(.75,.62,.49),warm(p.x)*.3);
     let sweep=clock()*.23*u.scroll_light.y;
-    var color=f0*.07;
-    color+=lamp(p,n,eye,vec3f(-2.5,2.1,3.8),vec3f(.8,1.3,2.2)*lighting(1.098,.35+energy*.50+bass()*1.90),f0,rough);
-    color+=lamp(p,n,eye,vec3f(2.5,-1.3,3.2),vec3f(2.4,.9,.30)*lighting(1.168,.30+energy*.55+bass()*2.6),f0,rough);
-    color+=lamp(p,n,eye,vec3f(sin(sweep)*2.0,1.4,3.0),vec3f(1.0,1.1,1.2)*lighting(1.0,.22+attack()*2.8),f0,.36);
+    var color=f0*lighting(.07,.025);
+    color+=lamp(p,n,eye,vec3f(-2.5,2.1,3.8),vec3f(.8,1.3,2.2)*lighting(1.098,.08+energy*.12+bass()*4.0),f0,rough);
+    color+=lamp(p,n,eye,vec3f(2.5,-1.3,3.2),vec3f(2.4,.9,.30)*lighting(1.168,.08+energy*.15+bass()*4.8),f0,rough);
+    color+=lamp(p,n,eye,vec3f(sin(sweep)*2.0,1.4,3.0),vec3f(1.0,1.1,1.2)*lighting(1.0,.08+attack()*1.8),f0,.36);
     let r=reflect(ray,n);
     let softbox=exp(-pow((r.y-.32)*4.8,2.0));
     let edgebox=exp(-pow((r.x+.6)*11.0,2.0));
     // Reflected sources must react too: a steady softbox previously dominated
     // the metal while the small direct-light changes disappeared in tonemapping.
-    color+=f0*(softbox*.65+edgebox*.35)*lighting(1.0,.30+energy*.35+bass()*.90+attack()*.45);
+    let reflected_light=mix(vec3f(1),heat(p.x)*1.7,u.scroll_light.y*.80);
+    color+=f0*reflected_light*(softbox*.65+edgebox*.35)*lighting(1.0,.08+energy*.12+bass()*.80+attack()*.12);
     let fresnel=pow(1.0-max(dot(n,eye),0.0),4.0);
     let coating=mix(vec3f(.30,.55,.80),vec3f(.75,.40,.18),.5+.5*sin(dot(n,eye)*13.0+p.x));
     color+=coating*fresnel*.24;
     // A travelling filament lights the metal as it passes through its depth.
     let small=field(uv_at(p.xy)).y;
-    color+=heat(p.x)*exp(-abs(small)*.16)*lighting(.234,.08+energy*.15+bass()*.60);
+    color+=heat(p.x)*exp(-abs(small)*.16)*lighting(.234,.025+energy*.08+bass()*.65);
     if u.scroller.z>1.5 {
         // Experimental tinted solid glass: refracted chamber plus absorption,
         // a reflective coating and lit cut edges. Not a full multi-bounce trace.

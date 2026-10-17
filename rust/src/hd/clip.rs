@@ -201,6 +201,9 @@ pub struct ScrollerPreview {
     /// Authored lighting controls from PCM: relative level, bass and treble onsets.
     /// Precomputed on the audio timeline so seeking and exports agree.
     pub audio: Vec<[f32; 3]>,
+    /// Modern ambient palette with the rapid original cycling filtered out.
+    /// Reference frames retain the original palette, including its alternating phase.
+    pub backdrop: Vec<[[f32; 4]; 64]>,
 }
 
 /// Schedule and destination colours read from the local Rust reconstruction.
@@ -371,6 +374,7 @@ impl Clip {
                     style: ScrollerStyle::Ribbons,
                     lighting: ScrollerLighting::Musical,
                     audio: audio_lighting(&pcm, frames.len()),
+                    backdrop: backdrop_palettes(&frames, scroll_start, transition.palette),
                 });
             }
             Some(transition)
@@ -409,6 +413,42 @@ impl Clip {
             _ => "Panic logo",
         }
     }
+}
+
+fn backdrop_palettes(
+    frames: &[Frame],
+    start: usize,
+    initial: [[f32; 4]; 64],
+) -> Vec<[[f32; 4]; 64]> {
+    // The reconstructed palette changes phase on alternating ticks. Feeding
+    // those values straight to an HD backdrop aliases against the display rate.
+    // Two 120 ms low-pass stages retain its slow colour drift without shimmer.
+    // Filtering is on the source timeline, never on wall time or GPU history.
+    let alpha = 1.0 - (-1.0 / (FRAME_RATE as f32 * 0.12)).exp();
+    let mut first = initial;
+    let mut second = initial;
+    frames
+        .iter()
+        .enumerate()
+        .map(|(n, frame)| {
+            if n >= start {
+                for i in 0..64 {
+                    for channel in 0..3 {
+                        let v = frame.palette[(64 + i) * 3 + channel] & 63;
+                        let srgb = ((v << 2) | (v >> 4)) as f32 / 255.0;
+                        let linear = if srgb <= 0.04045 {
+                            srgb / 12.92
+                        } else {
+                            ((srgb + 0.055) / 1.055).powf(2.4)
+                        };
+                        first[i][channel] += (linear - first[i][channel]) * alpha;
+                        second[i][channel] += (first[i][channel] - second[i][channel]) * alpha;
+                    }
+                }
+            }
+            second
+        })
+        .collect()
 }
 
 fn audio_lighting(pcm: &[i16], frames: usize) -> Vec<[f32; 3]> {
@@ -656,6 +696,34 @@ pub fn signed_distance(mask: &[bool], w: usize, h: usize) -> Vec<f32> {
 mod tests {
     use super::*;
     #[test]
+    fn backdrop_filters_alternating_palette_but_tracks_a_sustained_change() {
+        let frames: Vec<_> = (0..210)
+            .map(|n| Frame {
+                state: Presentation {
+                    phase: 8,
+                    frame: n,
+                    tick: 0,
+                    door: 76,
+                },
+                indices: vec![],
+                palette: vec![if n < 140 && n % 2 == 0 { 0 } else { 63 }; 768],
+            })
+            .collect();
+        let filtered = backdrop_palettes(&frames, 0, [[0.0, 0.0, 0.0, 1.0]; 64]);
+        assert!((filtered[138][0][0] - filtered[139][0][0]).abs() < 0.005);
+        assert!((filtered[139][0][0] - 0.5).abs() < 0.01);
+        assert!(
+            filtered[209][0][0] > 0.995,
+            "Sustained colours must come through"
+        );
+        assert_eq!(
+            frames[138].palette[192], 0,
+            "Reference palette remains unfiltered"
+        );
+        assert_eq!(filtered[209][0][3], 1.0);
+    }
+
+    #[test]
     fn audio_lighting_keeps_accents_in_a_loud_mix_and_releases_to_silence() {
         let pcm: Vec<i16> = (0..SAMPLE_RATE * 4)
             .flat_map(|i| {
@@ -755,6 +823,7 @@ mod tests {
         assert_eq!(engine.part(), 6, "Stop exactly at the next scene boundary");
         let scroll = clip.scroller.as_ref().unwrap();
         assert_eq!(scroll.audio.len(), clip.frames.len());
+        assert_eq!(scroll.backdrop.len(), clip.frames.len());
         assert!(
             scroll
                 .audio

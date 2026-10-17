@@ -363,13 +363,8 @@ impl Renderer {
             if frame.state.phase >= 8 {
                 for (i, color) in next_palette.iter_mut().enumerate() {
                     for (channel, c) in color[..3].iter_mut().enumerate() {
-                        let v = frame.palette[(64 + i) * 3 + channel] & 63;
-                        let srgb = ((v << 2) | (v >> 4)) as f32 / 255.0;
-                        *c = if srgb <= 0.04045 {
-                            srgb / 12.92
-                        } else {
-                            ((srgb + 0.055) / 1.055).powf(2.4)
-                        };
+                        *c = scroll.backdrop[index][i][channel] * (1.0 - mix)
+                            + scroll.backdrop[next][i][channel] * mix;
                     }
                     color[3] = 1.0;
                 }

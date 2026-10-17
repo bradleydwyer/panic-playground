@@ -168,7 +168,10 @@ frames: low seven bits distinguish the large font from the background; bit 7
 contains the sine overlay. Its sparse VGA samples are joined into strokes.
 Contour smoothing deliberately rounds raster steps for the authored bevels;
 it does not recover vector artwork. Adjacent fields are interpolated at display
-time. The background colours follow the reconstruction's palette oscillator.
+time. The modern background filters the reconstruction's rapid palette cycling
+into a slow colour drift, then interpolates at display time. The original view
+keeps the unfiltered palette. This ambient filtering is independent of the
+musical accents and is precomputed so seeking and exports remain deterministic.
 Materials, ribbon bending, depth and light placement are authored. Contact
 shadows and reflections are approximations; glass is not a full multi-bounce
 optical simulation. All fields are generated locally in memory.
