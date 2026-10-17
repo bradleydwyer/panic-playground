@@ -6,14 +6,16 @@ Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
 [▶ Watch the intro on YouTube](https://youtu.be/kydoV3qX6J4)
 
-So far this covers the opening through the PANIC logo: the FUTURE CREW letters
-flying past, the tumbling block and the logo reveal. The idea is to keep the
-sequence and music, and experiment with the rendering. There are chunky 3D
-letters, metal reflections, a starfield that ramps into warp, and a heated
-metal logo with slowly moving surface reflections.
+So far this covers the opening through the PANIC logo, the square transition,
+and experiments with the following double scroller. The idea is to keep the
+sequence and music, and experiment with the rendering. There are chunky glass
+letters that refract the stars behind them, a mirrored plate that reflects the
+warp, motion blur, a starfield that ramps into warp, a heated metal logo with
+slowly moving surface reflections, and lighting that pulses and breathes with
+the music.
 
 This builds on the [Rust port of Panic](https://github.com/bradleydwyer/panic).
-It's a work in progress, and only the intro has the new rendering. The original
+It's a work in progress, with modern treatments for the intro and scroller. The original
 player is included as a reference. The new letterforms and block motion are
 authored approximations, not recovered original 3D models.
 
@@ -47,37 +49,53 @@ For a split comparison, with the original on the left:
 cargo run --release --locked --features hires --bin panic-hd -- --modern --split
 ```
 
-To try the next transition, where squares eat away the logo screen:
+To continue through the next transition, where the logo screen is cut away
+in squares:
 
 ```sh
-cargo run --release --locked --features hires --bin panic-hd -- --modern --transition
+cargo run --release --locked --features hires --bin panic-hd -- --transition --seek 17.8
 ```
 
-The squares curl as their edges burn inward, with moving reflections, embers
-and wisps of smoke. They use the original activation order and wipe timing.
-
-To try the falling version:
-
-```sh
-cargo run --release --locked --features hires --bin panic-hd -- --tear
-```
-
-Here the squares peel loose like thin sheets, fall under gravity and rapidly
-burn towards their centres. Each piece lasts about half a second, with the
-original activation sequence and uninterrupted music. Both versions stop on
-the next backdrop; the following scroller hasn't had the modern treatment yet.
-
-There's also a laser-cut trial. Bright cutting points trace each square, leave
-a small attachment at the top, then sever it. The intact pieces drop directly
-away from the camera, as though we're looking down through a floor. Smoke,
-sparks and glowing cuts shift from cool blue on the left to orange on the right:
-
-```sh
-cargo run --release --locked --features hires --bin panic-hd -- --laser --seek 17.8
-```
+Bright cutting points trace each square, leave a small attachment at the top,
+then sever it. The intact pieces drop directly away from the camera, as though
+we're looking down through a floor. Smoke, sparks and glowing cuts shift from
+cool blue on the left to orange on the right. The squares follow the original
+activation order and wipe timing, with uninterrupted music. `--transition`
+stops on the next backdrop; the scroller experiments below continue from it.
 
 Omit `--seek 17.8` to watch the whole intro. Add `--split` to compare with the
-original. `--laser` and `--tear` both select modern mode automatically.
+original. `--transition` selects modern mode automatically; `--laser` still
+works as an alias. Earlier trials of a curling burn and of falling, burning
+sheets were removed, but remain in the Git history (commits `4c43ab2`,
+`00a63d5` and `0fe8b55`).
+
+To continue into the selected glass scroller with studio lighting:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --scroller --seek 27
+```
+
+| Flag | Experiment |
+| --- | --- |
+| `--scroller ribbons` | Coated titanium lettering with ends curving into depth |
+| `--scroller sculpted` | Straight extruded lettering for comparison |
+| `--scroller` or `--scroller glass` | Selected curved glass treatment with reflective edges |
+| `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights |
+| `--scroller-lighting studio` | Steady lighting, selected by default |
+
+The scroller modes include the laser transition and continue to the end of
+part 2, around 42 seconds. Omit `--seek` for the complete intro; use `--seek 18`
+to watch the tiles reveal the new scene. Add `--split` for the original on the
+left. In the app, **1 / 2 / 3** switch presets and **L** switches lighting without
+restarting the music.
+
+The vertical sine scroller passes in front of the lower horizontal row and
+behind the upper row, where it remains visible through the glass.
+
+The large lettering and sine overlay use smoothed contours from locally
+rendered reference frames. Depth, ribbon bending, materials and lighting are
+authored experiments. Glass transmission, reflections, haze and contact shadows
+are analytic approximations, not a full optical simulation.
 
 | Key | Action |
 | --- | --- |
@@ -90,7 +108,12 @@ original. `--laser` and `--tear` both select modern mode automatically.
 | C | Toggle the split comparison |
 | F | Toggle fullscreen |
 | S | Save a PNG under `artifacts/` |
+| P | Show or hide the frame-rate counter |
+| V | Toggle vsync |
 | Escape | Quit |
+
+Add `--fps` to show a frame-rate counter, and `--no-vsync` to see the uncapped
+rate.
 
 The logo appears around 14.57 seconds. The preview's audio ends around 19.49
 seconds, while the logo keeps animating. End, then Space, jumps straight to it.

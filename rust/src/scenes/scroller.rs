@@ -41,6 +41,22 @@ impl Scroller {
         (self.phase, self.tick)
     }
 
+    /// Optional HD-only sampling of the sine row that straddles the raster split.
+    /// The original scanout remains unchanged for the faithful comparison.
+    #[cfg(feature = "hires")]
+    pub fn hd_overlay_seam(&self, vga: &Vga) -> Option<[bool; 320]> {
+        // The displayed overlay is two y steps behind the writer. At phase 0,
+        // overlay() places sample 24 on line 100 using the upper-half address;
+        // scanout() already uses the lower-half offset there. Sample that one
+        // row before the offset for HD contours, retaining actual glyph gaps.
+        if self.phase < 4 || self.y.wrapping_sub(2) & 3 != 0 {
+            return None;
+        }
+        Some(std::array::from_fn(|x| {
+            vga.planes[x & 3][(self.display + 100 * 160 + (x >> 2)) & 65535] & 128 != 0
+        }))
+    }
+
     #[cfg(feature = "hires")]
     pub fn transition_order(&self) -> [u16; 160] {
         let mut order = [0; 160];

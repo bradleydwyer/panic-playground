@@ -1,4 +1,4 @@
-use super::clip::{Clip, HEIGHT, WIDTH, plate_transform};
+use super::clip::{Clip, HEIGHT, ScrollerLighting, WIDTH, plate_transform};
 use super::modern::Modern;
 use bytemuck::{Pod, Zeroable};
 use std::{fs::File, io::BufWriter, path::Path};
@@ -16,7 +16,23 @@ struct Uniforms {
     transition: [f32; 4],
     tile_order: [[f32; 4]; 40],
     next_palette: [[f32; 4]; 64],
+    scroller: [f32; 4],
+    scroll_light: [f32; 4],
+    /// Authored music-reactive lighting, measured from the clip's PCM (see
+    /// `clip::audio_features`): energy, onset, low band, accent, each 0..=1.
+    audio: [f32; 4],
+    /// Plate pose when the modern renderer's virtual shutter opened; w of the
+    /// centre carries the exposure length in sequence frames.
+    plate_open_center: [f32; 4],
+    plate_open_rotation: [f32; 4],
+    /// On-screen counter: shown, frames per second, milliseconds per frame.
+    hud: [f32; 4],
 }
+
+/// Authored exposure for the modern renderer's motion blur, in sequence
+/// frames (35 per second): about 1/100 s, a little under a 180° shutter at
+/// 60 Hz. The original has no motion blur; this only smooths the new 3D motion.
+const SHUTTER_FRAMES: f32 = 0.35;
 
 #[derive(Clone, Copy)]
 pub struct View {
@@ -24,6 +40,9 @@ pub struct View {
     pub size: (u32, u32),
     pub comparison: u32,
     pub modern: bool,
+    /// Frames per second and milliseconds per frame for the on-screen
+    /// counter, or `None` to hide it (captures never show it).
+    pub hud: Option<[f32; 2]>,
 }
 
 pub struct Renderer {
@@ -39,10 +58,13 @@ pub struct Renderer {
     background: wgpu::RenderPipeline,
     stars: wgpu::RenderPipeline,
     foreground: wgpu::RenderPipeline,
+    hud: wgpu::RenderPipeline,
+    hud_visible: bool,
     srgb: bool,
     modern_renderer: Modern,
     modern_view: bool,
     tile_transition: bool,
+    scroller: bool,
 }
 
 impl Renderer {
@@ -210,6 +232,7 @@ impl Renderer {
             "foreground",
             Some(wgpu::BlendState::ALPHA_BLENDING),
         );
+        let hud = pipeline("fullscreen", "hud", Some(wgpu::BlendState::ALPHA_BLENDING));
         let modern_renderer = Modern::new(&device, &layout, &uniform, &reference, format);
         Ok((
             Self {
@@ -225,10 +248,13 @@ impl Renderer {
                 background,
                 stars,
                 foreground,
+                hud,
+                hud_visible: false,
                 srgb: format.is_srgb(),
                 modern_renderer,
                 modern_view: false,
                 tile_transition: false,
+                scroller: false,
             },
             format,
         ))
@@ -240,12 +266,14 @@ impl Renderer {
             size,
             comparison,
             modern,
+            hud,
         } = view;
+        self.hud_visible = hud.is_some();
         self.modern_view = modern;
-        self.tile_transition = clip
-            .transition
-            .as_ref()
-            .is_some_and(|cut| time * 70.0 >= cut.start_tick as f64);
+        self.scroller = clip.scroller.is_some();
+        self.tile_transition = clip.transition.as_ref().is_some_and(|cut| {
+            time * 70.0 >= cut.start_tick as f64 && time * 70.0 < cut.end_tick as f64 + 78.0
+        });
         if modern {
             self.modern_renderer
                 .resize(&self.device, &self.uniform, &self.reference, size);
@@ -253,6 +281,9 @@ impl Renderer {
         let index = clip.frame_index(time);
         let frame = &clip.frames[index];
         let mut next = index;
+        if frame.state.phase >= 8 {
+            next = (index + 1).min(clip.frames.len() - 1);
+        }
         if frame.state.phase == 1 || frame.state.phase == 3 {
             for i in index + 1..(index + 3).min(clip.frames.len()) {
                 if clip.frames[i].state.phase != frame.state.phase {
@@ -266,7 +297,9 @@ impl Renderer {
         }
         for (slot, i) in [index, next].into_iter().enumerate() {
             let source = &clip.frames[i];
-            if source.state.phase < 6 && self.field_keys[slot] != Some(source.shape_key()) {
+            if (source.state.phase < 6 || source.state.phase >= 8)
+                && self.field_keys[slot] != Some(source.shape_key())
+            {
                 let field = source.field();
                 self.queue.write_texture(
                     self.fields[slot].as_image_copy(),
@@ -302,7 +335,9 @@ impl Renderer {
             );
             self.reference_index = Some(index);
         }
-        let mix = if next == index {
+        let mix = if frame.state.phase >= 8 {
+            (time * 70.0).fract() as f32
+        } else if next == index {
             0.0
         } else {
             ((frame.state.tick as f64 + (time * 70.0).fract()) / 2.0).clamp(0.0, 1.0) as f32
@@ -311,6 +346,9 @@ impl Renderer {
             + frame.state.tick as f32 * 0.5
             + (time * 70.0).fract() as f32 * 0.5;
         let (plate_center, plate_rotation) = plate_transform(sequence_frame);
+        let (mut plate_open_center, plate_open_rotation) =
+            plate_transform(sequence_frame - SHUTTER_FRAMES);
+        plate_open_center[3] = SHUTTER_FRAMES;
         let mut transition = [0.0; 4];
         let mut tile_order = [[0.0; 4]; 40];
         let mut next_palette = [[0.0; 4]; 64];
@@ -319,12 +357,46 @@ impl Renderer {
                 (time * 70.0 - cut.start_tick as f64) as f32,
                 1.0,
                 (cut.end_tick - cut.start_tick) as f32,
-                cut.style as u32 as f32,
+                // Formerly the trial style; only the laser cut remains.
+                0.0,
             ];
             for (i, &rank) in cut.order.iter().enumerate() {
                 tile_order[i / 4][i % 4] = rank as f32;
             }
             next_palette = cut.palette;
+        }
+        let mut scroller = [0.0; 4];
+        let mut scroll_light = [0.0; 4];
+        if let Some(scroll) = &clip.scroller {
+            scroller = [
+                1.0,
+                (time - scroll.start_tick as f64 / 70.0) as f32,
+                scroll.style as u32 as f32,
+                (1.0 - ((time * 70.0 - scroll.end_tick as f64) / 12.0).max(0.0)).clamp(0.0, 1.0)
+                    as f32,
+            ];
+            let audio: [f32; 3] = std::array::from_fn(|band| {
+                scroll.audio[index][band] * (1.0 - mix) + scroll.audio[next][band] * mix
+            });
+            scroll_light = [
+                audio[0],
+                if scroll.lighting == ScrollerLighting::Musical {
+                    1.0
+                } else {
+                    0.0
+                },
+                audio[1],
+                audio[2],
+            ];
+            if frame.state.phase >= 8 {
+                for (i, color) in next_palette.iter_mut().enumerate() {
+                    for (channel, c) in color[..3].iter_mut().enumerate() {
+                        *c = scroll.backdrop[index][i][channel] * (1.0 - mix)
+                            + scroll.backdrop[next][i][channel] * mix;
+                    }
+                    color[3] = 1.0;
+                }
+            }
         }
         let u = Uniforms {
             screen: [size.0 as f32, size.1 as f32, time as f32, comparison as f32],
@@ -346,6 +418,12 @@ impl Renderer {
             transition,
             tile_order,
             next_palette,
+            scroller,
+            scroll_light,
+            audio: clip.audio_at(time),
+            plate_open_center,
+            plate_open_rotation,
+            hud: hud.map_or([0.0; 4], |[fps, ms]| [1.0, fps, ms, 0.0]),
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
@@ -353,10 +431,37 @@ impl Renderer {
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         if self.modern_view {
-            self.modern_renderer
-                .draw(encoder, view, &self.bind_group, self.tile_transition);
-            return;
+            self.modern_renderer.draw(
+                encoder,
+                view,
+                &self.bind_group,
+                self.tile_transition,
+                self.scroller,
+            );
+        } else {
+            self.draw_faithful(encoder, view);
         }
+        if self.hud_visible {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Frame-rate counter"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_pipeline(&self.hud);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    fn draw_faithful(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("HD intro"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

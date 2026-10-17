@@ -26,6 +26,7 @@ RESEARCH_FILES = {
     'rust/src/hd/clip.rs', 'rust/src/hd/renderer.rs', 'rust/src/hd/modern.rs',
     'rust/src/hd/intro.wgsl', 'rust/src/hd/modern.wgsl', 'rust/src/hd/post.wgsl',
     'rust/src/hd/transition.wgsl',
+    'rust/src/hd/scroller.wgsl',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
     'rust/src/scenes/scroller.rs', 'rust/src/scenes/field.rs',
     'rust/src/scenes/rings.rs', 'rust/src/scenes/dots.rs',
