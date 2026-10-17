@@ -17,46 +17,32 @@ fn box2(p:vec2f,b:vec2f,r:f32)->f32 {
     let q=abs(p)-b+r;
     return length(max(q,vec2f(0)))+min(max(q.x,q.y),0.0)-r;
 }
-fn r_leg(p:vec2f)->f32 {
-    // Embed the shoulder in the bowl, with a horizontal foot. Independent
-    // square-capped strokes protrude at the junction and below the baseline.
-    let vertices=array<vec2f,4>(vec2f(-.21,.07),vec2f(.03,.07),vec2f(.43,-.47),vec2f(.20,-.47));
-    var nearest=1e6;var inside=false;
-    for(var i=0u;i<4u;i++) {
-        let a=vertices[i];let b=vertices[(i+1u)%4u];let edge=b-a;let delta=p-a;
-        let closest=delta-edge*clamp(dot(delta,edge)/dot(edge,edge),0.0,1.0);
-        nearest=min(nearest,dot(closest,closest));
-        if (a.y>p.y)!=(b.y>p.y) {
-            if p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x {inside=!inside;}
-        }
-    }
-    return select(sqrt(nearest),-sqrt(nearest),inside);
-}
-fn w_outline(p:vec2f)->f32 {
-    // One continuous outline gives the diagonal joins their own mitres and
+// Authored outlines (not recovered source geometry), one table so new letters
+// only add vertices. Each entry names its first vertex and vertex count.
+const OUTLINE_VERTICES=array<vec2f,27>(
+    // R leg: the shoulder is embedded in the bowl, with a horizontal foot.
+    // Independent square-capped strokes protrude at the junction and below
+    // the baseline, so the leg is a polygon of its own.
+    vec2f(-.21,.07),vec2f(.03,.07),vec2f(.43,-.47),vec2f(.20,-.47),
+    // W: one continuous outline gives the diagonal joins their own mitres and
     // flat tips. Unioning four capped strokes creates spikes at every join.
-    let vertices=array<vec2f,13>(
-        vec2f(-.75,.47),vec2f(-.54,.47),vec2f(-.31,-.19),
-        vec2f(-.09,.37),vec2f(.09,.37),vec2f(.31,-.19),
-        vec2f(.54,.47),vec2f(.75,.47),vec2f(.435,-.47),
-        vec2f(.235,-.47),vec2f(0,.07),vec2f(-.235,-.47),vec2f(-.435,-.47)
-    );
+    vec2f(-.75,.47),vec2f(-.54,.47),vec2f(-.31,-.19),
+    vec2f(-.09,.37),vec2f(.09,.37),vec2f(.31,-.19),
+    vec2f(.54,.47),vec2f(.75,.47),vec2f(.435,-.47),
+    vec2f(.235,-.47),vec2f(0,.07),vec2f(-.235,-.47),vec2f(-.435,-.47),
+    // N of the PANIC logo, in the logo's 1/100 units.
+    vec2f(-25,-37),vec2f(-12,-37),vec2f(13,13),vec2f(13,-37),vec2f(25,-37),
+    vec2f(25,37),vec2f(12,37),vec2f(-13,-13),vec2f(-13,37),vec2f(-25,37)
+);
+const R_LEG=vec2u(0,4);
+const W_OUTLINE=vec2u(4,13);
+const N_OUTLINE=vec2u(17,10);
+// Signed distance to a closed polygon from the table: negative inside.
+fn polygon(p:vec2f,range:vec2u)->f32 {
     var nearest=1e6;var inside=false;
-    for(var i=0u;i<13u;i++) {
-        let a=vertices[i];let b=vertices[(i+1u)%13u];let edge=b-a;let delta=p-a;
-        let closest=delta-edge*clamp(dot(delta,edge)/dot(edge,edge),0.0,1.0);
-        nearest=min(nearest,dot(closest,closest));
-        if (a.y>p.y)!=(b.y>p.y) {
-            if p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x {inside=!inside;}
-        }
-    }
-    return select(sqrt(nearest),-sqrt(nearest),inside);
-}
-fn n_outline(p:vec2f)->f32 {
-    let vertices=array<vec2f,10>(vec2f(-25,-37),vec2f(-12,-37),vec2f(13,13),vec2f(13,-37),vec2f(25,-37),vec2f(25,37),vec2f(12,37),vec2f(-13,-13),vec2f(-13,37),vec2f(-25,37));
-    var nearest=1e6;var inside=false;
-    for(var i=0u;i<10u;i++) {
-        let a=vertices[i];let b=vertices[(i+1u)%10u];let edge=b-a;let delta=p-a;
+    for(var i=0u;i<range.y;i++) {
+        let a=OUTLINE_VERTICES[range.x+i];let b=OUTLINE_VERTICES[range.x+(i+1u)%range.y];
+        let edge=b-a;let delta=p-a;
         let closest=delta-edge*clamp(dot(delta,edge)/dot(edge,edge),0.0,1.0);
         nearest=min(nearest,dot(closest,closest));
         if (a.y>p.y)!=(b.y>p.y) {
@@ -75,7 +61,7 @@ fn panic_outline(point:vec2f)->f32 {
     letter_a=max(letter_a,-box2(pa-vec2f(0,-17),vec2f(12,8),2.0));
     letter_a=max(letter_a,-box2(pa-vec2f(0,27),vec2f(12,24),1.0));
     let pn=p-vec2f(3,0);
-    let letter_n=n_outline(pn);
+    let letter_n=polygon(pn,N_OUTLINE);
     let letter_i=box2(p-vec2f(49,0),vec2f(7,37),.8);
     let pc=p-vec2f(93,0);
     var letter_c=max(box2(pc,vec2f(26,37),5.0),-box2(pc,vec2f(14,25),2.0));
@@ -99,14 +85,14 @@ fn letter_outline(p:vec2f,id:u32)->f32 {
     if glyph==3u {
         var d=min(box2(p+vec2f(.325,0),vec2f(.105,.47),.008),box2(p-vec2f(0,.225),vec2f(.43,.245),.06));
         d=max(d,-box2(p-vec2f(.01,.225),vec2f(.20,.09),.018));
-        d=min(d,r_leg(p));
+        d=min(d,polygon(p,R_LEG));
         return d;
     }
     if glyph==5u {
         var d=max(box2(p,vec2f(.40,.47),.075),-box2(p,vec2f(.20,.28),.035));
         return max(d,-box2(p-vec2f(.35,0),vec2f(.30,.19),.012));
     }
-    return w_outline(p);
+    return polygon(p,W_OUTLINE);
 }
 fn rotate_x(p:vec3f,a:f32)->vec3f {return vec3f(p.x,cos(a)*p.y-sin(a)*p.z,sin(a)*p.y+cos(a)*p.z);}
 fn rotate_y(p:vec3f,a:f32)->vec3f {return vec3f(cos(a)*p.x+sin(a)*p.z,p.y,-sin(a)*p.x+cos(a)*p.z);}
