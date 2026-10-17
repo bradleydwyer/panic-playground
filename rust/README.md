@@ -167,7 +167,6 @@ uses the original pixels during this transition.
 
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --seek 27
-cargo run --release --locked --features hires --bin panic-hd -- --scroller --scroller-layout ring --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --scroller-backdrop wall --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --faithful --seek 27
 ```
@@ -216,8 +215,8 @@ its relief is pulled towards a flat tile's level. It is kept dim overall, with
 a gentle vignette towards the corners, so the letters stay the brightest thing
 on screen.
 Softened reflections of the letters themselves come from a short march through
-the letters' shapes, once per pixel, over the depth the rows' arc (or the
-rings' fronts) occupies in front of the wall. The letters' soft contact
+the letters' shapes, once per pixel, over the depth the rows' arc occupies in
+front of the wall. The letters' soft contact
 shadows fall on the wall as they do in the chamber. The glass letters show
 only the wall's average colour, so they don't look textured. `--wall-strength` (0 to 1,
 default 0.4; **-** and **=** in steps of 0.1) sets how present the wall is.
@@ -231,8 +230,8 @@ to loud passages so the response retains contrast. They come from the same
 causal analysis of the PCM as the intro's music lighting, computed once per
 clip: the bass cue reads the band below about 150 Hz, the treble cue the band
 above about 1.8 kHz. `--scroller-lighting studio` (default) holds the lights
-steady for material comparisons. Press **L** to toggle lighting and **G** to
-switch layout while playing or paused. `--split` compares the
+steady for material comparisons. Press **L** to toggle lighting while playing
+or paused. `--split` compares the
 modern view with the locally rendered original. Omit `--seek` for the full
 intro, or use `--seek 18` to start at the transition.
 
@@ -283,30 +282,15 @@ with the rounding to whole pixels smoothed out. All of this is authored.
 Each frame, the GPU renders both distance fields once into a texture; the
 marched letters then sample it.
 
-`--scroller-layout ring` (or **G**) is an authored experiment: two rings of
-letters, one per row, each a whole circle of radius 2 around a vertical axis,
-seen level from between them. Each ring's front, on its row's lines (8–88 and
-112–192), shows exactly what that row shows at the centre of the picture and
-turns the row's way: the upper ring's front moves left, the lower's right.
-Going round, the letters cross the far side, seen from behind and so
-mirrored. From the level viewpoint each far side appears behind the inner
-half of its own front, the two meeting in the gap between the rows without
-overlapping. They show through gaps and through the glass: a second march
-finds what lies behind a glass or fading letter, shaded without shadow rays
-and dimmed a little through the glass. A ring holds about 17 characters of a
-117-character text, so letters are replaced at a seam at the back centre,
-behind the fronts. Over a radian either side of it they fade out, sinking a
-little into the ring, and the next text fades in the same way, so nothing
-pops. The sine text stands inside the upper ring and in front of the lower,
-as it passes the rows. The rings' fronts cast the same soft projected shadows
-on the chamber and the bump wall as the rows do, fading where the rings pass
-behind the chamber's plane. The rings start empty, as the original's rows do, and
-the first letters fade in at the seam about four seconds into part 2. With
-the rings the far sides show each row's text before and after it passes
-the front, which the original's flat rows never show. The two rows stay the
-default.
+An authored ring layout, with one whole ring of letters per row seen from
+between them, was tried as an alternative to the arc and archived. It was
+removed from the code, with the second ray-march layer only it needed, but
+remains in the Git history: commit `eedbbc8` introduced a single ring,
+`424a4df` replaced it with two rings fading at a seam at the back, and
+`21e1f7a` is the last commit that still has them (`--scroller-layout ring`
+or **G**). `--scroller-layout rows` is still accepted.
 
-In both layouts, letters and the sine text fade in over part 2's first 0.8
+Letters and the sine text fade in over part 2's first 0.8
 seconds; the text itself arrives later, as in the original, so this only
 softens the first sine row at the screen's bottom edge. At the end the
 whole scene fades with the original's palette fade. On the arc, letters
@@ -335,7 +319,6 @@ optical simulation. All fields are generated locally in memory.
 | Tab | Toggle the original rendering |
 | C | Compare original on the left with the selected HD mode on the right |
 | L | Scroller lighting: studio or musical |
-| G | Scroller layout: rows or rings |
 | B | Cycle the scroller backdrop: chamber, wall, chrome |
 | [ / ] | Bump shape for the wall backdrops |
 | - / = | Strength of the wall backdrops |

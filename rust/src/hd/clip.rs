@@ -181,30 +181,6 @@ impl std::str::FromStr for ScrollerLighting {
     }
 }
 
-/// Where the modern view places the two large rows of text.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u32)]
-pub enum ScrollerLayout {
-    /// The original's two rows, at its proportions, on one authored arc of
-    /// constant curvature that turns away towards the sides of the screen.
-    Rows = 0,
-    /// Authored alternative: one whole ring of letters per row. Each front
-    /// follows its row exactly; the far sides carry the same text seen from
-    /// behind, with letters replaced at a fading seam at the back.
-    Ring = 1,
-}
-
-impl std::str::FromStr for ScrollerLayout {
-    type Err = String;
-    fn from_str(value: &str) -> Result<Self, String> {
-        match value {
-            "rows" => Ok(Self::Rows),
-            "ring" => Ok(Self::Ring),
-            _ => Err("Use --scroller-layout rows or ring".into()),
-        }
-    }
-}
-
 /// What the modern view shows behind the letters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
@@ -245,7 +221,6 @@ pub struct ScrollerPreview {
     /// Musical mode reads `Clip::audio`, precomputed on the audio timeline so
     /// seeking and exports agree; studio mode ignores it.
     pub lighting: ScrollerLighting,
-    pub layout: ScrollerLayout,
     /// Displayed scroll positions for every clip frame, without wrapping:
     /// upper and lower row text pixel at screen x = 0, and overlay step.
     /// Read from the scroll counters (`Scroller::hd_scroll`), not the pixels.
@@ -289,15 +264,9 @@ impl Clip {
         Self::load_mode(data, true, false)
     }
 
-    pub fn load_scroller(
-        data: &Data,
-        lighting: ScrollerLighting,
-        layout: ScrollerLayout,
-    ) -> Result<Self, String> {
+    pub fn load_scroller(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
         let mut clip = Self::load_mode(data, true, true)?;
-        let preview = clip.scroller.as_mut().unwrap();
-        preview.lighting = lighting;
-        preview.layout = layout;
+        clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
 
@@ -448,7 +417,6 @@ impl Clip {
                     start_tick: scroll_start,
                     end_tick: scroll_end,
                     lighting: ScrollerLighting::Studio,
-                    layout: ScrollerLayout::Rows,
                     scroll,
                     glyphs: ScrollerGlyphs::new(&font, &frames[scroll_start].palette)?,
                     backdrop_style: ScrollerBackdrop::Chamber,
@@ -1275,8 +1243,7 @@ mod tests {
     #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
     fn scroller_matches_complete_engine_reference_and_pcm() {
         let data = crate::test_support::data();
-        let clip =
-            Clip::load_scroller(&data, ScrollerLighting::Musical, ScrollerLayout::Rows).unwrap();
+        let clip = Clip::load_scroller(&data, ScrollerLighting::Musical).unwrap();
         let mut engine = crate::engine::Engine::new(data, false).unwrap();
         let mut pcm = Vec::new();
         for (i, frame) in clip.frames.iter().enumerate() {
@@ -1355,8 +1322,7 @@ mod tests {
         // text and tables alone, placed by Scroller::hd_scroll, and compare
         // them with the reference scanout pixel for pixel.
         let data = crate::test_support::data();
-        let clip =
-            Clip::load_scroller(&data, ScrollerLighting::Studio, ScrollerLayout::Rows).unwrap();
+        let clip = Clip::load_scroller(&data, ScrollerLighting::Studio).unwrap();
         let font = Scroller::new(&data, &mut Vga::new()).unwrap().hd_font();
         let preview = clip.scroller.as_ref().unwrap();
         let strip = (font.text.len() * 104) as i64;
@@ -1590,7 +1556,6 @@ mod tests {
             start_tick: 0,
             end_tick: 3,
             lighting: ScrollerLighting::Studio,
-            layout: ScrollerLayout::Rows,
             scroll: vec![
                 [0.0, 8.0, 0.0],
                 [4.0, 4.0, 1.0],

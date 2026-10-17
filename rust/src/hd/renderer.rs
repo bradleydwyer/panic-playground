@@ -31,7 +31,8 @@ struct Uniforms {
     hud: [f32; 4],
     /// Scroller text positions read from the original's scroll counters and
     /// interpolated between its frames: upper and lower row text pixel at
-    /// screen x = 0, overlay step, and the authored layout (0 rows, 1 ring).
+    /// screen x = 0, overlay step, and an unused slot (formerly the archived
+    /// ring layout).
     glyphs: [f32; 4],
     /// Scroller background: oscillator `xx / 128` and `yy / 128` interpolated
     /// between ticks, backdrop style (0 chamber, 1 wall, 2 chrome) and the
@@ -62,7 +63,7 @@ struct Controls {
     plate_open_center: vec4f, plate_open_rotation: vec4f,
     hud: vec4f,    // on-screen counter: shown, frames per second, milliseconds per frame
     // Scroller text positions from the original's scroll counters: upper and
-    // lower row text pixel at screen x = 0, overlay step, layout (0 rows, 1 ring).
+    // lower row text pixel at screen x = 0, overlay step, unused.
     glyphs: vec4f,
     // Scroller background: oscillator xx/128 and yy/128 (source pixels,
     // interpolated between ticks), backdrop (0 chamber, 1 tinted wall, 2 chrome
@@ -519,9 +520,7 @@ impl Renderer {
         if let Some(scroll) = &clip.scroller {
             self.upload_glyphs(scroll);
             if let Some([upper, lower, overlay]) = clip.scroll_at(time) {
-                // Faithful HD keeps the original's two rows.
-                let layout = if modern { scroll.layout as u32 } else { 0 };
-                glyphs = [upper as f32, lower as f32, overlay as f32, layout as f32];
+                glyphs = [upper as f32, lower as f32, overlay as f32, 0.0];
             }
             scroller = [
                 1.0,

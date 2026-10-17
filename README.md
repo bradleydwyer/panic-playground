@@ -80,7 +80,6 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 | `--scroller` | Glass lettering with reflective edges, on a shallow arc |
 | `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights |
 | `--scroller-lighting studio` | Steady lighting, selected by default |
-| `--scroller-layout ring` | Experimental: each row becomes a whole ring of letters |
 | `--scroller-backdrop chamber` | Dark chamber with the original tile wall faintly visible, selected by default |
 | `--scroller-backdrop wall` | Trial wall of chrome bumps on the original tile grid, tinted blue steel |
 | `--scroller-backdrop chrome` | The same bumps as plain chrome |
@@ -91,9 +90,9 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 The scroller includes the laser transition and continues to the end of
 part 2, around 42 seconds. Omit `--seek` for the complete intro; use `--seek 18`
 to watch the tiles reveal the new scene. Add `--split` for the original on the
-left. In the app, **L** switches lighting, **G** switches between rows and
-rings, **B** cycles the backdrop, **[ / ]** change the bump shape and
-**- / =** the wall's strength, without restarting the music.
+left. In the app, **L** switches lighting, **B** cycles the backdrop,
+**[ / ]** change the bump shape and **- / =** the wall's strength, without
+restarting the music.
 
 Glass with studio lighting was chosen from three presets. The other two,
 coated titanium ribbons and straight sculpted extrusions, were removed from the
@@ -114,12 +113,11 @@ Glass transmission, reflections, haze and contact shadows are analytic
 approximations, not a full optical simulation. Letters and the sine text
 fade in as part 2 begins, and the scene fades out with its end.
 
-The rings are an experiment: one whole ring of letters per row, seen level
-from between them. Each ring's front matches its row exactly and turns the
-row's way. Its letters then travel round the back, seen from behind and
-mirrored, visible behind the fronts and through the glass. The text is longer
-than a ring, so letters fade out and in again at a seam at the back. The two
-rows, on their arc, remain the default.
+A ring layout, with one whole ring of letters per row, was tried and
+archived in favour of the rows on their arc. It was removed from the code
+but remains in the Git history: commit `eedbbc8` introduced a single ring,
+`424a4df` replaced it with two, and `21e1f7a` is the last commit that still
+has them.
 
 The tile wall behind the letters moves as in the original, which slides it on
 a slow looping path by changing the palette. Its position comes from the
