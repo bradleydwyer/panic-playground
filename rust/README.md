@@ -118,12 +118,15 @@ same; the last pieces disappear around 21.13 seconds, within the final hold.
 
 Use `--laser` for an intact-plate alternative. Cutting points trace each tile's
 perimeter over 0.21 seconds, leaving a narrow tab on the top edge. The plate
-tips backwards around that attachment until it releases at 0.32 seconds, then
-falls down and away behind the image plane. Perspective and a little depth haze
-make the intact pieces shrink and dim as they recede. The cut glows and cools; sparks
-come from the moving cutting point and the final severing flash. Attachment
-positions vary deterministically between tiles. The pieces keep their size
-and clear the screen during the existing final hold. Several cuts overlap to
+tips slightly around that attachment until it releases at 0.32 seconds, then
+accelerates directly away from the camera, like a floor giving way beneath an
+overhead view. Its centre has no lateral drift after release. Perspective makes
+the intact pieces shrink; depth haze blends them into the backdrop before they
+are removed at 1.10 seconds. Glowing edges, sparks and illuminated smoke shift
+from cool blue on the left to hot orange on the right. Sparks come from the
+moving cutting point and final severing flash; smoke rises towards the camera.
+Attachment positions vary deterministically between tiles. The pieces keep
+their physical size and vanish during the existing final hold. Several cuts overlap to
 retain the original activation cadence. `--laser` also selects modern mode
 and supports `--split`; `--seek 17.8` starts just before the transition.
 

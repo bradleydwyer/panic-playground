@@ -68,8 +68,9 @@ original activation sequence and uninterrupted music. Both versions stop on
 the next backdrop; the following scroller hasn't had the modern treatment yet.
 
 There's also a laser-cut trial. Bright cutting points trace each square, leave
-a small attachment at the top, then sever it. The intact pieces tip backwards, then fall down and away into the opening,
-with cooling edges and sparks at the cut:
+a small attachment at the top, then sever it. The intact pieces drop directly
+away from the camera, as though we're looking down through a floor. Smoke,
+sparks and glowing cuts shift from cool blue on the left to orange on the right:
 
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --laser --seek 17.8

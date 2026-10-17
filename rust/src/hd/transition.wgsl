@@ -34,7 +34,7 @@ fn heat_color(warm:f32)->vec3f {
 }
 fn project(p:vec3f)->vec4f {
     // Use a real perspective depth range for curled, overlapping sheets.
-    let distance=5.5-p.z;let near=.08;let far=20.0;
+    let distance=5.5-p.z;let near=.08;let far=select(20.0,60.0,laser());
     let z=(far*distance-far*near)/(far-near);
     return vec4f(p.x/(u.screen.x/u.screen.y),p.y,z/5.5,distance/5.5);
 }
@@ -76,7 +76,8 @@ fn sheet(q:vec2f,cell:vec2f,progress:f32)->vec3f {
     return point;
 }
 // A moving cutting point leaves a small tab on the top edge. The plate
-// hangs from that tab, tips, then releases into an authored ballistic fall.
+// sags at that tab, then falls along -Z: gravity points away from the camera,
+// as though the image were a floor seen from above. This motion is authored.
 fn tab_x(cell:vec2f)->f32 {return (hash(cell+51.0)-.5)*1.10;}
 fn laser_start(cell:vec2f)->f32 {return (tab_x(cell)+1.0)/8.0+(1.0-LASER_PATH)*.5;}
 fn laser_head(cell:vec2f,seconds:f32)->vec2f {
@@ -97,14 +98,14 @@ fn laser_surface(q:vec2f,cell:vec2f,seconds:f32)->vec3f {
     let free=max(seconds-LASER_RELEASE,0.0);
     let pivot=vec3f(tab_x(cell)*half_extent.x,half_extent.y,0);
     let spin=hash(cell+61.0)-.5;
-    var point=rotate(flat-pivot,vec2f(.42*sag+free*(.7+hash(cell+64.0)),spin*(sag*.12+free*1.5)));
-    let roll=spin*(sag*.16+free*.8);
-    point=vec3f(point.x*cos(roll)-point.y*sin(roll),point.x*sin(roll)+point.y*cos(roll),point.z)+pivot;
-    point.x+=(hash(cell+71.0)-.5)*free*.16;
-    point.y-=.5*13.5*free*free;
-    // Release into the space behind the image plane. Perspective makes the
-    // intact plates recede through their openings while gravity pulls down.
-    point.z-=free*2.4+free*free*11.0;
+    let hang=vec2f(.26*sag,spin*sag*.10);
+    let center=rotate(-pivot,hang)+pivot;
+    var point=rotate(rotate(flat,hang),vec2f(free*(.25+hash(cell+64.0)*.40),free*spin*.60));
+    let roll=spin*free*.35;
+    point=vec3f(point.x*cos(roll)-point.y*sin(roll),point.x*sin(roll)+point.y*cos(roll),point.z)+center;
+    // Once the tab releases, the centre has no lateral velocity. Perspective
+    // alone draws the accelerating plates towards the vanishing point.
+    point.z-=.5*100.0*free*free;
     return point+origin;
 }
 fn edge_parameter(q:vec2f)->f32 {
@@ -144,6 +145,13 @@ fn emission(q:vec2f,cell:vec2f,birth:f32)->vec3f {
     return surface(q,cell,birth);
 }
 struct Vertex { @builtin(position) position:vec4f, @location(0) uv:vec2f }
+fn base_backdrop(uv:vec2f)->vec3f {
+    let xy=(uv-.5)*vec2f(u.screen.x/u.screen.y,1);
+    let brush=noise(uv*vec2f(28,2800))*.65+noise(uv*vec2f(150,11000))*.35;
+    var color=vec3f(.012,.020,.030)*(1.0+.12*brush);
+    color+=vec3f(.012,.018,.024)*exp(-pow((xy.y+.18)*2.0,2.0));
+    return color;
+}
 @vertex fn fullscreen(@builtin(vertex_index) index:u32)->Vertex {
     let p=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3))[index];
     return Vertex(vec4f(p,0,1),vec2f(p.x*.5+.5,.5-p.y*.5));
@@ -152,10 +160,7 @@ struct Vertex { @builtin(position) position:vec4f, @location(0) uv:vec2f }
     if u.transition.y<.5 || u.transition.x<0.0 {
         return textureSampleLevel(scene,linear,v.uv,0);
     }
-    let xy=(v.uv-.5)*vec2f(u.screen.x/u.screen.y,1);
-    let brush=noise(v.uv*vec2f(28,2800))*.65+noise(v.uv*vec2f(150,11000))*.35;
-    var color=vec3f(.012,.020,.030)*(1.0+.12*brush);
-    color+=vec3f(.012,.018,.024)*exp(-pow((xy.y+.18)*2.0,2.0));
+    var color=base_backdrop(v.uv);
     var illumination=vec3f(0);var occlusion=0.0;
     let current=vec2i(floor(v.uv*GRID));
     // Local irradiance and soft contact shadows follow the moving cut front.
@@ -172,7 +177,11 @@ struct Vertex { @builtin(position) position:vec4f, @location(0) uv:vec2f }
             let head=laser_head(vec2f(cell),seconds);
             let local=v.uv*GRID-(vec2f(cell)+.5);
             let d=length((local-head*.5)*vec2f(1.1,1));
-            illumination+=vec3f(.18,.38,.65)*exp(-d*9.0)*laser_power(seconds);
+            let heat=heat_color(warmth((vec2f(cell)+.5)/GRID));
+            illumination+=heat*exp(-d*7.0)*laser_power(seconds)*.20;
+            let seam=abs(max(abs(local.x),abs(local.y))-.5);
+            let glow=smoothstep(0.0,LASER_CUT,seconds)*exp(-max(seconds-LASER_CUT,0.0)*5.0);
+            illumination+=heat*exp(-seam*6.5)*glow*.12;
             continue;
         }
         let progress=clamp(age/tile_lifetime(),0.0,1.0);
@@ -275,16 +284,21 @@ fn laser_material(v:TileVertex,original:vec3f)->vec3f {
     let kerf=exp(-pow(distance/.014,2.0))*cut;
     metal=mix(metal,vec3f(.008,.006,.005),kerf*.88);
     let rim=exp(-pow(distance/.020,2.0))*cut*cooling;
-    metal+=mix(vec3f(4.2,.48,.025),vec3f(7.0,1.0,.045),warm)*rim;
-    metal+=vec3f(.45,.08,.01)*exp(-distance*24.0)*cut*cooling;
+    let heat=heat_color(warm);
+    metal+=heat*rim*1.8;
+    metal+=heat*.12*exp(-distance*24.0)*cut*cooling;
     let delta=(v.q-laser_head(cell,seconds))*vec2f((u.screen.x/u.screen.y)*GRID.y/GRID.x,1);
     let d2=dot(delta,delta);
     let power=laser_power(seconds);
-    metal+=(vec3f(22,30,38)*exp(-d2/.0007)+vec3f(.35,.85,1.5)*exp(-d2/.012))*power;
+    let core=mix(vec3f(22,30,38),vec3f(38,25,16),warm);
+    metal+=(core*exp(-d2/.0007)+heat*.35*exp(-d2/.012))*power;
     // A fine flare makes the moving white-blue cutting point readable.
-    metal+=vec3f(.25,.60,1.0)*exp(-abs(delta.x)*14.0-abs(delta.y)*100.0)*power;
-    let haze=1.0-exp(-max(-v.world.z,0.0)*.10);
-    return mix(metal,vec3f(.014,.022,.031),haze);
+    metal+=heat*.18*exp(-abs(delta.x)*14.0-abs(delta.y)*100.0)*power;
+    let haze=1.0-exp(-max(-v.world.z,0.0)*.18);
+    // Fade fully into the distant plane before lifetime culling. A depth-only
+    // fall stays in frame, unlike the earlier downward-screen trajectory.
+    let fade=max(haze,smoothstep(.88,LASER_LIFE-.02,seconds));
+    return mix(metal,base_backdrop(screen_uv(v.world)),fade);
 }
 @fragment fn tile_fragment(v:TileVertex)->@location(0) vec4f {
     let original=textureSampleLevel(scene,linear,v.source_uv,0).rgb;
@@ -354,7 +368,8 @@ fn perimeter(t:f32)->vec2f {
     if falling() {velocity.y-=8.5*birth*tile_lifetime()/7.0*.45;}
     let drag=(1.0-exp(-seconds*3.0))/3.0;
     var point=start+velocity*drag;
-    point.y-=seconds*seconds*1.5;
+    if laser() {point.z-=seconds*seconds*10.0;}
+    else {point.y-=seconds*seconds*1.5;}
     let clip=project(point);let previous=screen_uv(point-velocity/100.0);
     let delta=(screen_uv(point)-previous)*u.screen.xy;
     let tangent=normalize(delta+vec2f(.00001,0));let perpendicular=vec2f(-tangent.y,tangent.x);
@@ -369,7 +384,7 @@ fn perimeter(t:f32)->vec2f {
     let fade=pow(1.0-seconds/lifetime,1.7)*smoothstep(0.0,.012,seconds);
     let warm=warmth((cell+.5)/GRID);
     out.color=mix(heat_color(warm),vec3f(2.5,.25,.01),warm*seconds/lifetime)*fade;
-    if laser() {out.color=mix(vec3f(6.0,2.0,.40),vec3f(2.0,.20,.01),seconds/lifetime)*fade;}
+    if laser() {out.color=heat_color(warm)*mix(1.5,.35,seconds/lifetime)*fade;}
     out.shape=vec4f(tail/radius,hash(seed+15.0),0,0);
     return out;
 }
@@ -387,12 +402,18 @@ fn perimeter(t:f32)->vec2f {
     if laser() {birth_seconds=birth*LASER_CUT;}
     var seconds=(u.transition.x-order(id)-birth*10.0*tile_lifetime())/70.0;
     if laser() {seconds=(u.transition.x-order(id))/70.0-birth_seconds;}
-    if seconds<0.0 || seconds>select(.60,.28,laser()) {return out;}
+    if seconds<0.0 || seconds>.60 {return out;}
     let q=perimeter(hash(seed));
     var point=emission(q,cell,birth);
     if laser() {point=laser_surface(laser_head(cell,birth_seconds),cell,birth_seconds);}
 
-    point+=vec3f(sin(seconds*5.0+hash(seed+2.0)*6.0)*seconds*.12,seconds*.18,seconds*.1+.04);
+    if laser() {
+        let angle=hash(seed+2.0)*PI*2.0+seconds*2.0;
+        // In the overhead view the hot plume rises towards the camera.
+        point+=vec3f(vec2f(cos(angle),sin(angle))*seconds*.09,seconds*.32+.04);
+    } else {
+        point+=vec3f(sin(seconds*5.0+hash(seed+2.0)*6.0)*seconds*.12,seconds*.18,seconds*.1+.04);
+    }
     let corners=array<vec2f,6>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(-1,1),vec2f(1,-1),vec2f(1,1));
     let corner=corners[vertex];
     let clip=project(point);let radius=(.018+seconds*.16)*vec2f(.8,1.35);
@@ -400,6 +421,7 @@ fn perimeter(t:f32)->vec2f {
     out.local=corner;
     let warm=warmth((cell+.5)/GRID);
     out.color=mix(vec3f(.10,.15,.20),vec3f(.20,.11,.055),warm);
+    if laser() {out.color=mix(vec3f(.18,.38,.65),vec3f(.72,.27,.075),warm);}
     out.shape=vec4f(seconds,hash(seed+9.0)*50.0,smoothstep(0.0,.10,seconds)*(1.0-smoothstep(.20,.60,seconds)),0);
     return out;
 }
@@ -408,5 +430,5 @@ fn perimeter(t:f32)->vec2f {
     let flow=vec2f(sin(p.y*4.0+t*5.0)*.3,-t*2.4);
     let wisps=noise(p*3.0+flow+v.shape.y)*.65+noise(p*7.0+flow*1.7+v.shape.y)*.35;
     let density=exp(-dot(p*vec2f(1.15,.85),p*vec2f(1.15,.85))*3.5)*smoothstep(.25,.8,wisps);
-    return vec4f(v.color,density*v.shape.z*select(.20,.085,laser()));
+    return vec4f(v.color,density*v.shape.z*select(.20,.32,laser()));
 }
