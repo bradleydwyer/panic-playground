@@ -110,6 +110,15 @@ pub struct Clip {
     pub flights: [[f32; 4]; 10],
 }
 
+/// Authored treatments sharing the same locally imported reference timeline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum TransitionStyle {
+    Burn = 0,
+    Falling = 1,
+    Laser = 2,
+}
+
 /// Schedule and destination colours read from the local Rust reconstruction.
 /// The GPU's curling surfaces, burn edges and falling motion are authored effects.
 pub struct TileTransition {
@@ -117,7 +126,7 @@ pub struct TileTransition {
     pub end_tick: usize,
     pub order: [u16; 160],
     pub palette: [[f32; 4]; 64],
-    pub falling: bool,
+    pub style: TransitionStyle,
 }
 
 impl Clip {
@@ -132,7 +141,14 @@ impl Clip {
     /// Alternate material animation over exactly the same reference and audio.
     pub fn load_tear(data: &Data) -> Result<Self, String> {
         let mut clip = Self::load_transition(data)?;
-        clip.transition.as_mut().unwrap().falling = true;
+        clip.transition.as_mut().unwrap().style = TransitionStyle::Falling;
+        Ok(clip)
+    }
+
+    /// Laser-cut plates use the same activation schedule and uninterrupted PCM.
+    pub fn load_laser(data: &Data) -> Result<Self, String> {
+        let mut clip = Self::load_transition(data)?;
+        clip.transition.as_mut().unwrap().style = TransitionStyle::Laser;
         Ok(clip)
     }
 
@@ -180,7 +196,7 @@ impl Clip {
                 end_tick: 0,
                 order: scroller.transition_order(),
                 palette: [[0.0; 4]; 64],
-                falling: false,
+                style: TransitionStyle::Burn,
             };
             loop {
                 let n = frames.len();
@@ -500,14 +516,18 @@ mod tests {
         let data = crate::test_support::data();
         let clip = Clip::load_transition(&data).unwrap();
         let falling = Clip::load_tear(&data).unwrap();
+        let laser = Clip::load_laser(&data).unwrap();
         let intro = Clip::load(&data).unwrap();
-        assert_eq!(falling.pcm, clip.pcm);
-        assert_eq!(falling.frames.len(), clip.frames.len());
-        let fall_schedule = falling.transition.as_ref().unwrap();
+        let alternatives = [("falling", &falling), ("laser", &laser)];
         let burn_schedule = clip.transition.as_ref().unwrap();
-        assert_eq!(fall_schedule.start_tick, burn_schedule.start_tick);
-        assert_eq!(fall_schedule.end_tick, burn_schedule.end_tick);
-        assert_eq!(fall_schedule.order, burn_schedule.order);
+        for (_, alternative) in alternatives {
+            assert_eq!(alternative.pcm, clip.pcm);
+            assert_eq!(alternative.frames.len(), clip.frames.len());
+            let schedule = alternative.transition.as_ref().unwrap();
+            assert_eq!(schedule.start_tick, burn_schedule.start_tick);
+            assert_eq!(schedule.end_tick, burn_schedule.end_tick);
+            assert_eq!(schedule.order, burn_schedule.order);
+        }
         assert_eq!(clip.logo_ready_at, intro.logo_ready_at);
         assert_eq!(clip.pcm[..intro.pcm.len()], intro.pcm);
         let cut = clip.transition.as_ref().unwrap();
@@ -524,14 +544,16 @@ mod tests {
         for (i, frame) in clip.frames.iter().enumerate() {
             assert_eq!(engine.video.indices, frame.indices, "pixels at tick {i}");
             assert_eq!(engine.video.palette, frame.palette, "palette at tick {i}");
-            assert_eq!(
-                falling.frames[i].indices, frame.indices,
-                "falling reference at tick {i}"
-            );
-            assert_eq!(
-                falling.frames[i].palette, frame.palette,
-                "falling palette at tick {i}"
-            );
+            for (label, alternative) in alternatives {
+                assert_eq!(
+                    alternative.frames[i].indices, frame.indices,
+                    "{label} reference at tick {i}"
+                );
+                assert_eq!(
+                    alternative.frames[i].palette, frame.palette,
+                    "{label} palette at tick {i}"
+                );
+            }
             if i + 1 < clip.frames.len() {
                 pcm.extend(engine.step().unwrap());
             }

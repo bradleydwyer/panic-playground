@@ -18,8 +18,16 @@ fn noise(p:vec2f)->f32 {
 fn order(id:u32)->f32 {return u.tile_order[id/4u][id%4u];}
 fn cell_of(id:u32)->vec2f {return vec2f(f32(id%16u),f32(id/16u));}
 fn warmth(uv:vec2f)->f32 {return smoothstep(.36,.77,uv.x+(.5-uv.y)*.12);}
-fn falling()->bool {return u.transition.w>.5;}
-fn tile_lifetime()->f32 {return select(1.0,3.6,falling());}
+fn falling()->bool {return u.transition.w>.5 && u.transition.w<1.5;}
+fn laser()->bool {return u.transition.w>1.5;}
+const LASER_CUT=.21;
+const LASER_RELEASE=.32;
+const LASER_LIFE=1.10;
+const LASER_PATH=.9875;
+fn tile_lifetime()->f32 {
+    if laser() {return LASER_LIFE*7.0;}
+    return select(1.0,3.6,falling());
+}
 fn heat_color(warm:f32)->vec3f {
     if falling() {return mix(vec3f(5.0,.95,.065),vec3f(8.0,1.65,.10),warm);}
     return mix(vec3f(1.2,2.1,3.8),vec3f(7.0,1.25,.045),warm);
@@ -36,11 +44,13 @@ fn rotate(p:vec3f,a:vec2f)->vec3f {
     return vec3f(cos(a.y)*r.x+sin(a.y)*r.z,r.y,-sin(a.y)*r.x+cos(a.y)*r.z);
 }
 fn remaining(progress:f32)->f32 {
+    if laser() {return 1.0;}
     return 1.0-progress;
 }
 // Move the tessellated boundary itself, so the thin cut walls remain joined
 // to the ragged burn front. A fragment-only cut would leave those walls behind.
 fn cut_coordinates(q:vec2f,cell:vec2f,progress:f32)->vec2f {
+    if laser() {return q;}
     let life=smoothstep(0.0,.12,progress);
     let flow=noise(q*9.0+cell*3.0+vec2f(u.screen.z*2.0,-u.screen.z*1.5));
     let erosion=(.018+.060*flow)*life*pow(max(abs(q.x),abs(q.y)),3.0);
@@ -65,7 +75,46 @@ fn sheet(q:vec2f,cell:vec2f,progress:f32)->vec3f {
     point.z+=sin(q.x*3.0+q.y*2.0+progress*6.0+hash(cell)*8.0)*.008*envelope;
     return point;
 }
+// A moving cutting point leaves a small tab on the top edge. The plate
+// hangs from that tab, tips, then releases into an authored ballistic fall.
+fn tab_x(cell:vec2f)->f32 {return (hash(cell+51.0)-.5)*1.10;}
+fn laser_start(cell:vec2f)->f32 {return (tab_x(cell)+1.0)/8.0+(1.0-LASER_PATH)*.5;}
+fn laser_head(cell:vec2f,seconds:f32)->vec2f {
+    if seconds>LASER_CUT {return vec2f(tab_x(cell),-1);}
+    return perimeter(fract(laser_start(cell)+LASER_PATH*clamp(seconds/LASER_CUT,0.0,1.0)));
+}
+fn laser_power(seconds:f32)->f32 {
+    if seconds>=0.0 && seconds<=LASER_CUT {return smoothstep(0.0,.012,seconds);}
+    return exp(-pow((seconds-LASER_RELEASE)/.018,2.0))*1.5;
+}
+fn laser_surface(q:vec2f,cell:vec2f,seconds:f32)->vec3f {
+    let aspect=u.screen.x/u.screen.y;
+    let half_extent=vec2f(aspect/GRID.x,1.0/GRID.y);
+    let flat=vec3f(q*half_extent*vec2f(1,-1),0);
+    let origin=vec3f(((cell+.5)/GRID-.5)*vec2f(aspect*2.0,-2.0),0);
+    if seconds<=LASER_CUT {return flat+origin;}
+    let sag=smoothstep(LASER_CUT,LASER_RELEASE,seconds);
+    let free=max(seconds-LASER_RELEASE,0.0);
+    let pivot=vec3f(tab_x(cell)*half_extent.x,half_extent.y,0);
+    let spin=hash(cell+61.0)-.5;
+    var point=rotate(flat-pivot,vec2f(-.42*sag-free*(.7+hash(cell+64.0)),spin*(sag*.12+free*1.5)));
+    let roll=spin*(sag*.16+free*.8);
+    point=vec3f(point.x*cos(roll)-point.y*sin(roll),point.x*sin(roll)+point.y*cos(roll),point.z)+pivot;
+    point.x+=(hash(cell+71.0)-.5)*free*.16;
+    point.y-=.5*13.5*free*free;
+    point.z-=free*.12;
+    return point+origin;
+}
+fn edge_parameter(q:vec2f)->f32 {
+    if abs(q.y)>=abs(q.x) {
+        if q.y<0.0 {return (q.x+1.0)/8.0;}
+        return .5+(1.0-q.x)/8.0;
+    }
+    if q.x>0.0 {return .25+(q.y+1.0)/8.0;}
+    return .75+(1.0-q.y)/8.0;
+}
 fn surface(q:vec2f,cell:vec2f,progress:f32)->vec3f {
+    if laser() {return laser_surface(q,cell,progress*LASER_LIFE);}
     let aspect=u.screen.x/u.screen.y;
     let center=(cell+.5)/GRID;
     var origin=vec3f((center-.5)*vec2f(aspect*2.0,-2.0),0);
@@ -116,6 +165,14 @@ struct Vertex { @builtin(position) position:vec4f, @location(0) uv:vec2f }
         let id=u32(cell.y*16+cell.x);
         let age=(u.transition.x-order(id))/10.0;
         if age<=0.0 || age>6.0 {continue;}
+        if laser() {
+            let seconds=age/7.0;
+            let head=laser_head(vec2f(cell),seconds);
+            let local=v.uv*GRID-(vec2f(cell)+.5);
+            let d=length((local-head*.5)*vec2f(1.1,1));
+            illumination+=vec3f(.18,.38,.65)*exp(-d*9.0)*laser_power(seconds);
+            continue;
+        }
         let progress=clamp(age/tile_lifetime(),0.0,1.0);
         var q=v.uv*GRID-(vec2f(cell)+.5);
         if falling() {
@@ -147,6 +204,7 @@ struct TileVertex {
     @location(3) q:vec2f,
     @location(4) @interpolate(flat) side:u32,
     @location(5) progress:f32,
+    @location(6) @interpolate(flat) id:u32,
 }
 @vertex fn tile_vertex(@builtin(vertex_index) vertex:u32,@builtin(instance_index) id:u32)->TileVertex {
     var out:TileVertex;
@@ -178,16 +236,57 @@ struct TileVertex {
     if out.side==1u {
         let tangent=surface(q+along*.002,cell,p)-surface(q-along*.002,cell,p);
         normal=normalize(cross(tangent,vec3f(0,0,-1)));
-        point.z-=corner.y*.0025;
+        point.z-=corner.y*select(.0025,.008,laser());
     }
     out.position=project(point);
-    out.world=point;out.normal=normal;out.q=q;out.progress=p;
+    out.world=point;out.normal=normal;out.q=q;out.progress=p;out.id=id;
     out.source_uv=(cell+.5+cut_coordinates(q,cell,p)*.5*remaining(p))/GRID;
     return out;
+}
+fn laser_material(v:TileVertex,original:vec3f)->vec3f {
+    let seconds=v.progress*LASER_LIFE;
+    let cell=cell_of(v.id);
+    let n0=normalize(v.normal);
+    let eye=normalize(vec3f(0,0,5.5)-v.world);
+    let back=dot(n0,eye)<0.0;
+    let n=select(n0,-n0,back);
+    let light=normalize(vec3f(-.6,1.1,1.8));
+    let key=pow(max(dot(n,normalize(light+eye)),0.0),66.0);
+    let reflected=reflect(-eye,n);
+    let strip=exp(-pow((reflected.y-.45)*9.0,2.0));
+    let warm=warmth(v.source_uv);
+    let metal_tint=mix(vec3f(.55,.72,.90),vec3f(.80,.48,.24),warm*.6);
+    let tipped=smoothstep(LASER_CUT,LASER_RELEASE,seconds);
+    var metal=original*mix(1.0,.40+.65*max(dot(n,light),0.0),tipped);
+    metal+=metal_tint*(key*1.1+strip*.40)*tipped;
+    if back {metal=vec3f(.018,.023,.030)+metal_tint*(key*.24+strip*.055);}
+    if v.side==1u {metal=metal_tint*(.045+key*.25);}
+    let position=fract(edge_parameter(v.q)-laser_start(cell)+1.0);
+    let travel=LASER_PATH*clamp(seconds/LASER_CUT,0.0,1.0);
+    let severed=seconds>=LASER_RELEASE;
+    let cut=select(0.0,1.0,(position<=travel && seconds>0.0) || severed);
+    var cut_at=position/LASER_PATH*LASER_CUT;
+    if position>LASER_PATH {cut_at=LASER_RELEASE;}
+    let cooling=exp(-max(seconds-cut_at,0.0)*4.0);
+    let edge=max(abs(v.q.x),abs(v.q.y));
+    let distance=max(1.0-edge,0.0);
+    let kerf=exp(-pow(distance/.014,2.0))*cut;
+    metal=mix(metal,vec3f(.008,.006,.005),kerf*.88);
+    let rim=exp(-pow(distance/.020,2.0))*cut*cooling;
+    metal+=mix(vec3f(4.2,.48,.025),vec3f(7.0,1.0,.045),warm)*rim;
+    metal+=vec3f(.45,.08,.01)*exp(-distance*24.0)*cut*cooling;
+    let delta=(v.q-laser_head(cell,seconds))*vec2f((u.screen.x/u.screen.y)*GRID.y/GRID.x,1);
+    let d2=dot(delta,delta);
+    let power=laser_power(seconds);
+    metal+=(vec3f(22,30,38)*exp(-d2/.0007)+vec3f(.35,.85,1.5)*exp(-d2/.012))*power;
+    // A fine flare makes the moving white-blue cutting point readable.
+    metal+=vec3f(.25,.60,1.0)*exp(-abs(delta.x)*14.0-abs(delta.y)*100.0)*power;
+    return metal;
 }
 @fragment fn tile_fragment(v:TileVertex)->@location(0) vec4f {
     let original=textureSampleLevel(scene,linear,v.source_uv,0).rgb;
     if v.progress<=0.0 {return vec4f(original,1);}
+    if laser() {return vec4f(laser_material(v,original),1);}
     let life=smoothstep(0.0,.12,v.progress);
     var n=normalize(v.normal);let eye=normalize(vec3f(0,0,5.5)-v.world);
     let back=dot(n,eye)<0.0;
@@ -231,11 +330,22 @@ fn perimeter(t:f32)->vec2f {
     let id=instance/48u;let n=f32(instance%48u);let cell=cell_of(id);
     let seed=vec2f(f32(instance)+1.0,n+7.0);
     let birth=(n+hash(seed)) / 48.0;
-    let seconds=(u.transition.x-order(id)-birth*10.0*tile_lifetime())/70.0;
-    let lifetime=.23+hash(seed+3.0)*.43;
+    var birth_seconds=birth*tile_lifetime()/7.0;
+    if laser() {
+        if n>=20.0 {return out;}
+        birth_seconds=(n+hash(seed))/14.0*LASER_CUT;
+        if n>=14.0 {birth_seconds=LASER_RELEASE+(n-14.0)*.003;}
+    }
+    var seconds=(u.transition.x-order(id)-birth*10.0*tile_lifetime())/70.0;
+    if laser() {seconds=(u.transition.x-order(id))/70.0-birth_seconds;}
+    let lifetime=select(.23+hash(seed+3.0)*.43,.11+hash(seed+3.0)*.19,laser());
     if seconds<0.0 || seconds>lifetime {return out;}
-    let q=perimeter(hash(seed+13.0));
-    let start=emission(q,cell,birth);
+    var q=perimeter(hash(seed+13.0));
+    var start=emission(q,cell,birth);
+    if laser() {
+        q=laser_head(cell,birth_seconds);
+        start=laser_surface(q,cell,birth_seconds)+vec3f(0,0,.004);
+    }
     let direction=normalize(vec3f(q.x,-q.y,.4+hash(seed+4.0)));
     var velocity=direction*(.20+hash(seed+9.0)*.60);
     if falling() {velocity.y-=8.5*birth*tile_lifetime()/7.0*.45;}
@@ -256,6 +366,7 @@ fn perimeter(t:f32)->vec2f {
     let fade=pow(1.0-seconds/lifetime,1.7)*smoothstep(0.0,.012,seconds);
     let warm=warmth((cell+.5)/GRID);
     out.color=mix(heat_color(warm),vec3f(2.5,.25,.01),warm*seconds/lifetime)*fade;
+    if laser() {out.color=mix(vec3f(6.0,2.0,.40),vec3f(2.0,.20,.01),seconds/lifetime)*fade;}
     out.shape=vec4f(tail/radius,hash(seed+15.0),0,0);
     return out;
 }
@@ -269,10 +380,15 @@ fn perimeter(t:f32)->vec2f {
     var out:Particle;out.position=vec4f(2,2,2,1);
     let id=instance/6u;let seed=vec2f(f32(instance)+4.0,17);
     let cell=cell_of(id);let birth=(f32(instance%6u)+.5)/6.0;
-    let seconds=(u.transition.x-order(id)-birth*10.0*tile_lifetime())/70.0;
-    if seconds<0.0 || seconds>.60 {return out;}
+    var birth_seconds=birth*tile_lifetime()/7.0;
+    if laser() {birth_seconds=birth*LASER_CUT;}
+    var seconds=(u.transition.x-order(id)-birth*10.0*tile_lifetime())/70.0;
+    if laser() {seconds=(u.transition.x-order(id))/70.0-birth_seconds;}
+    if seconds<0.0 || seconds>select(.60,.28,laser()) {return out;}
     let q=perimeter(hash(seed));
     var point=emission(q,cell,birth);
+    if laser() {point=laser_surface(laser_head(cell,birth_seconds),cell,birth_seconds);}
+
     point+=vec3f(sin(seconds*5.0+hash(seed+2.0)*6.0)*seconds*.12,seconds*.18,seconds*.1+.04);
     let corners=array<vec2f,6>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(-1,1),vec2f(1,-1),vec2f(1,1));
     let corner=corners[vertex];
@@ -289,5 +405,5 @@ fn perimeter(t:f32)->vec2f {
     let flow=vec2f(sin(p.y*4.0+t*5.0)*.3,-t*2.4);
     let wisps=noise(p*3.0+flow+v.shape.y)*.65+noise(p*7.0+flow*1.7+v.shape.y)*.35;
     let density=exp(-dot(p*vec2f(1.15,.85),p*vec2f(1.15,.85))*3.5)*smoothstep(.25,.8,wisps);
-    return vec4f(v.color,density*v.shape.z*.20);
+    return vec4f(v.color,density*v.shape.z*select(.20,.085,laser()));
 }

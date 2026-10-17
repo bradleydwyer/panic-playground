@@ -116,7 +116,17 @@ while falling. Each square burns away in about 0.51 seconds, compared with
 same; the last pieces disappear around 21.13 seconds, within the final hold.
 `--tear` selects modern mode automatically and also works with `--split`.
 
-The geometry, gravity, burn treatment and particle motion are authored effects.
+Use `--laser` for an intact-plate alternative. Cutting points trace each tile's
+perimeter over 0.21 seconds, leaving a narrow tab on the top edge. The plate
+tips around that attachment until it releases at 0.32 seconds, then falls
+under gravity with a small amount of rotation. The cut glows and cools; sparks
+come from the moving cutting point and the final severing flash. Attachment
+positions vary deterministically between tiles. The pieces keep their size
+and clear the screen during the existing final hold. Several cuts overlap to
+retain the original activation cadence. `--laser` also selects modern mode
+and supports `--split`; `--seek 17.8` starts just before the transition.
+
+The geometry, gravity, laser and burn treatments, and particle motion are authored effects.
 The lighting uses analytic approximations; this isn't a cloth or combustion
 simulation. The original destination is a plain light screen at this point;
 the modern view gives it a dark brushed-metal finish.

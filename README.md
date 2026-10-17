@@ -67,6 +67,17 @@ burn towards their centres. Each piece lasts about half a second, with the
 original activation sequence and uninterrupted music. Both versions stop on
 the next backdrop; the following scroller hasn't had the modern treatment yet.
 
+There's also a laser-cut trial. Bright cutting points trace each square, leave
+a small attachment at the top, then sever it. The intact pieces tip and fall,
+with cooling edges and sparks at the cut:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --laser --seek 17.8
+```
+
+Omit `--seek 17.8` to watch the whole intro. Add `--split` to compare with the
+original. `--laser` and `--tear` both select modern mode automatically.
+
 | Key | Action |
 | --- | --- |
 | Space | Pause or resume |
