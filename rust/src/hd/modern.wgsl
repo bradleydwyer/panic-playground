@@ -571,32 +571,45 @@ fn object_extent(id:u32)->vec3f {
     if id==11u {return vec3f(1.48,.50,.11);}
     return vec3f(.81,.52,.27);
 }
-fn trace(origin:vec3f,ray:vec3f,id:u32)->vec4f {
+// `coarse` is for coverage only: it accepts a hit within about a pixel and
+// gives up sooner, since the exact surface point isn't needed.
+fn trace(origin:vec3f,ray:vec3f,id:u32,coarse:bool)->vec4f {
     let extent=object_extent(id);
     let inv=1.0/ray;let slab0=(-extent-origin)*inv;let slab1=(extent-origin)*inv;
     let entry=min(slab0,slab1);let leave=max(slab0,slab1);
     let near=max(max(entry.x,entry.y),entry.z);let far=min(min(leave.x,leave.y),leave.z);
-    if near>far || far<0.0 {return vec4f(0,0,0,-1);}
+    // Misses return a lower bound on the angle between the ray and the shape
+    // in x, so the model pass can tell which pixels nothing can reach.
+    if near>far || far<0.0 {
+        let along=-dot(origin,ray);
+        let radius=length(extent);
+        if along<=0.0 {return vec4f(select(1.0,0.0,length(origin)<radius),0,0,-1);}
+        return vec4f(max(length(origin+ray*along)-radius,0.0)/along,0,0,-1);
+    }
     var travel=max(near,0.0);var p=origin+ray*travel;
-    let epsilon=max(.00006,travel/(u.screen.y*3.8)*.25);
+    var clearance=1.0;
+    let epsilon=max(.00006,travel/(u.screen.y*3.8)*select(.25,1.0,coarse));
+    let steps=select(100,40,coarse);
     // Beside a wall the 3D distance stays tiny while the ray runs parallel
     // to it. Within the slab, the outline distance over the ray's sideways
     // speed is still a safe step, so silhouettes no longer cost every step.
     let sideways=max(length(ray.xy),1e-3);
-    for(var i=0;i<100;i++) {
+    for(var i=0;i<steps;i++) {
         p=origin+ray*travel;
         let outline=profile(p.xy,id);
         let distance=extrude(outline,p.z);
         if distance<epsilon {return vec4f(p,travel);}
+        // Between samples the distance can fall to a fraction of this.
+        clearance=min(clearance,distance*.1/max(travel,1e-3));
         var step=distance*.8;
         if outline.x>0.0 && abs(p.z)<outline.y-outline.z {step=max(step,outline.x/sideways*.9);}
         travel+=step;
         if travel>far {break;}
     }
-    return vec4f(0,0,0,-1);
+    return vec4f(clearance,0,0,-1);
 }
 fn hit_object(id:u32,direction:vec3f)->vec4f {
-    return trace(local(CAMERA,id),normalize(local_direction(direction,id)),id);
+    return trace(local(CAMERA,id),normalize(local_direction(direction,id)),id,false);
 }
 fn object_range()->vec2u {
     if u.state.x>=4.0 {return vec2u(10,11);}
@@ -604,6 +617,10 @@ fn object_range()->vec2u {
     if u.state.x<1.0 || u.state.x==2.0 {return vec2u(0,0);}
     return vec2u(0,10);
 }
+// Objects whose swept box reaches the current tile, as bits from the first
+// object of the phase; everything else is skipped.
+var<private> relevant:u32=0xffffffffu;
+fn is_relevant(id:u32)->bool {return ((relevant>>(id-object_range().x))&1u)!=0u;}
 fn letter_present(id:u32)->bool {return id>=10u || exposure_frame()<u.flights[id].x;}
 fn letter_fade()->f32 {return smoothstep(0.0,30.0,u.state.y);}
 
@@ -708,7 +725,7 @@ fn render(screen:vec2f)->vec3f {
     var ids:array<u32,10>;
     var count=0u;
     for(var id=range.x;id<range.y;id++) {
-        if !letter_present(id) {continue;}
+        if !is_relevant(id) || !letter_present(id) {continue;}
         let hit=hit_object(id,direction);
         if hit.w<0.0 {continue;}
         var slot=count;
@@ -762,6 +779,8 @@ const TILE=8.0;
     let high_corner=low_corner+TILE+4.0;
     let range=object_range();
     var count=0u;
+    var mask=0u;
+    var reach=0.0;
     for(var id=range.x;id<range.y;id++) {
         shutter=0.0;
         let present_open=letter_present(id);
@@ -772,43 +791,67 @@ const TILE=8.0;
         if !present_open && !present_close {continue;}
         let low=min(a.xy,b.xy);let high=max(a.zw,b.zw);
         if any(high<low_corner) || any(low>high_corner) {continue;}
-        if a.x<-1e8 || b.x<-1e8 {count=MOTION_SAMPLES;continue;}
+        mask|=1u<<(id-range.x);
+        if a.x<-1e8 || b.x<-1e8 {count=MOTION_SAMPLES;reach=60000.0;continue;}
         let travel=max(length(b.xy-a.xy),length(b.zw-a.zw));
         count=max(count,clamp(u32(ceil(travel/2.0)),1u,MOTION_SAMPLES));
+        reach=max(reach,travel);
     }
     shutter=1.0;
-    return vec4f(f32(count),0,0,0);
+    // Samples, object mask and the farthest any of them moves, in pixels.
+    return vec4f(f32(count),f32(mask),min(reach,60000.0),0);
 }
-fn motion_samples(pixel:vec2f)->u32 {
-    return u32(textureLoad(tile_map,vec2i(pixel/TILE),0).x);
-}
+fn tile_at(pixel:vec2f)->vec4f {return textureLoad(tile_map,vec2i(pixel/TILE),0);}
 const NOTHING=255u;
 fn nearest_object(screen:vec2f)->vec2f {
     let direction=view_ray(screen);
     let range=object_range();
     var nearest=vec2f(f32(NOTHING),1e6);
     for(var id=range.x;id<range.y;id++) {
-        if !letter_present(id) {continue;}
-        let hit=hit_object(id,direction);
+        if !is_relevant(id) || !letter_present(id) {continue;}
+        let hit=trace(local(CAMERA,id),normalize(local_direction(direction,id)),id,true);
         if hit.w>=0.0 && hit.w<nearest.y {nearest=vec2f(f32(id),hit.w);}
     }
     return nearest;
 }
 
-// Centre-ray coverage: object id + 1 (0 for none) and hit distance.
+// Centre-ray coverage: object id + 1 (0 for none), hit distance, and the
+// clearance in pixels: how far the view could shift before this ray met a
+// different surface (an edge of the face it hits, or any other object).
 @fragment fn probe(v:Vertex)->@location(0) vec4f {
-    if motion_samples(v.position.xy)==0u {return vec4f(0);}
-    let nearest=nearest_object(v.uv);
-    if u32(nearest.x)==NOTHING {return vec4f(0);}
-    return vec4f(nearest.x+1.0,nearest.y,0,0);
+    let tile=tile_at(v.position.xy);
+    if tile.x==0.0 {return vec4f(0);}
+    relevant=u32(tile.y);
+    let direction=view_ray(v.uv);
+    let range=object_range();
+    var nearest=vec4f(0,1e6,0,0);
+    var clearance=1.0;
+    for(var id=range.x;id<range.y;id++) {
+        if !is_relevant(id) || !letter_present(id) {continue;}
+        let ray=normalize(local_direction(direction,id));
+        let hit=trace(local(CAMERA,id),ray,id,false);
+        if hit.w<0.0 {clearance=min(clearance,hit.x);continue;}
+        if hit.w>=nearest.y {continue;}
+        // Hits on a flat cap stay on it for the outline distance, shortened
+        // by how obliquely the cap is seen. Walls and bevels have none.
+        let shape=profile(hit.xyz.xy,id);
+        var inside=0.0;
+        if abs(hit.xyz.z)>shape.y-shape.z-.002 {inside=max(-shape.x-shape.z,0.0)*abs(ray.z)/hit.w;}
+        nearest=vec4f(f32(id+1u),hit.w,inside,0);
+    }
+    if nearest.x==0.0 {return vec4f(0,0,clearance*FOCAL*u.screen.y*.5,0);}
+    nearest.z=min(nearest.z,clearance)*FOCAL*u.screen.y*.5;
+    return nearest;
 }
 
 @fragment fn model(v:Vertex)->@location(0) vec4f {
     let background=textureSampleLevel(backdrop,linear,v.uv,0).rgb;
     let range=object_range();
     if range.x==range.y {return vec4f(background,1);}
-    let moving=motion_samples(v.position.xy);
+    let tile=tile_at(v.position.xy);
+    var moving=u32(tile.x);
     if moving==0u {return vec4f(background,1);}
+    relevant=u32(tile.y);
     let pixel=vec2i(v.position.xy);
     let limit=vec2i(textureDimensions(probe_map))-1;
     var probe:array<vec4f,9>;
@@ -828,6 +871,13 @@ fn nearest_object(screen:vec2f)->vec2f {
         edge=curvature>.05*footprint;
         samples=4u;
     }
+    // Nothing within reach of the motion: coverage can't change during the
+    // exposure, so one shade at mid-exposure (or the backdrop) is exact.
+    var settled=false;
+    if moving>1u && centre.z>tile.z*1.1+2.0 {
+        if centre.x<.5 {return vec4f(background,1);}
+        settled=true;
+    }
     // Interleaved gradient noise decorrelates neighbouring pixels' patterns.
     let jitter=fract(52.9829189*fract(dot(v.position.xy,vec2f(.06711056,.00583715))));
     // Shading jobs: screen position, shutter position and weight. One call
@@ -836,7 +886,9 @@ fn nearest_object(screen:vec2f)->vec2f {
     var job_count=1u;
     var sum=vec3f(0);
     jobs[0]=vec4f(v.uv,1,1);
-    if moving<=1u && edge {
+    if settled {
+        jobs[0].z=.5;
+    } else if moving<=1u && edge {
         // Static silhouettes and folds: full shading at each sample.
         job_count=samples;
         for(var i=0u;i<samples;i++) {
