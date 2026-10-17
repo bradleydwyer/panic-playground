@@ -69,7 +69,7 @@ works as an alias. Earlier trials of a curling burn and of falling, burning
 sheets were removed, but remain in the Git history (commits `4c43ab2`,
 `00a63d5` and `0fe8b55`).
 
-To continue into the glass scroller with studio lighting:
+To continue into the glass scroller, with musical lighting over a chrome bump wall:
 
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --seek 27
@@ -77,14 +77,14 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 
 | Flag | Experiment |
 | --- | --- |
-| `--scroller` | Glass lettering with reflective edges, on a shallow arc |
-| `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights |
-| `--scroller-lighting studio` | Steady lighting, selected by default |
-| `--scroller-backdrop chamber` | Dark chamber with the original tile wall faintly visible, selected by default |
-| `--scroller-backdrop wall` | Trial wall of chrome bumps on the original tile grid, tinted blue steel |
-| `--scroller-backdrop chrome` | The same bumps as plain chrome |
-| `--wall-shape 0.5` | Bump shape, from 0 (a cushion like the original tile) to 1 (a hemisphere) |
-| `--wall-strength 0.4` | Presence of the bump wall, from 0 (dark) to 1 |
+| `--scroller` | Glass lettering with reflective edges on a shallow arc, musical lighting and the chrome wall |
+| `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights; selected by default |
+| `--scroller-lighting studio` | Steady lighting |
+| `--scroller-backdrop chrome` | A dim wall of chrome bumps on the original tile grid, moving with it; selected by default |
+| `--scroller-backdrop wall` | The same bumps tinted blue steel by the tile image |
+| `--scroller-backdrop chamber` | Dark chamber with the original tile wall faintly visible |
+| `--wall-shape 0.5` | Bump shape, from 0 (a cushion like the original tile) to 1 (a hemisphere); 0.5 by default |
+| `--wall-strength 0.4` | Presence of the bump wall, from 0 (dark) to 1; 0.4 by default |
 | `--faithful` | Faithful HD: the original look, with smooth letters and dots |
 
 The scroller includes the laser transition and continues to the end of
@@ -94,7 +94,7 @@ left. In the app, **L** switches lighting, **B** cycles the backdrop,
 **[ / ]** change the bump shape and **- / =** the wall's strength, without
 restarting the music.
 
-Glass with studio lighting was chosen from three presets. The other two,
+Glass was chosen from three presets. The other two,
 coated titanium ribbons and straight sculpted extrusions, were removed from the
 code but remain in the Git history: commit `5e717ff` introduced them, and
 `ad08523` is the last commit that still has them.

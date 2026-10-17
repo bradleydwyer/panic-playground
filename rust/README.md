@@ -159,7 +159,7 @@ The geometry, gravity, laser treatment and particle motion are authored effects.
 The lighting uses analytic approximations; this isn't a physical simulation.
 The original destination is a plain light screen at this point;
 the modern view gives it a dark brushed-metal finish.
-Use `--scroller` to continue into the glass scroller with studio lighting.
+Use `--scroller` to continue into the glass scroller.
 Original/comparison mode shows the actual reference wipe, and faithful HD
 uses the original pixels during this transition.
 
@@ -171,13 +171,13 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --scr
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --faithful --seek 27
 ```
 
-The scroller uses glass lettering with studio lighting, on the arc described
-below; the glass has approximate tinted transmission and reflective edges.
-The vertical sine overlay passes in front of the lower row and behind the
-upper row. It follows the arc, with its depth crossover in the gap between
-rows, above a rippling dark chamber. The existing laser transition reveals the
-chamber; the preview ends after part 2's fade. `--scroller glass` is still
-accepted.
+By default the scroller uses glass lettering with musical lighting, on the
+arc described below, over the chrome bump wall (shape 0.5, strength 0.4); the
+glass has approximate tinted transmission and reflective edges. The vertical
+sine overlay passes in front of the lower row and behind the upper row. It
+follows the arc, with its depth crossover in the gap between rows. The
+existing laser transition reveals the wall; the preview ends after part 2's
+fade. `--scroller glass` is still accepted.
 
 Glass was chosen from three presets. The other two were `ribbons`, coated
 titanium lettering with curved row ends, and `sculpted`, the same material on
@@ -185,8 +185,8 @@ straight extrusions. They have been removed from the code but remain in the
 Git history: commit `5e717ff` introduced them, and `ad08523` is the last
 commit with them.
 
-`--scroller-backdrop` selects the background: `chamber` (default), `wall` or
-`chrome`. Press **B** to cycle them while playing. The original's background
+`--scroller-backdrop` selects the background: `chrome` (default), `wall` or
+`chamber`. Press **B** to cycle them while playing. The original's background
 is one 8 by 8 pixel tile repeated across the screen. Every tile uses the same
 64 palette entries, and each frame `palette()` loads them from an 8 by 8 window
 of a tile image, so the whole wall slides as the window moves. Two oscillators
@@ -199,9 +199,9 @@ checks that they reproduce every background pixel of the original's scroll
 frames. Until the first `palette()` call the original still shows the intro's
 flat grey there; the HD view shows the tile wall at rest instead, so the laser
 reveals the same wall that then begins to move. `chamber` shows the moving
-tiles dimly inside the dark chamber.
+tiles dimly inside a dark, rippling chamber.
 
-`wall` and `chrome` are trial treatments: chrome bumps on the original tile
+`chrome` and `wall` are authored treatments: chrome bumps on the original tile
 grid, 40 by 25 tiles in the 4:3 frame, continued across the wide screen.
 `wall` tints them with the tile image; `chrome` leaves them plain. `--wall-shape`
 (0 to 1, default 0.5; **[** and **]** in steps of 0.1) runs from a low cushion
@@ -222,15 +222,15 @@ only the wall's average colour, so they don't look textured. `--wall-strength` (
 default 0.4; **-** and **=** in steps of 0.1) sets how present the wall is.
 All of this is authored, not recovered from the original.
 
-`--scroller-lighting musical` uses relative loudness and bass/treble
+`--scroller-lighting musical` (default) uses relative loudness and bass/treble
 onsets from the original PCM. Bass pulses the blue/orange lights, their metal
 reflections and the small lettering; treble adds short white highlights.
 These are authored audio cues, not recovered tracker events. The levels adapt
 to loud passages so the response retains contrast. They come from the same
 causal analysis of the PCM as the intro's music lighting, computed once per
 clip: the bass cue reads the band below about 150 Hz, the treble cue the band
-above about 1.8 kHz. `--scroller-lighting studio` (default) holds the lights
-steady for material comparisons. Press **L** to toggle lighting while playing
+above about 1.8 kHz. `--scroller-lighting studio` holds the lights steady for
+material comparisons. Press **L** to toggle lighting while playing
 or paused. `--split` compares the
 modern view with the locally rendered original. Omit `--seek` for the full
 intro, or use `--seek 18` to start at the transition.

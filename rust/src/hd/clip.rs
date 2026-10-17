@@ -189,7 +189,7 @@ pub enum ScrollerBackdrop {
     Chamber = 0,
     /// Authored chrome bumps on the original tile grid, tinted by the tile image.
     Wall = 1,
-    /// The same bumps as plain chrome.
+    /// The same bumps as plain chrome; the default.
     Chrome = 2,
 }
 
@@ -416,10 +416,10 @@ impl Clip {
                 scroller_preview = Some(ScrollerPreview {
                     start_tick: scroll_start,
                     end_tick: scroll_end,
-                    lighting: ScrollerLighting::Studio,
+                    lighting: ScrollerLighting::Musical,
                     scroll,
                     glyphs: ScrollerGlyphs::new(&font, &frames[scroll_start].palette)?,
-                    backdrop_style: ScrollerBackdrop::Chamber,
+                    backdrop_style: ScrollerBackdrop::Chrome,
                     wall_shape: 0.5,
                     wall_strength: 0.4,
                     backdrop: walls
