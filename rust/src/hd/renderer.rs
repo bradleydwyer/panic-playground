@@ -18,7 +18,21 @@ struct Uniforms {
     next_palette: [[f32; 4]; 64],
     scroller: [f32; 4],
     scroll_light: [f32; 4],
+    /// Authored music-reactive lighting, measured from the clip's PCM (see
+    /// `clip::audio_features`): energy, onset, low band, accent, each 0..=1.
+    audio: [f32; 4],
+    /// Plate pose when the modern renderer's virtual shutter opened; w of the
+    /// centre carries the exposure length in sequence frames.
+    plate_open_center: [f32; 4],
+    plate_open_rotation: [f32; 4],
+    /// On-screen counter: shown, frames per second, milliseconds per frame.
+    hud: [f32; 4],
 }
+
+/// Authored exposure for the modern renderer's motion blur, in sequence
+/// frames (35 per second): about 1/100 s, a little under a 180° shutter at
+/// 60 Hz. The original has no motion blur; this only smooths the new 3D motion.
+const SHUTTER_FRAMES: f32 = 0.35;
 
 #[derive(Clone, Copy)]
 pub struct View {
@@ -26,6 +40,9 @@ pub struct View {
     pub size: (u32, u32),
     pub comparison: u32,
     pub modern: bool,
+    /// Frames per second and milliseconds per frame for the on-screen
+    /// counter, or `None` to hide it (captures never show it).
+    pub hud: Option<[f32; 2]>,
 }
 
 pub struct Renderer {
@@ -41,6 +58,8 @@ pub struct Renderer {
     background: wgpu::RenderPipeline,
     stars: wgpu::RenderPipeline,
     foreground: wgpu::RenderPipeline,
+    hud: wgpu::RenderPipeline,
+    hud_visible: bool,
     srgb: bool,
     modern_renderer: Modern,
     modern_view: bool,
@@ -213,6 +232,7 @@ impl Renderer {
             "foreground",
             Some(wgpu::BlendState::ALPHA_BLENDING),
         );
+        let hud = pipeline("fullscreen", "hud", Some(wgpu::BlendState::ALPHA_BLENDING));
         let modern_renderer = Modern::new(&device, &layout, &uniform, &reference, format);
         Ok((
             Self {
@@ -228,6 +248,8 @@ impl Renderer {
                 background,
                 stars,
                 foreground,
+                hud,
+                hud_visible: false,
                 srgb: format.is_srgb(),
                 modern_renderer,
                 modern_view: false,
@@ -244,7 +266,9 @@ impl Renderer {
             size,
             comparison,
             modern,
+            hud,
         } = view;
+        self.hud_visible = hud.is_some();
         self.modern_view = modern;
         self.scroller = clip.scroller.is_some();
         self.tile_transition = clip.transition.as_ref().is_some_and(|cut| {
@@ -322,6 +346,9 @@ impl Renderer {
             + frame.state.tick as f32 * 0.5
             + (time * 70.0).fract() as f32 * 0.5;
         let (plate_center, plate_rotation) = plate_transform(sequence_frame);
+        let (mut plate_open_center, plate_open_rotation) =
+            plate_transform(sequence_frame - SHUTTER_FRAMES);
+        plate_open_center[3] = SHUTTER_FRAMES;
         let mut transition = [0.0; 4];
         let mut tile_order = [[0.0; 4]; 40];
         let mut next_palette = [[0.0; 4]; 64];
@@ -330,7 +357,8 @@ impl Renderer {
                 (time * 70.0 - cut.start_tick as f64) as f32,
                 1.0,
                 (cut.end_tick - cut.start_tick) as f32,
-                cut.style as u32 as f32,
+                // Formerly the trial style; only the laser cut remains.
+                0.0,
             ];
             for (i, &rank) in cut.order.iter().enumerate() {
                 tile_order[i / 4][i % 4] = rank as f32;
@@ -392,6 +420,10 @@ impl Renderer {
             next_palette,
             scroller,
             scroll_light,
+            audio: clip.audio_at(time),
+            plate_open_center,
+            plate_open_rotation,
+            hud: hud.map_or([0.0; 4], |[fps, ms]| [1.0, fps, ms, 0.0]),
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
@@ -406,8 +438,30 @@ impl Renderer {
                 self.tile_transition,
                 self.scroller,
             );
-            return;
+        } else {
+            self.draw_faithful(encoder, view);
         }
+        if self.hud_visible {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Frame-rate counter"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_pipeline(&self.hud);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    fn draw_faithful(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("HD intro"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -75,22 +75,54 @@ it from the repository root after importing your data:
 cargo run --release --locked --features hires --bin panic-hd -- --modern
 ```
 
-The modern mode renders extruded geometric letters in perspective, with bevels,
-metal reflections, surface texture, ambient occlusion, HDR lighting and bloom.
+The modern mode renders extruded geometric models in perspective, with bevels,
+reflections, surface texture, ambient occlusion, HDR lighting and bloom.
 The logo moves from cool metal to incandescent metal on the right. Slow surface
 ripples and flowing texture shift its reflections like semi-liquid metal, with
 more movement at the hot end. Its starfield has 3,200 fine, round stars with
 depth, colour and luminosity variation. From 12 seconds, an authored warp ramp
 accelerates them into long, narrow radial streaks as the music builds.
 
+The modern lighting also follows the soundtrack. While the clip is prepared,
+the generated PCM is measured once per 70 Hz frame: overall energy, onsets,
+bass and strong accents. The direct lights on the metal, the logo's glow and
+bloom breathe with the energy and bass and pulse on hits, and the big downbeat
+just after the logo lands re-strikes part of its white flash. This is an
+authored effect; the music, its timing and its PCM are unchanged, and seeking
+gives the same lighting as uninterrupted playback.
+
 The opening still spells FUTURE CREW as individual letters fly past the camera.
 Their perspective motion is fitted locally to the reference frames, with a
-farther starting position, gradual fade-in and slightly translucent, thicker
-block forms. The plate also fades in, then uses a continuous quaternion tumble
-and forward motion, following the recorded sequence's two turns and approach. This is an authored
-approximation: the original Rust decoder plays stored animation frames, not 3D
-rotation equations. These are reconstructed forms, not recovered original models.
-The closing panels follow the Rust door timing directly.
+farther starting position, gradual fade-in and thicker block forms. The
+letters are tinted glass: light refracts through each block, with internal
+reflection and slight dispersion, and the rendered starfield shows through
+them. Light trapped inside leaks out along the edges, so they read against
+black space. The plate also fades in, then uses a continuous quaternion tumble
+and forward motion, following the recorded sequence's two turns and approach.
+This is an authored approximation: the original Rust decoder plays stored
+animation frames, not 3D rotation equations. These are reconstructed forms,
+not recovered original models.
+
+The models also reflect the scene. The space backdrop, stars and doors are
+rendered first, and on-screen reflections and refraction sample it. Elsewhere
+a procedural sky of the same character fills in, with stars that stream
+radially and stretch with the warp, so the tumbling plate reflects the warp
+too. Motion blur uses a virtual exposure of about 1/100 s: the letters and
+plate are traced at several moments within it, in proportion to how far they
+move on screen. Silhouettes and bevels are supersampled where a per-pixel
+coverage probe finds them. The glass, sky, exposure and sampling are authored;
+the original has none of them.
+
+The closing panels follow the Rust door timing directly, interpolated between
+70 Hz ticks. Their geometry follows the palette maths of `Intro::doors`: the
+open rows end at door/2 and the brighter rim row sits at door×8/14. The modern
+renderer reads that dark strip as each door's inner face seen in perspective
+and the rim as its front lip; this is an interpretation. The lip stops where
+the original's rim ends, about 0.22 of the height from the centre, and becomes
+the logo screen's blue rail. The bevelled lip, contact shadow, cool light
+spilling from the warp through the narrowing gap, the bloom pulse as the doors
+settle, and the quick fade of the stars into the recessed logo panel are all
+authored.
 The soundtrack, cues and scene boundaries use the existing port unchanged.
 The logo appears at about 14.57 seconds; the preview holds there and ends its
 audio after another 4.91 seconds. The logo material keeps animating after the
@@ -101,22 +133,11 @@ Add `--transition` to continue through the square wipe into part 2. It reads
 the 16 by 10 activation order from your local data and follows `Scroller`'s
 200-tick hold and 169-tick wipe at 70 Hz. That places the wipe at about
 18.34–20.76 seconds, with uninterrupted original music. The preview then holds
-for one second, ending before the scrolling text begins.
+for one second, ending before the scrolling text begins. `--transition`
+selects modern mode automatically and supports `--split`; `--laser` is kept as
+an alias. `--seek 17.8` starts just before the wipe.
 
-The modern cut effect uses tessellated 3D sheets with asymmetric curls, narrow
-cut walls and depth testing. A ragged incandescent edge burns towards each
-square's centre, leaving a scorched band, embers and wisps of smoke. Moving
-reflections pick out the curved surfaces; nearby cuts illuminate the exposed
-brushed metal underneath. The logo's surface keeps moving during the wipe.
-
-Use `--tear` for an alternative that peels the squares loose and drops them
-under gravity. They curl like thin paper, flutter slightly and burn inward
-while falling. Each square burns away in about 0.51 seconds, compared with
-0.14 seconds in the reference wipe. The activation order and music stay the
-same; the last pieces disappear around 21.13 seconds, within the final hold.
-`--tear` selects modern mode automatically and also works with `--split`.
-
-Use `--laser` for an intact-plate alternative. Cutting points trace each tile's
+The modern view draws the wipe as a laser cut. Cutting points trace each tile's
 perimeter over 0.21 seconds, leaving a narrow tab on the top edge. The plate
 tips slightly around that attachment until it releases at 0.32 seconds, then
 accelerates directly away from the camera, like a floor giving way beneath an
@@ -125,14 +146,18 @@ the intact pieces shrink; depth haze blends them into the backdrop before they
 are removed at 1.10 seconds. Glowing edges, sparks and illuminated smoke shift
 from cool blue on the left to hot orange on the right. Sparks come from the
 moving cutting point and final severing flash; smoke rises towards the camera.
-Attachment positions vary deterministically between tiles. The pieces keep
-their physical size and vanish during the existing final hold. Several cuts overlap to
-retain the original activation cadence. `--laser` also selects modern mode
-and supports `--split`; `--seek 17.8` starts just before the transition.
+Nearby cuts light the brushed metal underneath. Attachment positions vary
+deterministically between tiles. The pieces keep their physical size and
+vanish during the existing final hold. Several cuts overlap to retain the
+original activation cadence. The logo's surface keeps moving during the wipe.
 
-The geometry, gravity, laser and burn treatments, and particle motion are authored effects.
-The lighting uses analytic approximations; this isn't a cloth or combustion
-simulation. The original destination is a plain light screen at this point;
+Earlier trials, a curling burn and a version with falling, burning sheets,
+have been removed from the code. They remain in the Git history: commits
+`4c43ab2`, `00a63d5` and `0fe8b55` introduced them.
+
+The geometry, gravity, laser treatment and particle motion are authored effects.
+The lighting uses analytic approximations; this isn't a physical simulation.
+The original destination is a plain light screen at this point;
 the modern view gives it a dark brushed-metal finish.
 Use `--scroller` to continue into the selected glass scroller with studio lighting.
 Original/comparison mode shows the actual reference wipe, and faithful HD
@@ -196,7 +221,14 @@ optical simulation. All fields are generated locally in memory.
 | C | Compare original on the left with the selected HD mode on the right |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
+| P | Show or hide the frame-rate counter |
+| V | Toggle vsync |
 | Escape | Quit |
+
+`--fps` starts with the frame-rate counter in the top-left corner, showing
+frames per second and milliseconds per frame. With vsync the rate can't exceed
+the display's refresh rate; `--no-vsync`, or V, shows how fast frames can
+actually be drawn. Captures never include the counter.
 
 Without `--modern`, the faithful HD mode retains the original painted artwork,
 using interpolated contours and shading. Its detail is limited by the source

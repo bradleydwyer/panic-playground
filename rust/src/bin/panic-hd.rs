@@ -2,7 +2,7 @@ use panic_demo::{
     data::Data,
     engine::SAMPLE_RATE,
     hd::{
-        clip::{Clip, ScrollerLighting, ScrollerStyle, TransitionStyle},
+        clip::{Clip, ScrollerLighting, ScrollerStyle},
         renderer::{Renderer, View},
     },
 };
@@ -29,10 +29,10 @@ struct Options {
     comparison: u32,
     modern: bool,
     transition: bool,
-    tear: bool,
-    laser: bool,
     scroller: Option<ScrollerStyle>,
     scroller_lighting: ScrollerLighting,
+    fps: bool,
+    vsync: bool,
     seconds: Option<f64>,
 }
 impl Options {
@@ -51,10 +51,10 @@ impl Options {
             comparison: 0,
             modern: false,
             transition: false,
-            tear: false,
-            laser: false,
             scroller: None,
             scroller_lighting: ScrollerLighting::Studio,
+            fps: false,
+            vsync: true,
             seconds: None,
         };
         let mut args = std::env::args().skip(1).peekable();
@@ -92,13 +92,11 @@ impl Options {
                 "--original" => o.comparison = 1,
                 "--split" => o.comparison = 2,
                 "--modern" => o.modern = true,
-                "--transition" => o.transition = true,
-                "--tear" => {
-                    o.tear = true;
-                    o.modern = true;
-                }
-                "--laser" => {
-                    o.laser = true;
+                "--fps" => o.fps = true,
+                "--no-vsync" => o.vsync = false,
+                // --laser is kept as an alias from the transition trials.
+                "--transition" | "--laser" => {
+                    o.transition = true;
                     o.modern = true;
                 }
                 "--scroller" => {
@@ -123,7 +121,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         3D letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the curling square burn\n  --tear           Curl, burn inward and drop squares under gravity (modern)\n  --laser          Cut, sag and release intact metal squares (modern)\n  --scroller [MODE] Continue into glass (default), ribbons or sculpted lettering\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG · 1/2/3: scroller preset · L: lighting · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2, with the laser transition by default."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller [MODE] Continue into glass (default), ribbons or sculpted lettering\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\n1/2/3: scroller preset · L: scroller lighting · P: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition."
                     );
                     std::process::exit(0);
                 }
@@ -165,6 +163,16 @@ fn set_audio(
     Ok(samples.len())
 }
 
+/// With vsync the rate is capped at the display's refresh rate; without it
+/// the counter shows how fast frames can actually be produced.
+fn present_mode(vsync: bool) -> wgpu::PresentMode {
+    if vsync {
+        wgpu::PresentMode::Fifo
+    } else {
+        wgpu::PresentMode::AutoNoVsync
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("panic-hd: {error}");
@@ -177,26 +185,11 @@ fn run() -> Result<(), String> {
     let data = Data::new(&o.data)?;
     let mut clip = if let Some(style) = o.scroller {
         Clip::load_scroller(&data, style, o.scroller_lighting)?
-    } else if o.laser {
-        Clip::load_laser(&data)?
-    } else if o.tear {
-        Clip::load_tear(&data)?
     } else if o.transition {
         Clip::load_transition(&data)?
     } else {
         Clip::load(&data)?
     };
-    if o.scroller.is_some() {
-        if o.tear {
-            clip.transition.as_mut().unwrap().style = TransitionStyle::Falling;
-        }
-        if o.transition {
-            clip.transition.as_mut().unwrap().style = TransitionStyle::Burn;
-        }
-        if o.laser {
-            clip.transition.as_mut().unwrap().style = TransitionStyle::Laser;
-        }
-    }
     o.seek = if o.seek == f64::MAX {
         clip.logo_ready_at // --logo: finished reveal, paused.
     } else {
@@ -218,6 +211,7 @@ fn run() -> Result<(), String> {
                 size: o.size,
                 comparison: o.comparison,
                 modern: o.modern,
+                hud: None,
             },
             &o.out,
             format,
@@ -270,7 +264,7 @@ fn run() -> Result<(), String> {
         format,
         width: width.max(1),
         height: height.max(1),
-        present_mode: wgpu::PresentMode::Fifo,
+        present_mode: present_mode(o.vsync),
         desired_maximum_frame_latency: 2,
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
         view_formats: vec![],
@@ -297,6 +291,10 @@ fn run() -> Result<(), String> {
     let runtime = Instant::now();
     let mut presented = 0_u64;
     let mut last_frame = Instant::now();
+    // Frames per second and milliseconds per frame, averaged over ~0.25 s.
+    let mut rate = [0.0_f32; 2];
+    let mut rate_frames = 0_u32;
+    let mut rate_start = Instant::now();
     'preview: loop {
         let now = Instant::now();
         let delta = now.duration_since(last_frame).as_secs_f64();
@@ -370,6 +368,12 @@ fn run() -> Result<(), String> {
                             };
                         }
                     }
+                    Keycode::P => o.fps = !o.fps,
+                    Keycode::V => {
+                        o.vsync = !o.vsync;
+                        config.present_mode = present_mode(o.vsync);
+                        surface.configure(&renderer.device, &config);
+                    }
                     Keycode::S => capture = true,
                     Keycode::F => {
                         o.fullscreen = !o.fullscreen;
@@ -404,6 +408,7 @@ fn run() -> Result<(), String> {
                     size: o.size,
                     comparison: o.comparison,
                     modern: o.modern,
+                    hud: None,
                 },
                 &o.out,
                 format,
@@ -455,6 +460,7 @@ fn run() -> Result<(), String> {
                 size: (w, h),
                 comparison: o.comparison,
                 modern: o.modern,
+                hud: o.fps.then_some(rate),
             },
         );
         let frame = match surface.get_current_texture() {
@@ -478,6 +484,16 @@ fn run() -> Result<(), String> {
         renderer.queue.submit([encoder.finish()]);
         renderer.queue.present(frame);
         presented += 1;
+        rate_frames += 1;
+        let elapsed = rate_start.elapsed().as_secs_f32();
+        if elapsed >= 0.25 {
+            rate = [
+                rate_frames as f32 / elapsed,
+                elapsed * 1000.0 / rate_frames as f32,
+            ];
+            rate_frames = 0;
+            rate_start = Instant::now();
+        }
     }
     device.pause();
     println!(

@@ -3,6 +3,11 @@ struct Controls {
     screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode
     state: vec4f,  // reference phase/tick/door, temporal shape interpolation
     misc: vec4f,   // composition aspect, sRGB output, logo reveal time, modern style
+    flights: array<vec4f,10>, plate_center: vec4f, plate_rotation: vec4f,
+    transition: vec4f, tile_order: array<vec4f,40>, next_palette: array<vec4f,64>,
+    scroller: vec4f, scroll_light: vec4f,
+    audio: vec4f, plate_open_center: vec4f, plate_open_rotation: vec4f,
+    hud: vec4f,    // on-screen counter: shown, frames per second, milliseconds per frame
 }
 @group(0) @binding(0) var<uniform> u: Controls;
 @group(0) @binding(1) var current: texture_2d<f32>;
@@ -129,4 +134,43 @@ struct StarVertex {
     let original=textureSampleLevel(reference,linear,p,0).rgb;
     let edge_light=0.88+0.12*diffuse;
     return vec4f(output(original*edge_light),alpha);
+}
+
+// Frame-rate counter. A hand-drawn 3 × 5 pixel font, five rows of three bits
+// each, for "0123456789.FPSM" and a space; no font file is involved.
+const HUD_GLYPHS=array<u32,16>(31599u,11415u,29671u,29647u,23497u,31183u,31215u,29257u,31727u,31695u,2u,31140u,27556u,14478u,24557u,0u);
+fn hud_char(i:u32,fps:f32,ms:f32)->u32 {
+    // "NNN FPS NN.N MS", without leading zeros.
+    let f=u32(clamp(round(fps),0.0,999.0));
+    let m=u32(clamp(round(ms*10.0),0.0,999.0));
+    switch i {
+        case 0u: {if f<100u {return 15u;} return f/100u;}
+        case 1u: {if f<10u {return 15u;} return (f/10u)%10u;}
+        case 2u: {return f%10u;}
+        case 4u: {return 11u;}
+        case 5u: {return 12u;}
+        case 6u: {return 13u;}
+        case 8u: {if m<100u {return 15u;} return m/100u;}
+        case 9u: {return (m/10u)%10u;}
+        case 10u: {return 10u;}
+        case 11u: {return m%10u;}
+        case 13u: {return 14u;}
+        case 14u: {return 13u;}
+        default: {return 15u;}
+    }
+}
+@fragment fn hud(v:Vertex)->@location(0) vec4f {
+    let scale=max(2.0,floor(u.screen.y/300.0));
+    let p=floor((v.position.xy-vec2f(12.0))/scale);
+    if any(p<vec2f(0)) || any(p>=vec2f(63,9)) {discard;}
+    let q=p-vec2f(2.0);
+    var ink=0.0;
+    if q.x>=0.0 && q.y>=0.0 && q.y<5.0 {
+        let cell=u32(q.x)/4u;let column=u32(q.x)%4u;
+        if cell<15u && column<3u {
+            let bits=HUD_GLYPHS[hud_char(cell,u.hud.y,u.hud.z)];
+            ink=f32((bits>>((4u-u32(q.y))*3u+(2u-column)))&1u);
+        }
+    }
+    return vec4f(output(mix(vec3f(0),vec3f(1.0,.92,.55),ink)),mix(.6,1.0,ink));
 }
