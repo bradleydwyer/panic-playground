@@ -75,8 +75,8 @@ it from the repository root after importing your data:
 cargo run --release --locked --features hires --bin panic-hd -- --modern
 ```
 
-The modern mode renders extruded geometric letters in perspective, with bevels,
-metal reflections, surface texture, ambient occlusion, HDR lighting and bloom.
+The modern mode renders extruded geometric models in perspective, with bevels,
+reflections, surface texture, ambient occlusion, HDR lighting and bloom.
 The logo moves from cool metal to incandescent metal on the right. Slow surface
 ripples and flowing texture shift its reflections like semi-liquid metal, with
 more movement at the hot end. Its starfield has 3,200 fine, round stars with
@@ -93,11 +93,26 @@ gives the same lighting as uninterrupted playback.
 
 The opening still spells FUTURE CREW as individual letters fly past the camera.
 Their perspective motion is fitted locally to the reference frames, with a
-farther starting position, gradual fade-in and slightly translucent, thicker
-block forms. The plate also fades in, then uses a continuous quaternion tumble
-and forward motion, following the recorded sequence's two turns and approach. This is an authored
-approximation: the original Rust decoder plays stored animation frames, not 3D
-rotation equations. These are reconstructed forms, not recovered original models.
+farther starting position, gradual fade-in and thicker block forms. The
+letters are tinted glass: light refracts through each block, with internal
+reflection and slight dispersion, and the rendered starfield shows through
+them. Light trapped inside leaks out along the edges, so they read against
+black space. The plate also fades in, then uses a continuous quaternion tumble
+and forward motion, following the recorded sequence's two turns and approach.
+This is an authored approximation: the original Rust decoder plays stored
+animation frames, not 3D rotation equations. These are reconstructed forms,
+not recovered original models.
+
+The models also reflect the scene. The space backdrop, stars and doors are
+rendered first, and on-screen reflections and refraction sample it. Elsewhere
+a procedural sky of the same character fills in, with stars that stream
+radially and stretch with the warp, so the tumbling plate reflects the warp
+too. Motion blur uses a virtual exposure of about 1/100 s: the letters and
+plate are traced at several moments within it, in proportion to how far they
+move on screen. Silhouettes and bevels are supersampled where a per-pixel
+coverage probe finds them. The glass, sky, exposure and sampling are authored;
+the original has none of them.
+
 The closing panels follow the Rust door timing directly, interpolated between
 70 Hz ticks. Their geometry follows the palette maths of `Intro::doors`: the
 open rows end at door/2 and the brighter rim row sits at door×8/14. The modern

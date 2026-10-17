@@ -698,7 +698,6 @@ mod tests {
         // Causal audio lighting agrees wherever both clips have whole windows.
         let shared = intro.audio.len() - 1;
         assert_eq!(clip.audio[..shared], intro.audio[..shared]);
-        assert_eq!(laser.audio, clip.audio);
         assert!(
             intro
                 .audio

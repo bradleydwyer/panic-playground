@@ -19,7 +19,16 @@ struct Uniforms {
     /// Authored music-reactive lighting, measured from the clip's PCM (see
     /// `clip::audio_features`): energy, onset, low band, accent, each 0..=1.
     audio: [f32; 4],
+    /// Plate pose when the modern renderer's virtual shutter opened; w of the
+    /// centre carries the exposure length in sequence frames.
+    plate_open_center: [f32; 4],
+    plate_open_rotation: [f32; 4],
 }
+
+/// Authored exposure for the modern renderer's motion blur, in sequence
+/// frames (35 per second): about 1/100 s, a little under a 180° shutter at
+/// 60 Hz. The original has no motion blur; this only smooths the new 3D motion.
+const SHUTTER_FRAMES: f32 = 0.35;
 
 #[derive(Clone, Copy)]
 pub struct View {
@@ -314,6 +323,9 @@ impl Renderer {
             + frame.state.tick as f32 * 0.5
             + (time * 70.0).fract() as f32 * 0.5;
         let (plate_center, plate_rotation) = plate_transform(sequence_frame);
+        let (mut plate_open_center, plate_open_rotation) =
+            plate_transform(sequence_frame - SHUTTER_FRAMES);
+        plate_open_center[3] = SHUTTER_FRAMES;
         let mut transition = [0.0; 4];
         let mut tile_order = [[0.0; 4]; 40];
         let mut next_palette = [[0.0; 4]; 64];
@@ -351,6 +363,8 @@ impl Renderer {
             tile_order,
             next_palette,
             audio: clip.audio_at(time),
+            plate_open_center,
+            plate_open_rotation,
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
