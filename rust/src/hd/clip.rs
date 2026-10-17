@@ -371,8 +371,8 @@ impl Clip {
                 scroller_preview = Some(ScrollerPreview {
                     start_tick: scroll_start,
                     end_tick: scroll_end,
-                    style: ScrollerStyle::Ribbons,
-                    lighting: ScrollerLighting::Musical,
+                    style: ScrollerStyle::Glass,
+                    lighting: ScrollerLighting::Studio,
                     audio: audio_lighting(&pcm, frames.len()),
                     backdrop: backdrop_palettes(&frames, scroll_start, transition.palette),
                 });

@@ -134,13 +134,16 @@ The geometry, gravity, laser and burn treatments, and particle motion are author
 The lighting uses analytic approximations; this isn't a cloth or combustion
 simulation. The original destination is a plain light screen at this point;
 the modern view gives it a dark brushed-metal finish.
-Use `--scroller ribbons` to continue into the experimental modern scroller.
+Use `--scroller` to continue into the selected glass scroller with studio lighting.
 Original/comparison mode shows the actual reference wipe, and faithful HD
 uses the original pixels during this transition.
 
 ### Scroller experiments
 
+Glass with studio lighting is the selected treatment; bare `--scroller` selects both.
+
 ```sh
+cargo run --release --locked --features hires --bin panic-hd -- --scroller --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller ribbons --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller sculpted --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller glass --seek 27
@@ -148,16 +151,18 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller glass
 
 `ribbons` bends the ends of coated titanium lettering into depth. `sculpted`
 keeps the same material on straight extrusions. `glass` uses the ribbon shape
-with approximate tinted transmission and reflective edges. The sine overlay
-weaves through their depth above a rippling dark chamber. The three modes
-share the reference frames, music and scene boundaries. The existing laser
+with approximate tinted transmission and reflective edges. The vertical sine
+overlay passes in front of the lower row and behind the upper row. It follows
+the ribbon curvature, with its depth crossover in the gap between rows, above
+a rippling dark chamber. The three modes share the reference frames, music
+and scene boundaries. The existing laser
 transition reveals the chamber; the preview ends after part 2's fade.
 
-`--scroller-lighting musical` (default) uses relative loudness and bass/treble
+`--scroller-lighting musical` uses relative loudness and bass/treble
 onsets from the original PCM. Bass pulses the blue/orange lights, their metal
 reflections and the small lettering; treble adds short white highlights.
 These are authored audio cues, not recovered tracker events. The levels adapt
-to loud passages so the response retains contrast. `--scroller-lighting studio`
+to loud passages so the response retains contrast. `--scroller-lighting studio` (default)
 holds the lights steady for material comparisons. Press **1 / 2 / 3** to change the preset and
 **L** to toggle lighting while playing or paused. `--split` compares the
 modern view with the locally rendered original. Omit `--seek` for the full

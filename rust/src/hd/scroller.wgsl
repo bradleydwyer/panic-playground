@@ -49,6 +49,12 @@ fn ribbon_z(x:f32)->f32 {
     let edge=max(abs(x)/aspect()-.48,0.0)/.52;
     return -1.5*edge*edge;
 }
+fn filament_z(p:vec2f)->f32 {
+    // Keep a fixed row order: the vertical text passes over the lower row and
+    // under the upper row. Follow the ribbon's bend so this holds at its ends.
+    // The depth crossover stays in the gap between the two horizontal rows.
+    return ribbon_z(p.x)-.075+mix(.30,-.30,smoothstep(-.08,.08,p.y));
+}
 fn extrusion(d:f32,z:f32,half_depth:f32,bevel:f32)->f32 {
     let q=vec2f(d+bevel,abs(z)-half_depth+bevel);
     return min(max(q.x,q.y),0.0)+length(max(q,vec2f(0)))-bevel;
@@ -57,10 +63,9 @@ fn shapes(p:vec3f)->vec2f {
     let f=field(uv_at(p.xy));
     let distance=-(f-vec2f(0,.20))*.0086;
     let letter=extrusion(distance.x,p.z-ribbon_z(p.x)+.075,.12,.018);
-    // The original sine displacement is already in the field. Depth makes
-    // that same overlay weave in front of and behind the larger lettering.
-    let wave_z=.13+.24*sin(p.y*3.8-clock()*1.3);
-    let filament=extrusion(distance.y,p.z-wave_z,.018,.009);
+    // The original sine displacement is already in the field. Authored depth
+    // fixes its layering relative to the horizontal rows throughout playback.
+    let filament=extrusion(distance.y,p.z-filament_z(p.xy),.018,.009);
     return vec2f(letter,filament);
 }
 fn scene(p:vec3f)->vec2f {
@@ -175,8 +180,11 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
         let refracted=normalize(ray+n*.085);
         let transmitted=chamber(refracted)*mix(vec3f(.55,.83,.96),vec3f(.96,.65,.36),warm(p.x));
         color=mix(transmitted*1.35,color,.065+fresnel*.75);
-        let behind=field(uv_at(p.xy+n.xy*.025)).y;
-        color+=heat(p.x)*smoothstep(-.5,.8,behind)*.55;
+        let transmitted_xy=p.xy+n.xy*.025;
+        let behind=field(uv_at(transmitted_xy)).y;
+        if filament_z(transmitted_xy)<p.z-.02 {
+            color+=heat(p.x)*smoothstep(-.5,.8,behind)*.55;
+        }
         color+=heat(p.x)*pow(1.0-face,2.0)*lighting(.462,.20+energy*.25+bass()*.85+attack()*.7);
     }
     return color;

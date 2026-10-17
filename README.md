@@ -79,19 +79,19 @@ cargo run --release --locked --features hires --bin panic-hd -- --laser --seek 1
 Omit `--seek 17.8` to watch the whole intro. Add `--split` to compare with the
 original. `--laser` and `--tear` both select modern mode automatically.
 
-To continue into the scroller experiments:
+To continue into the selected glass scroller with studio lighting:
 
 ```sh
-cargo run --release --locked --features hires --bin panic-hd -- --scroller ribbons --seek 27
+cargo run --release --locked --features hires --bin panic-hd -- --scroller --seek 27
 ```
 
 | Flag | Experiment |
 | --- | --- |
 | `--scroller ribbons` | Coated titanium lettering with ends curving into depth |
 | `--scroller sculpted` | Straight extruded lettering for comparison |
-| `--scroller glass` | Curved tinted-glass treatment with reflective edges |
-| `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights (default) |
-| `--scroller-lighting studio` | Steady lights for inspecting shape and material |
+| `--scroller` or `--scroller glass` | Selected curved glass treatment with reflective edges |
+| `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights |
+| `--scroller-lighting studio` | Steady lighting, selected by default |
 
 The scroller modes include the laser transition and continue to the end of
 part 2, around 42 seconds. Omit `--seek` for the complete intro; use `--seek 18`
@@ -99,6 +99,9 @@ to watch the tiles reveal the new scene. Add `--split` for the original on the
 left. In the app, **1 / 2 / 3** switch presets and **L** switches lighting without
 restarting the music. Existing `--transition` and `--tear` can also be combined
 with `--scroller` to compare the earlier transitions.
+
+The vertical sine scroller passes in front of the lower horizontal row and
+behind the upper row, where it remains visible through the glass.
 
 The large lettering and sine overlay use smoothed contours from locally
 rendered reference frames. Depth, ribbon bending, materials and lighting are

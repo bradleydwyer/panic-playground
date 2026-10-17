@@ -54,10 +54,10 @@ impl Options {
             tear: false,
             laser: false,
             scroller: None,
-            scroller_lighting: ScrollerLighting::Musical,
+            scroller_lighting: ScrollerLighting::Studio,
             seconds: None,
         };
-        let mut args = std::env::args().skip(1);
+        let mut args = std::env::args().skip(1).peekable();
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--data" => o.data = args.next().ok_or("--data needs a directory")?.into(),
@@ -102,11 +102,11 @@ impl Options {
                     o.modern = true;
                 }
                 "--scroller" => {
-                    o.scroller = Some(
-                        args.next()
-                            .ok_or("--scroller needs ribbons, sculpted or glass")?
-                            .parse()?,
-                    );
+                    o.scroller = Some(if args.peek().is_some_and(|arg| !arg.starts_with('-')) {
+                        args.next().unwrap().parse()?
+                    } else {
+                        ScrollerStyle::Glass
+                    });
                     o.modern = true;
                 }
                 "--scroller-lighting" => {
@@ -114,7 +114,7 @@ impl Options {
                         .next()
                         .ok_or("--scroller-lighting needs musical or studio")?
                         .parse()?;
-                    o.scroller.get_or_insert(ScrollerStyle::Ribbons);
+                    o.scroller.get_or_insert(ScrollerStyle::Glass);
                     o.modern = true;
                 }
                 "--logo" => {
@@ -123,7 +123,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         3D letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the curling square burn\n  --tear           Curl, burn inward and drop squares under gravity (modern)\n  --laser          Cut, sag and release intact metal squares (modern)\n  --scroller MODE  Continue into ribbons, sculpted or glass lettering\n  --scroller-lighting MODE  Musical (default) or studio lighting\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG · 1/2/3: scroller preset · L: lighting · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2, with the laser transition by default."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         3D letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the curling square burn\n  --tear           Curl, burn inward and drop squares under gravity (modern)\n  --laser          Cut, sag and release intact metal squares (modern)\n  --scroller [MODE] Continue into glass (default), ribbons or sculpted lettering\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG · 1/2/3: scroller preset · L: lighting · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2, with the laser transition by default."
                     );
                     std::process::exit(0);
                 }
