@@ -1,11 +1,4 @@
-struct Controls {
-    screen:vec4f, state:vec4f, misc:vec4f,
-    flights:array<vec4f,10>, plate_center:vec4f, plate_rotation:vec4f,
-    transition:vec4f, tile_order:array<vec4f,40>, next_palette:array<vec4f,64>,
-    scroller:vec4f, scroll_light:vec4f,
-    audio:vec4f, // authored music response: energy, onset, low band, accent
-}
-@group(0) @binding(0) var<uniform> u:Controls;
+// The uniform block `u: Controls` (binding 0) is prepended by renderer::wgsl.
 @group(0) @binding(1) var scene:texture_2d<f32>;
 @group(0) @binding(2) var bloom:texture_2d<f32>;
 @group(0) @binding(3) var reference:texture_2d<f32>;

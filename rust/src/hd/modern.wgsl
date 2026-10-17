@@ -1,17 +1,7 @@
 // New geometric models, evaluated in 3D. This shader does not sample the old
 // artwork for geometry. Letterforms and the continuous plate tumble are new;
 // flights fit the locally decoded sequence. Doors use the Rust timeline.
-struct Controls {
-    screen:vec4f, state:vec4f, misc:vec4f,
-    flights:array<vec4f,10>, plate_center:vec4f, plate_rotation:vec4f,
-    transition:vec4f, tile_order:array<vec4f,40>, next_palette:array<vec4f,64>,
-    scroller:vec4f, scroll_light:vec4f,
-    // Authored music response measured from the clip PCM (clip::audio_features),
-    // each 0..1: x energy, y onset (decaying pulse), z low band, w accent.
-    audio:vec4f,
-    plate_open_center:vec4f, plate_open_rotation:vec4f,
-}
-@group(0) @binding(0) var<uniform> u:Controls;
+// The uniform block `u: Controls` (binding 0) is prepended by renderer::wgsl.
 // Only the model and probe passes bind these; the backdrop holds space, stars
 // and door panels without the models, so glass can refract what is behind it.
 @group(0) @binding(1) var backdrop:texture_2d<f32>;

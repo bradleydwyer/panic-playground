@@ -1,4 +1,5 @@
 //! HDR rendering and bloom for the procedural 3D remake.
+use super::renderer::wgsl;
 use wgpu::*;
 
 struct Targets {
@@ -43,19 +44,19 @@ impl Modern {
     ) -> Self {
         let shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("Extruded 3D lettering and HDR lighting"),
-            source: ShaderSource::Wgsl(include_str!("modern.wgsl").into()),
+            source: ShaderSource::Wgsl(wgsl(include_str!("modern.wgsl")).into()),
         });
         let post = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("HDR bloom and tone mapping"),
-            source: ShaderSource::Wgsl(include_str!("post.wgsl").into()),
+            source: ShaderSource::Wgsl(wgsl(include_str!("post.wgsl")).into()),
         });
         let cut = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("Laser-cut metal tiles, smoke and sparks"),
-            source: ShaderSource::Wgsl(include_str!("transition.wgsl").into()),
+            source: ShaderSource::Wgsl(wgsl(include_str!("transition.wgsl")).into()),
         });
         let scroll_shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Experimental sculpted scroller"),
-            source: ShaderSource::Wgsl(include_str!("scroller.wgsl").into()),
+            label: Some("Glass scroller"),
+            source: ShaderSource::Wgsl(wgsl(include_str!("scroller.wgsl")).into()),
         });
         let texture = |binding| BindGroupLayoutEntry {
             binding,
@@ -408,7 +409,7 @@ impl Modern {
     ) {
         if scroller {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("Sculpted typography chamber"),
+                label: Some("Glass scroller chamber"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &self.targets.scroll_scene,
                     depth_slice: None,

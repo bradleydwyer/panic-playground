@@ -1,15 +1,5 @@
 // All artwork fields are derived locally. No original logo pixels are embedded.
-struct Controls {
-    screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode
-    state: vec4f,  // reference phase/tick/door, temporal shape interpolation
-    misc: vec4f,   // composition aspect, sRGB output, logo reveal time, modern style
-    flights: array<vec4f,10>, plate_center: vec4f, plate_rotation: vec4f,
-    transition: vec4f, tile_order: array<vec4f,40>, next_palette: array<vec4f,64>,
-    scroller: vec4f, scroll_light: vec4f,
-    audio: vec4f, plate_open_center: vec4f, plate_open_rotation: vec4f,
-    hud: vec4f,    // on-screen counter: shown, frames per second, milliseconds per frame
-}
-@group(0) @binding(0) var<uniform> u: Controls;
+// The uniform block `u: Controls` (binding 0) is prepended by renderer::wgsl.
 @group(0) @binding(1) var current: texture_2d<f32>;
 @group(0) @binding(2) var following: texture_2d<f32>;
 @group(0) @binding(3) var reference: texture_2d<f32>;

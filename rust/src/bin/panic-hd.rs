@@ -2,7 +2,7 @@ use panic_demo::{
     data::Data,
     engine::SAMPLE_RATE,
     hd::{
-        clip::{Clip, ScrollerLighting, ScrollerStyle},
+        clip::{Clip, ScrollerLighting},
         renderer::{Renderer, View},
     },
 };
@@ -29,7 +29,7 @@ struct Options {
     comparison: u32,
     modern: bool,
     transition: bool,
-    scroller: Option<ScrollerStyle>,
+    scroller: bool,
     scroller_lighting: ScrollerLighting,
     fps: bool,
     vsync: bool,
@@ -51,7 +51,7 @@ impl Options {
             comparison: 0,
             modern: false,
             transition: false,
-            scroller: None,
+            scroller: false,
             scroller_lighting: ScrollerLighting::Studio,
             fps: false,
             vsync: true,
@@ -100,11 +100,16 @@ impl Options {
                     o.modern = true;
                 }
                 "--scroller" => {
-                    o.scroller = Some(if args.peek().is_some_and(|arg| !arg.starts_with('-')) {
-                        args.next().unwrap().parse()?
-                    } else {
-                        ScrollerStyle::Glass
-                    });
+                    // Glass is the only scroller look; `--scroller glass` is
+                    // still accepted. The other presets remain in Git history.
+                    if let Some(style) = args.next_if(|arg| !arg.starts_with('-'))
+                        && style != "glass"
+                    {
+                        return Err(format!(
+                            "The {style} scroller preset was removed; use --scroller"
+                        ));
+                    }
+                    o.scroller = true;
                     o.modern = true;
                 }
                 "--scroller-lighting" => {
@@ -112,7 +117,7 @@ impl Options {
                         .next()
                         .ok_or("--scroller-lighting needs musical or studio")?
                         .parse()?;
-                    o.scroller.get_or_insert(ScrollerStyle::Glass);
+                    o.scroller = true;
                     o.modern = true;
                 }
                 "--logo" => {
@@ -121,7 +126,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller [MODE] Continue into glass (default), ribbons or sculpted lettering\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\n1/2/3: scroller preset · L: scroller lighting · P: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · P: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition."
                     );
                     std::process::exit(0);
                 }
@@ -183,8 +188,8 @@ fn run() -> Result<(), String> {
     let mut o = Options::parse()?;
     let started = Instant::now();
     let data = Data::new(&o.data)?;
-    let mut clip = if let Some(style) = o.scroller {
-        Clip::load_scroller(&data, style, o.scroller_lighting)?
+    let mut clip = if o.scroller {
+        Clip::load_scroller(&data, o.scroller_lighting)?
     } else if o.transition {
         Clip::load_transition(&data)?
     } else {
@@ -256,7 +261,7 @@ fn run() -> Result<(), String> {
     let (mut renderer, format) = pollster::block_on(Renderer::new(&instance, Some(&surface)))?;
     println!("GPU: {}", renderer.adapter_name);
     println!(
-        "Space pause · arrows seek · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · 1/2/3 scroller · L lighting"
+        "Space pause · arrows seek · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting"
     );
     let (width, height) = window.drawable_size();
     let mut config = wgpu::SurfaceConfiguration {
@@ -351,15 +356,6 @@ fn run() -> Result<(), String> {
                     Keycode::Tab => o.comparison = if o.comparison == 1 { 0 } else { 1 },
                     Keycode::C => o.comparison = if o.comparison == 2 { 0 } else { 2 },
                     Keycode::M => o.modern = !o.modern,
-                    Keycode::Num1 | Keycode::Num2 | Keycode::Num3 => {
-                        if let Some(scroll) = &mut clip.scroller {
-                            scroll.style = match key {
-                                Keycode::Num2 => ScrollerStyle::Sculpted,
-                                Keycode::Num3 => ScrollerStyle::Glass,
-                                _ => ScrollerStyle::Ribbons,
-                            };
-                        }
-                    }
                     Keycode::L => {
                         if let Some(scroll) = &mut clip.scroller {
                             scroll.lighting = match scroll.lighting {
@@ -442,7 +438,7 @@ fn run() -> Result<(), String> {
             let preset = clip
                 .scroller
                 .as_ref()
-                .map(|s| format!(" · {:?} · {:?}", s.style, s.lighting))
+                .map(|s| format!(" · {:?}", s.lighting))
                 .unwrap_or_default();
             window
                 .set_title(&format!(

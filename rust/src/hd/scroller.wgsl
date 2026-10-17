@@ -1,13 +1,7 @@
-// Authored scroller experiments. The two distance fields are derived at run
-// time from locally rendered part-2 frames. They supply contours and motion,
-// not original 3D models. Lighting, depth, coating and ribbons are new.
-struct Controls {
-    screen:vec4f, state:vec4f, misc:vec4f,
-    flights:array<vec4f,10>, plate_center:vec4f, plate_rotation:vec4f,
-    transition:vec4f, tile_order:array<vec4f,40>, next_palette:array<vec4f,64>,
-    scroller:vec4f, scroll_light:vec4f,
-}
-@group(0) @binding(0) var<uniform> u:Controls;
+// Authored glass scroller. The two distance fields are derived at run time
+// from locally rendered part-2 frames. They supply contours and motion, not
+// original 3D models. Lighting, depth, glass and the curved rows are new.
+// The uniform block `u: Controls` (binding 0) is prepended by renderer::wgsl.
 @group(0) @binding(1) var current:texture_2d<f32>;
 @group(0) @binding(2) var following:texture_2d<f32>;
 @group(0) @binding(4) var linear:sampler;
@@ -44,7 +38,6 @@ fn field_coverage(uv:vec2f)->f32 {
     return smoothstep(0.0,.045,edge.x)*smoothstep(0.0,.06,edge.y);
 }
 fn ribbon_z(x:f32)->f32 {
-    if u.scroller.z>.5 && u.scroller.z<1.5 {return 0.0;}
     // A legible central track, with the ends turning into the chamber.
     let edge=max(abs(x)/aspect()-.48,0.0)/.52;
     return -1.5*edge*edge;
@@ -174,19 +167,18 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
     // A travelling filament lights the metal as it passes through its depth.
     let small=field(uv_at(p.xy)).y;
     color+=heat(p.x)*exp(-abs(small)*.16)*lighting(.234,.025+energy*.08+bass()*.65);
-    if u.scroller.z>1.5 {
-        // Experimental tinted solid glass: refracted chamber plus absorption,
-        // a reflective coating and lit cut edges. Not a full multi-bounce trace.
-        let refracted=normalize(ray+n*.085);
-        let transmitted=chamber(refracted)*mix(vec3f(.55,.83,.96),vec3f(.96,.65,.36),warm(p.x));
-        color=mix(transmitted*1.35,color,.065+fresnel*.75);
-        let transmitted_xy=p.xy+n.xy*.025;
-        let behind=field(uv_at(transmitted_xy)).y;
-        if filament_z(transmitted_xy)<p.z-.02 {
-            color+=heat(p.x)*smoothstep(-.5,.8,behind)*.55;
-        }
-        color+=heat(p.x)*pow(1.0-face,2.0)*lighting(.462,.20+energy*.25+bass()*.85+attack()*.7);
+    // Tinted solid glass over the coated metal shading above: refracted
+    // chamber plus absorption, a reflective coating and lit cut edges. Not a
+    // full multi-bounce trace.
+    let refracted=normalize(ray+n*.085);
+    let transmitted=chamber(refracted)*mix(vec3f(.55,.83,.96),vec3f(.96,.65,.36),warm(p.x));
+    color=mix(transmitted*1.35,color,.065+fresnel*.75);
+    let transmitted_xy=p.xy+n.xy*.025;
+    let behind=field(uv_at(transmitted_xy)).y;
+    if filament_z(transmitted_xy)<p.z-.02 {
+        color+=heat(p.x)*smoothstep(-.5,.8,behind)*.55;
     }
+    color+=heat(p.x)*pow(1.0-face,2.0)*lighting(.462,.20+energy*.25+bass()*.85+attack()*.7);
     return color;
 }
 @fragment fn scroller(v:Vertex)->@location(0) vec4f {
