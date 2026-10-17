@@ -47,6 +47,16 @@ For a split comparison, with the original on the left:
 cargo run --release --locked --features hires --bin panic-hd -- --modern --split
 ```
 
+To try the next transition, where squares eat away the logo screen:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --modern --transition
+```
+
+This uses the original square order and timing, with heated cut edges, shallow
+bevels and a little cooling residue. It stops after the wipe; the following
+scroller hasn't had the modern treatment yet.
+
 | Key | Action |
 | --- | --- |
 | Space | Pause or resume |

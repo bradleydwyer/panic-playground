@@ -97,6 +97,22 @@ audio after another 4.91 seconds. The logo material keeps animating after the
 audio ends; Space pauses it too. End then Space lets you watch the logo directly.
 Later demo scenes are outside this preview.
 
+Add `--transition` to continue through the square wipe into part 2. It reads
+the 16 by 10 activation order from your local data and follows `Scroller`'s
+200-tick hold and 169-tick wipe at 70 Hz. That places the wipe at about
+18.34–20.76 seconds, with uninterrupted original music. The preview then holds
+for one second, ending before the scrolling text begins.
+
+The modern cut effect is authored: each surviving square has a shallow bevel,
+slight recession, a cooler glint on the left or a heated orange edge on the
+right, and sparse cooling residue. The logo's surface keeps moving during the
+wipe. This is an HDR compositing effect with apparent thickness, not a
+volumetric fracture simulation. The original destination is a plain light
+screen at this point; the modern view gives it a muted brushed-metal finish.
+The next scene's patterned palette and scrolling text have not been remade.
+Original/comparison mode shows the actual reference wipe, and faithful HD
+uses the original pixels during this transition.
+
 | Key | Action |
 | --- | --- |
 | Space | Pause or resume |
@@ -129,14 +145,16 @@ still requires a GPU and the `hires` build dependencies. `--data` and `PANIC_DAT
 override the preview's default `artifacts/local-data` path. All original data and
 generated images stay local, outside Git.
 
-The default HD tests use synthetic data. A separate ignored test checks the
-intro's complete reference pixels and PCM against the existing engine, plus
-sampled fly-by projection heights:
+The default HD tests use synthetic data. Separate ignored tests check the
+intro's reference pixels and PCM against the existing engine, sampled fly-by
+projection heights, and the transition's complete reference frames, audio and
+tile schedule:
 
 ```sh
 cargo test --release --locked --features hires
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked \
   --features hires reference_timing_audio_and_flyby_projections -- --ignored
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires transition_matches_engine_frames_audio_and_schedule -- --ignored
 ```
 
 The fitted trajectories approximate the reference projection; they do not prove

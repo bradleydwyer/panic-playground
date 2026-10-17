@@ -28,6 +28,7 @@ struct Options {
     fullscreen: bool,
     comparison: u32,
     modern: bool,
+    transition: bool,
     seconds: Option<f64>,
 }
 impl Options {
@@ -45,6 +46,7 @@ impl Options {
             fullscreen: false,
             comparison: 0,
             modern: false,
+            transition: false,
             seconds: None,
         };
         let mut args = std::env::args().skip(1);
@@ -82,13 +84,14 @@ impl Options {
                 "--original" => o.comparison = 1,
                 "--split" => o.comparison = 2,
                 "--modern" => o.modern = true,
+                "--transition" => o.transition = true,
                 "--logo" => {
                     o.seek = f64::MAX;
                     o.paused = true;
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — opening through the logo\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         3D letter fly-bys, HDR lighting and heated metal\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG · Esc: quit\nThe preview holds on the logo; subsequent demo scenes are not played."
+                        "Panic HD — opening through the logo\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         3D letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the heated square wipe\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG · Esc: quit\nThe preview holds on the logo. --transition continues to the next backdrop; its scroller is not played."
                     );
                     std::process::exit(0);
                 }
@@ -140,14 +143,18 @@ fn run() -> Result<(), String> {
     let mut o = Options::parse()?;
     let started = Instant::now();
     let data = Data::new(&o.data)?;
-    let clip = Clip::load(&data)?;
+    let clip = if o.transition {
+        Clip::load_transition(&data)?
+    } else {
+        Clip::load(&data)?
+    };
     o.seek = if o.seek == f64::MAX {
-        (clip.frames.len() - 1) as f64 / 70.0 // --logo: finished reveal, paused.
+        clip.logo_ready_at // --logo: finished reveal, paused.
     } else {
         o.seek.min(clip.duration())
     };
     println!(
-        "Intro: {:.3}s to logo, {:.3}s including hold; prepared in {:.2}s",
+        "Intro: {:.3}s to logo, {:.3}s total; prepared in {:.2}s",
         clip.logo_at,
         clip.duration(),
         started.elapsed().as_secs_f32()
@@ -291,7 +298,7 @@ fn run() -> Result<(), String> {
                         paused = false;
                     }
                     Keycode::End => {
-                        seek = Some((clip.frames.len() - 1) as f64 / 70.0);
+                        seek = Some(clip.logo_ready_at);
                         paused = true;
                     }
                     Keycode::Tab => o.comparison = if o.comparison == 1 { 0 } else { 1 },

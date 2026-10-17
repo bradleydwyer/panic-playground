@@ -3,6 +3,7 @@ use crate::{
     engine::{FRAME_RATE, SAMPLE_RATE},
     music::Music,
     scenes::intro::{Intro, Presentation},
+    scenes::scroller::Scroller,
     vga::Vga,
 };
 use half::f16;
@@ -11,6 +12,8 @@ pub const WIDTH: usize = 320;
 pub const HEIGHT: usize = 200;
 
 pub struct Frame {
+    /// Intro presentation state; preview phases 6 and 7 represent the following
+    /// square wipe and backdrop hold, not additional phases inside Intro.
     pub state: Presentation,
     pub indices: Vec<u8>,
     pub palette: Vec<u8>,
@@ -100,13 +103,32 @@ pub struct Clip {
     pub frames: Vec<Frame>,
     pub pcm: Vec<i16>,
     pub logo_at: f64,
+    pub logo_ready_at: f64,
+    pub transition: Option<TileTransition>,
     /// Pinhole motion fitted from the locally decoded reference silhouettes:
     /// camera crossing frame, depth per frame, world x and world y.
     pub flights: [[f32; 4]; 10],
 }
 
+/// Schedule and destination colours read from the local Rust reconstruction.
+/// The GPU's heated cut edges, bevels and recession are authored effects.
+pub struct TileTransition {
+    pub start_tick: usize,
+    pub end_tick: usize,
+    pub order: [u16; 160],
+    pub palette: [[f32; 4]; 64],
+}
+
 impl Clip {
     pub fn load(data: &Data) -> Result<Self, String> {
+        Self::load_mode(data, false)
+    }
+
+    pub fn load_transition(data: &Data) -> Result<Self, String> {
+        Self::load_mode(data, true)
+    }
+
+    fn load_mode(data: &Data, extend: bool) -> Result<Self, String> {
         let mut vga = Vga::new();
         let mut intro = Intro::new(data, &mut vga)?;
         let mut music = Music::new(data)?;
@@ -138,13 +160,83 @@ impl Clip {
                 ((n + 1) * SAMPLE_RATE / FRAME_RATE - n * SAMPLE_RATE / FRAME_RATE) as usize;
             pcm.extend(music.render(samples));
         }
-        // Let the music continue through a short hold; visuals stay at the logo.
-        pcm.extend(music.render(SAMPLE_RATE as usize * 4));
+        let logo_ready_at = (frames.len() - 1) as f64 / FRAME_RATE as f64;
         let flights = fit_flights(&frames)?;
+        let transition = if extend {
+            // The last intro snapshot is also the first frame of part 2. Replace
+            // it, rather than adding an extra frame or restarting the music.
+            let logo_state = frames.pop().unwrap().state;
+            let mut scroller = Scroller::new(data, &mut vga)?;
+            let mut transition = TileTransition {
+                start_tick: 0,
+                end_tick: 0,
+                order: scroller.transition_order(),
+                palette: [[0.0; 4]; 64],
+            };
+            loop {
+                let n = frames.len();
+                let (phase, tick) = scroller.presentation();
+                if phase == 1 && tick == 0 {
+                    transition.start_tick = n;
+                }
+                if phase == 2 {
+                    transition.end_tick = n;
+                }
+                if phase == 3 && tick == 0 {
+                    for (i, color) in transition.palette.iter_mut().enumerate() {
+                        for (channel, c) in color[..3].iter_mut().enumerate() {
+                            let v = vga.palette[(64 + i) * 3 + channel] & 63;
+                            let srgb = ((v << 2) | (v >> 4)) as f32 / 255.0;
+                            *c = if srgb <= 0.04045 {
+                                srgb / 12.92
+                            } else {
+                                ((srgb + 0.055) / 1.055).powf(2.4)
+                            };
+                        }
+                        color[3] = 1.0;
+                    }
+                }
+                frames.push(Frame {
+                    state: Presentation {
+                        phase: if phase == 0 {
+                            5
+                        } else if phase < 3 {
+                            6
+                        } else {
+                            7
+                        },
+                        tick,
+                        ..logo_state
+                    },
+                    indices: vga.indices.clone(),
+                    palette: vga.palette.clone(),
+                });
+                // Show the revealed backdrop for a second, before the text
+                // begins. The next scene's scrolling section is not remade yet.
+                if phase == 3 && tick == FRAME_RATE as usize {
+                    break;
+                }
+                if n as u64 > FRAME_RATE * 60 {
+                    return Err("Tile transition exceeded its import limit".into());
+                }
+                scroller.step(&mut vga, music.position());
+                let n = n as u64;
+                let samples =
+                    ((n + 1) * SAMPLE_RATE / FRAME_RATE - n * SAMPLE_RATE / FRAME_RATE) as usize;
+                pcm.extend(music.render(samples));
+            }
+            Some(transition)
+        } else {
+            // Standalone logo preview continues the music through a short hold.
+            pcm.extend(music.render(SAMPLE_RATE as usize * 4));
+            None
+        };
         Ok(Self {
             frames,
             pcm,
             logo_at: logo_at.ok_or("Intro never reached the logo")?,
+            logo_ready_at,
+            transition,
             flights,
         })
     }
@@ -161,6 +253,8 @@ impl Clip {
             1 => "Future Crew",
             2 => "Music cue",
             3 => "Doors",
+            6 => "Metal tile transition",
+            7 => "Scroller backdrop",
             _ => "Panic logo",
         }
     }
@@ -388,6 +482,43 @@ mod tests {
             f,
             frame.field(),
             "Seeking must not cache a different material during the white reveal"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
+    fn transition_matches_engine_frames_audio_and_schedule() {
+        let data = crate::test_support::data();
+        let clip = Clip::load_transition(&data).unwrap();
+        let intro = Clip::load(&data).unwrap();
+        assert_eq!(clip.logo_ready_at, intro.logo_ready_at);
+        assert_eq!(clip.pcm[..intro.pcm.len()], intro.pcm);
+        let cut = clip.transition.as_ref().unwrap();
+        assert_eq!(cut.end_tick - cut.start_tick, 169);
+        assert_eq!(
+            cut.start_tick,
+            (clip.logo_ready_at * 70.0).round() as usize + 200
+        );
+        let mut sorted = cut.order;
+        sorted.sort();
+        assert_eq!(sorted, std::array::from_fn(|i| i as u16));
+        let mut engine = crate::engine::Engine::new(data, false).unwrap();
+        let mut pcm = Vec::new();
+        for (i, frame) in clip.frames.iter().enumerate() {
+            assert_eq!(engine.video.indices, frame.indices, "pixels at tick {i}");
+            assert_eq!(engine.video.palette, frame.palette, "palette at tick {i}");
+            if i + 1 < clip.frames.len() {
+                pcm.extend(engine.step().unwrap());
+            }
+        }
+        assert_eq!(pcm, clip.pcm);
+        assert_eq!(engine.part(), 2);
+        assert_eq!(clip.frames.last().unwrap().state.phase, 7);
+        println!(
+            "Wipe {:.3}–{:.3}s; full {}-frame reference and PCM matched",
+            cut.start_tick as f64 / 70.0,
+            cut.end_tick as f64 / 70.0,
+            clip.frames.len()
         );
     }
 

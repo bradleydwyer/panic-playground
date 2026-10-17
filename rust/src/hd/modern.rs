@@ -4,14 +4,16 @@ use wgpu::*;
 struct Targets {
     size: (u32, u32),
     scene: TextureView,
+    cut_scene: TextureView,
     glow: [TextureView; 2],
-    bindings: [BindGroup; 3],
+    bindings: [BindGroup; 4],
 }
 
 pub struct Modern {
     background: RenderPipeline,
     stars: RenderPipeline,
     model: RenderPipeline,
+    tile_cut: RenderPipeline,
     blur_x: RenderPipeline,
     blur_y: RenderPipeline,
     composite: RenderPipeline,
@@ -130,6 +132,7 @@ impl Modern {
             Some(BlendState::ALPHA_BLENDING),
         );
         let blur_x = pipeline(&post, &post_layout, "fullscreen", "blur_x", hdr, None);
+        let tile_cut = pipeline(&post, &post_layout, "fullscreen", "tile_cut", hdr, None);
         let blur_y = pipeline(&post, &post_layout, "fullscreen", "blur_y", hdr, None);
         let composite = pipeline(&post, &post_layout, "fullscreen", "composite", output, None);
         let sampler = device.create_sampler(&SamplerDescriptor {
@@ -142,6 +145,7 @@ impl Modern {
             background,
             stars,
             model,
+            tile_cut,
             blur_x,
             blur_y,
             composite,
@@ -178,6 +182,7 @@ impl Modern {
                 .create_view(&Default::default())
         };
         let scene = texture("HDR scene", size.0, size.1);
+        let cut_scene = texture("Heated tile transition", size.0, size.1);
         let glow = [
             texture("Bloom horizontal", size.0.div_ceil(2), size.1.div_ceil(2)),
             texture("Bloom vertical", size.0.div_ceil(2), size.1.div_ceil(2)),
@@ -214,12 +219,14 @@ impl Modern {
         // Do not bind a render target as an input to its own pass.
         let bindings = [
             binding(&scene, &scene),
+            binding(&cut_scene, &cut_scene),
             binding(&glow[0], &glow[0]),
-            binding(&scene, &glow[1]),
+            binding(&cut_scene, &glow[1]),
         ];
         Targets {
             size,
             scene,
+            cut_scene,
             glow,
             bindings,
         }
@@ -275,16 +282,21 @@ impl Modern {
         }
         for (pipeline, target, binding) in [
             (
+                &self.tile_cut,
+                &self.targets.cut_scene,
+                &self.targets.bindings[0],
+            ),
+            (
                 &self.blur_x,
                 &self.targets.glow[0],
-                &self.targets.bindings[0],
+                &self.targets.bindings[1],
             ),
             (
                 &self.blur_y,
                 &self.targets.glow[1],
-                &self.targets.bindings[1],
+                &self.targets.bindings[2],
             ),
-            (&self.composite, output, &self.targets.bindings[2]),
+            (&self.composite, output, &self.targets.bindings[3]),
         ] {
             let attachments = [Some(RenderPassColorAttachment {
                 view: target,
