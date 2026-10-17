@@ -101,22 +101,11 @@ Add `--transition` to continue through the square wipe into part 2. It reads
 the 16 by 10 activation order from your local data and follows `Scroller`'s
 200-tick hold and 169-tick wipe at 70 Hz. That places the wipe at about
 18.34–20.76 seconds, with uninterrupted original music. The preview then holds
-for one second, ending before the scrolling text begins.
+for one second, ending before the scrolling text begins. `--transition`
+selects modern mode automatically and supports `--split`; `--laser` is kept as
+an alias. `--seek 17.8` starts just before the wipe.
 
-The modern cut effect uses tessellated 3D sheets with asymmetric curls, narrow
-cut walls and depth testing. A ragged incandescent edge burns towards each
-square's centre, leaving a scorched band, embers and wisps of smoke. Moving
-reflections pick out the curved surfaces; nearby cuts illuminate the exposed
-brushed metal underneath. The logo's surface keeps moving during the wipe.
-
-Use `--tear` for an alternative that peels the squares loose and drops them
-under gravity. They curl like thin paper, flutter slightly and burn inward
-while falling. Each square burns away in about 0.51 seconds, compared with
-0.14 seconds in the reference wipe. The activation order and music stay the
-same; the last pieces disappear around 21.13 seconds, within the final hold.
-`--tear` selects modern mode automatically and also works with `--split`.
-
-Use `--laser` for an intact-plate alternative. Cutting points trace each tile's
+The modern view draws the wipe as a laser cut. Cutting points trace each tile's
 perimeter over 0.21 seconds, leaving a narrow tab on the top edge. The plate
 tips slightly around that attachment until it releases at 0.32 seconds, then
 accelerates directly away from the camera, like a floor giving way beneath an
@@ -125,14 +114,18 @@ the intact pieces shrink; depth haze blends them into the backdrop before they
 are removed at 1.10 seconds. Glowing edges, sparks and illuminated smoke shift
 from cool blue on the left to hot orange on the right. Sparks come from the
 moving cutting point and final severing flash; smoke rises towards the camera.
-Attachment positions vary deterministically between tiles. The pieces keep
-their physical size and vanish during the existing final hold. Several cuts overlap to
-retain the original activation cadence. `--laser` also selects modern mode
-and supports `--split`; `--seek 17.8` starts just before the transition.
+Nearby cuts light the brushed metal underneath. Attachment positions vary
+deterministically between tiles. The pieces keep their physical size and
+vanish during the existing final hold. Several cuts overlap to retain the
+original activation cadence. The logo's surface keeps moving during the wipe.
 
-The geometry, gravity, laser and burn treatments, and particle motion are authored effects.
-The lighting uses analytic approximations; this isn't a cloth or combustion
-simulation. The original destination is a plain light screen at this point;
+Earlier trials, a curling burn and a version with falling, burning sheets,
+have been removed from the code. They remain in the Git history: commits
+`4c43ab2`, `00a63d5` and `0fe8b55` introduced them.
+
+The geometry, gravity, laser treatment and particle motion are authored effects.
+The lighting uses analytic approximations; this isn't a physical simulation.
+The original destination is a plain light screen at this point;
 the modern view gives it a dark brushed-metal finish.
 The next scene's patterned palette and scrolling text have not been remade.
 Original/comparison mode shows the actual reference wipe, and faithful HD

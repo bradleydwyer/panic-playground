@@ -319,7 +319,8 @@ impl Renderer {
                 (time * 70.0 - cut.start_tick as f64) as f32,
                 1.0,
                 (cut.end_tick - cut.start_tick) as f32,
-                cut.style as u32 as f32,
+                // Formerly the trial style; only the laser cut remains.
+                0.0,
             ];
             for (i, &rank) in cut.order.iter().enumerate() {
                 tile_order[i / 4][i % 4] = rank as f32;

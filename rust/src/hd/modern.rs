@@ -43,7 +43,7 @@ impl Modern {
             source: ShaderSource::Wgsl(include_str!("post.wgsl").into()),
         });
         let cut = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Curled metal tiles, vapor and molten sparks"),
+            label: Some("Laser-cut metal tiles, smoke and sparks"),
             source: ShaderSource::Wgsl(include_str!("transition.wgsl").into()),
         });
         let texture = |binding| BindGroupLayoutEntry {
@@ -257,10 +257,10 @@ impl Modern {
                 .create_view(&Default::default())
         };
         let scene = texture("HDR scene", size.0, size.1);
-        let cut_scene = texture("Heated tile transition", size.0, size.1);
+        let cut_scene = texture("Laser tile transition", size.0, size.1);
         let cut_depth = device
             .create_texture(&TextureDescriptor {
-                label: Some("Curled tile depth"),
+                label: Some("Laser tile depth"),
                 size: Extent3d {
                     width: size.0,
                     height: size.1,
@@ -375,7 +375,7 @@ impl Modern {
         }
         {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("Exposed metal and moving reflected light"),
+                label: Some("Backdrop lit by the laser cuts"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &self.targets.cut_scene,
                     depth_slice: None,
@@ -393,7 +393,7 @@ impl Modern {
         }
         if transition {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("Curled metal patches and cooling debris"),
+                label: Some("Falling laser-cut plates, smoke and sparks"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &self.targets.cut_scene,
                     depth_slice: None,
@@ -418,9 +418,10 @@ impl Modern {
             // 20x20 front quads, plus four 20-segment cut walls per tile.
             pass.draw(0..2880, 0..160);
             pass.set_pipeline(&self.vapor);
+            // Six smoke puffs and twenty sparks per tile.
             pass.draw(0..6, 0..960);
             pass.set_pipeline(&self.sparks);
-            pass.draw(0..6, 0..7680);
+            pass.draw(0..6, 0..3200);
         }
         for (pipeline, target, binding) in [
             (
