@@ -153,9 +153,12 @@ weaves through their depth above a rippling dark chamber. The three modes
 share the reference frames, music and scene boundaries. The existing laser
 transition reveals the chamber; the preview ends after part 2's fade.
 
-`--scroller-lighting musical` (default) drives light intensity with a smoothed
-envelope of the original PCM. `--scroller-lighting studio` holds the lights
-steady for material comparisons. Press **1 / 2 / 3** to change the preset and
+`--scroller-lighting musical` (default) uses relative loudness and bass/treble
+onsets from the original PCM. Bass pulses the blue/orange lights, their metal
+reflections and the small lettering; treble adds short white highlights.
+These are authored audio cues, not recovered tracker events. The levels adapt
+to loud passages so the response retains contrast. `--scroller-lighting studio`
+holds the lights steady for material comparisons. Press **1 / 2 / 3** to change the preset and
 **L** to toggle lighting while playing or paused. `--split` compares the
 modern view with the locally rendered original. Omit `--seek` for the full
 intro, or use `--seek 18` to start at the transition.

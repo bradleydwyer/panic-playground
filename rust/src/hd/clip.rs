@@ -198,8 +198,9 @@ pub struct ScrollerPreview {
     pub end_tick: usize,
     pub style: ScrollerStyle,
     pub lighting: ScrollerLighting,
-    /// Deterministic attack/release envelope derived from the original PCM.
-    pub energy: Vec<f32>,
+    /// Authored lighting controls from PCM: relative level, bass and treble onsets.
+    /// Precomputed on the audio timeline so seeking and exports agree.
+    pub audio: Vec<[f32; 3]>,
 }
 
 /// Schedule and destination colours read from the local Rust reconstruction.
@@ -369,7 +370,7 @@ impl Clip {
                     end_tick: scroll_end,
                     style: ScrollerStyle::Ribbons,
                     lighting: ScrollerLighting::Musical,
-                    energy: audio_envelope(&pcm, frames.len()),
+                    audio: audio_lighting(&pcm, frames.len()),
                 });
             }
             Some(transition)
@@ -410,22 +411,51 @@ impl Clip {
     }
 }
 
-fn audio_envelope(pcm: &[i16], frames: usize) -> Vec<f32> {
-    let mut value = 0.0_f32;
+fn audio_lighting(pcm: &[i16], frames: usize) -> Vec<[f32; 3]> {
+    // Separate stereo filters avoid cancelling instruments panned out of phase.
+    // These broad bands are lighting cues, not recovered tracker events.
+    let bass_alpha = 1.0 - (-std::f32::consts::TAU * 180.0 / SAMPLE_RATE as f32).exp();
+    let treble_alpha = 1.0 - (-std::f32::consts::TAU * 1800.0 / SAMPLE_RATE as f32).exp();
+    let mut bass_filter = [0.0_f32; 2];
+    let mut treble_filter = [0.0_f32; 2];
+    let mut average = [0.0_f32; 3];
+    let mut previous = [0.0_f32; 3];
+    let mut output = [0.0_f32; 3];
     (0..frames)
         .map(|n| {
             let a = n * SAMPLE_RATE as usize / FRAME_RATE as usize * 2;
             let b = ((n + 1) * SAMPLE_RATE as usize / FRAME_RATE as usize * 2).min(pcm.len());
             let samples = &pcm[a.min(b)..b];
-            let rms = (samples
-                .iter()
-                .map(|&s| (s as f32 / 32768.0).powi(2))
-                .sum::<f32>()
-                / samples.len().max(1) as f32)
-                .sqrt();
-            let target = (rms * 5.0).clamp(0.0, 1.0);
-            value += (target - value) * if target > value { 0.45 } else { 0.065 };
-            value
+            let mut power = [0.0_f32; 3];
+            for pair in samples.chunks_exact(2) {
+                for channel in 0..2 {
+                    let s = pair[channel] as f32 / 32768.0;
+                    bass_filter[channel] += bass_alpha * (s - bass_filter[channel]);
+                    treble_filter[channel] += treble_alpha * (s - treble_filter[channel]);
+                    power[0] += s * s;
+                    power[1] += bass_filter[channel].powi(2);
+                    power[2] += (s - treble_filter[channel]).powi(2);
+                }
+            }
+            for band in 0..3 {
+                let rms = (power[band] / samples.len().max(1) as f32).sqrt();
+                let smooth = previous[band] + (rms - previous[band]) * 0.6;
+                // Relative energy keeps loud passages from pinning the controls
+                // at one, as the old fixed RMS gain did. A floor rejects noise.
+                average[band] += (smooth - average[band]) * 0.025;
+                if band == 0 {
+                    let target = ((smooth / (average[band] + 0.035) - 0.65) * 0.65).clamp(0.0, 1.0);
+                    output[band] +=
+                        (target - output[band]) * if target > output[band] { 0.45 } else { 0.12 };
+                } else {
+                    let rise = (smooth - previous[band]) / (average[band] + 0.015);
+                    let target = ((rise - 0.045) * 4.0).clamp(0.0, 1.0);
+                    let decay = if band == 1 { 0.88 } else { 0.80 };
+                    output[band] = target.max(output[band] * decay);
+                }
+                previous[band] = smooth;
+            }
+            output
         })
         .collect()
 }
@@ -626,6 +656,59 @@ pub fn signed_distance(mask: &[bool], w: usize, h: usize) -> Vec<f32> {
 mod tests {
     use super::*;
     #[test]
+    fn audio_lighting_keeps_accents_in_a_loud_mix_and_releases_to_silence() {
+        let pcm: Vec<i16> = (0..SAMPLE_RATE * 4)
+            .flat_map(|i| {
+                let t = i as f32 / SAMPLE_RATE as f32;
+                let phase = std::f32::consts::TAU * t;
+                let bed = if t < 3.0 {
+                    0.32 * (phase * 440.0).sin() + 0.12 * (phase * 880.0).sin()
+                } else {
+                    0.0
+                };
+                let age = t - t.floor();
+                let hit = if (1.0..3.0).contains(&t) {
+                    0.30 * (-age / 0.07).exp() * (phase * 75.0).sin()
+                        + 0.18 * (-age / 0.025).exp() * (phase * 3000.0).sin()
+                } else {
+                    0.0
+                };
+                let sample = ((bed + hit) * 32767.0) as i16;
+                // Anti-phase stereo must retain the same energy as in-phase.
+                [sample, -sample]
+            })
+            .collect();
+        let signal = audio_lighting(&pcm, 280);
+        assert!(
+            signal
+                .iter()
+                .flatten()
+                .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+        );
+        for band in 1..3 {
+            let peak = signal[70..77]
+                .iter()
+                .map(|s| s[band])
+                .fold(0.0_f32, f32::max);
+            let rest = signal[119..133]
+                .iter()
+                .map(|s| s[band])
+                .fold(0.0_f32, f32::max);
+            assert!(
+                peak > 0.65 && rest < 0.15,
+                "band {band}: peak {peak}, rest {rest}"
+            );
+        }
+        assert!(
+            signal[60][0] < 0.6,
+            "A loud sustained bed must not pin the level"
+        );
+        assert!(signal[279].iter().all(|v| *v < 0.005));
+        assert_eq!(audio_lighting(&[], 3), vec![[0.0; 3]; 3]);
+        assert_eq!(audio_lighting(&vec![0; 32000], 70), vec![[0.0; 3]; 70]);
+    }
+
+    #[test]
     fn scroller_fields_separate_font_overlay_and_background() {
         let mut frame = Frame {
             state: Presentation {
@@ -671,11 +754,12 @@ mod tests {
         assert_eq!(pcm, clip.pcm);
         assert_eq!(engine.part(), 6, "Stop exactly at the next scene boundary");
         let scroll = clip.scroller.as_ref().unwrap();
-        assert_eq!(scroll.energy.len(), clip.frames.len());
+        assert_eq!(scroll.audio.len(), clip.frames.len());
         assert!(
             scroll
-                .energy
+                .audio
                 .iter()
+                .flatten()
                 .all(|e| e.is_finite() && (0.0..=1.0).contains(e))
         );
         assert_eq!(clip.frames[scroll.start_tick].state.phase, 8);

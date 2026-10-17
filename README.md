@@ -90,7 +90,7 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller ribbo
 | `--scroller ribbons` | Coated titanium lettering with ends curving into depth |
 | `--scroller sculpted` | Straight extruded lettering for comparison |
 | `--scroller glass` | Curved tinted-glass treatment with reflective edges |
-| `--scroller-lighting musical` | Light intensity follows an envelope of the original audio (default) |
+| `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights (default) |
 | `--scroller-lighting studio` | Steady lights for inspecting shape and material |
 
 The scroller modes include the laser transition and continue to the end of

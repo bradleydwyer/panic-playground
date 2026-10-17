@@ -347,15 +347,18 @@ impl Renderer {
                 (1.0 - ((time * 70.0 - scroll.end_tick as f64) / 12.0).max(0.0)).clamp(0.0, 1.0)
                     as f32,
             ];
+            let audio: [f32; 3] = std::array::from_fn(|band| {
+                scroll.audio[index][band] * (1.0 - mix) + scroll.audio[next][band] * mix
+            });
             scroll_light = [
-                scroll.energy[index] * (1.0 - mix) + scroll.energy[next] * mix,
+                audio[0],
                 if scroll.lighting == ScrollerLighting::Musical {
                     1.0
                 } else {
                     0.0
                 },
-                0.0,
-                0.0,
+                audio[1],
+                audio[2],
             ];
             if frame.state.phase >= 8 {
                 for (i, color) in next_palette.iter_mut().enumerate() {
