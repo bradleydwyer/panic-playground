@@ -77,7 +77,7 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 
 | Flag | Experiment |
 | --- | --- |
-| `--scroller ribbons` | Coated titanium lettering with ends curving into depth |
+| `--scroller ribbons` | Coated titanium lettering on the same arc |
 | `--scroller sculpted` | Straight extruded lettering for comparison |
 | `--scroller` or `--scroller glass` | Selected curved glass treatment with reflective edges |
 | `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights |
@@ -94,16 +94,18 @@ left. In the app, **1 / 2 / 3** switch presets, **L** switches lighting and
 The letters are drawn from the original font, text and sine tables, read from
 your local data when the preview starts, at the proportions of the original
 4:3 display. Both rows and the sine text move continuously at the original's
-speeds and stay in step with its timeline. On a wide screen the rows carry on
-past the edges of the 4:3 picture and curve away into the chamber. The vertical
-sine scroller passes in front of the lower row and behind the upper row, where
-it remains visible through the glass.
+speeds and stay in step with its timeline. Both rows run round one shallow
+arc, a slice of a large cylinder, so they read flat in the centre and turn
+away as they reach and pass the sides of the screen. The vertical sine
+scroller runs off the top and bottom of the screen, passing in front of the
+lower row and behind the upper row, where it remains visible through the glass.
 
-Depth, extrusion, the curve, materials and lighting are authored experiments.
+Depth, extrusion, the arc, materials and lighting are authored experiments.
 Glass transmission, reflections, haze and contact shadows are analytic
 approximations, not a full optical simulation.
 
-The ring is an experiment. Its front matches the upper row exactly; the same
+The ring is an experiment: a smaller, tilted ring seen whole, where the arc is
+just the front of a larger one. Its front matches the upper row exactly; the same
 letters then travel round behind it and back across the far side, seen from
 behind. The original's lower row shows something a ring can't: the second copy
 of the text, read normally, revealed from its end. So the ring drops that copy,

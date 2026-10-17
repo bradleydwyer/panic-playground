@@ -176,11 +176,11 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --scr
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --faithful --seek 27
 ```
 
-`ribbons` bends the ends of coated titanium lettering into depth. `sculpted`
-keeps the same material on straight extrusions. `glass` uses the ribbon shape
-with approximate tinted transmission and reflective edges. The vertical sine
+`ribbons` puts coated titanium lettering on the arc described below.
+`sculpted` keeps the same material on straight extrusions. `glass` uses the
+arc with approximate tinted transmission and reflective edges. The vertical sine
 overlay passes in front of the lower row and behind the upper row. It follows
-the ribbon curvature, with its depth crossover in the gap between rows, above
+the arc, with its depth crossover in the gap between rows, above
 a rippling dark chamber. The three modes share the letters, music and scene
 boundaries. The existing laser
 transition reveals the chamber; the preview ends after part 2's fade.
@@ -225,15 +225,26 @@ that the preview doesn't reproduce: the overlay row drawn at the raster split
 with the wrong offset, and one column at the lower row's right edge when the
 window wraps.
 
-Beyond the 4:3 picture the rows continue with the text that's about to enter
-or has just left, then curve away into the chamber and fade. The overlay's
-dots are joined into blocky strokes, and its displacement follows a smooth
-curve through the table with the rounding to whole pixels smoothed out. Both
-are authored. Each frame, the GPU renders both distance fields once into a
-world-space texture; the marched letters then sample it.
+Both rows follow one authored arc of constant curvature: a vertical slice of
+a cylinder whose front touches the screen plane at the centre. The letters
+wrap round it at their original size, measured along the surface, so the
+centre reads like the original and the rows turn away steadily towards the
+sides. The radius is 1.55 times the screen's aspect ratio (2.76 units at
+16:9, where the picture is 2 units tall), which puts the cylinder's edge-on
+silhouette just past the left and right edges. Beyond the 4:3 picture the
+rows show the text that's about to enter or has just left; letters fade as
+they turn edge-on. The sine text's depth follows the same arc, and the
+contact shadows and reflections are projected from it. The sine text also
+runs past the top and bottom of the 4:3 picture to the screen edges, where
+the original stops at its 200 lines. The overlay's dots are joined into
+blocky strokes, and its displacement follows a smooth curve through the table
+with the rounding to whole pixels smoothed out. All of this is authored.
+Each frame, the GPU renders both distance fields once into a texture; the
+marched letters then sample it.
 
 `--scroller-layout ring` (or **G**) is an authored experiment: one tilted ring
-of letters. Its front, at the upper row's height, shows exactly what the upper
+of letters, smaller than the arc's cylinder (radius 2.26) and seen whole, where
+the arc is only the front of a larger one carrying both rows. Its front, at the upper row's height, shows exactly what the upper
 row shows at the centre of the picture. Going round, the same letters pass
 behind and travel right along the far side, at the lower row's height, seen
 from behind and so mirrored. They're replaced out of sight just behind the
@@ -255,7 +266,7 @@ The modern background filters the reconstruction's rapid palette cycling
 into a slow colour drift, then interpolates at display time. The original view
 keeps the unfiltered palette. This ambient filtering is independent of the
 musical accents and is precomputed so seeking and exports remain deterministic.
-Materials, ribbon bending, depth and light placement are authored. Contact
+Materials, the arc, depth and light placement are authored. Contact
 shadows and reflections are approximations; glass is not a full multi-bounce
 optical simulation. All fields are generated locally in memory.
 

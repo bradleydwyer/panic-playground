@@ -193,8 +193,8 @@ impl std::str::FromStr for ScrollerLighting {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum ScrollerLayout {
-    /// The original's two rows, at its proportions, curving into depth at
-    /// the ends of a wide screen.
+    /// The original's two rows, at its proportions, on one authored arc of
+    /// constant curvature that turns away towards the sides of the screen.
     Rows = 0,
     /// Authored alternative: one tilted ring. Its front follows the upper
     /// row exactly; its back carries the same letters after they pass the
@@ -1583,7 +1583,7 @@ mod tests {
                 "scroller.wgsl lacks {constant}"
             );
         }
-        let extent = "const FIELD_EXTENT=vec2f(2.2,1.15);";
+        let extent = "const FIELD_EXTENT=vec2f(2.2,1.3);";
         assert!(scroller.contains(extent) && include_str!("intro.wgsl").contains(extent));
     }
 

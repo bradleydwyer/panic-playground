@@ -3,8 +3,8 @@
 // data (clip::ScrollerGlyphs). The text, the glyphs, both rows' positions, the
 // overlay's sine x table and its row timing are read from the data and code;
 // see Scroller::hd_scroll. The 4:3 proportions follow the original display.
-// Depth, extrusion, the curve beyond the 4:3 frame, the ring, materials and
-// lighting are new; none of it is a recovered 3D model.
+// Depth, extrusion, the arc the rows follow, the ring, materials and lighting
+// are new; none of it is a recovered 3D model.
 struct Controls {
     screen:vec4f, state:vec4f, misc:vec4f,
     flights:array<vec4f,10>, plate_center:vec4f, plate_rotation:vec4f,
@@ -154,8 +154,33 @@ fn sine_distance(s:vec2f,rows:i32)->f32 {
     return select(-outside,gap,outside<0.0);
 }
 // World-space extent of the cached fields (renderer GLYPH_FIELD_SIZE texels).
-const FIELD_EXTENT=vec2f(2.2,1.15);
+// It reaches past the top and bottom of the screen at the overlay's depth.
+const FIELD_EXTENT=vec2f(2.2,1.3);
 fn ring()->bool {return u.glyphs.w>.5;}
+// The rows' authored path: one arc of constant curvature, a vertical section
+// of a cylinder whose front touches z = 0 at the screen centre. Letters wrap
+// round it at their original size, measured along the surface, so they stay
+// legible in the centre and turn away towards the sides. The radius scales
+// with the screen so the cylinder's silhouette, where letters are edge-on,
+// falls just beyond the left and right edges. Sculpted keeps them flat.
+fn curved()->bool {return !(u.scroller.z>.5 && u.scroller.z<1.5);}
+fn arc_radius()->f32 {return 1.55*aspect();}
+// Half-angle of the visible arc, from the camera 5.5 in front of z = 0.
+fn arc_limit()->f32 {let r=arc_radius();return acos(r/(5.5+r));}
+// Widest surface x the camera can see on the arc.
+fn arc_extent()->f32 {return arc_radius()*sin(arc_limit());}
+// Distance along the surface from the centre to the point at world x.
+fn arc_length(x:f32)->f32 {
+    if !curved() {return x;}
+    let r=arc_radius();
+    return r*asin(clamp(x/r,-1.0,1.0));
+}
+// The cached fields cover the arc's whole visible width. Faithful HD and the
+// ring use the flat extent; the overlay channel is always flat world x, y.
+fn field_extent()->vec2f {
+    if u.misc.w>.5 && !ring() && curved() {return vec2f(max(arc_extent(),FIELD_EXTENT.x),FIELD_EXTENT.y);}
+    return FIELD_EXTENT;
+}
 // The authored ring experiment: one band of letters around a tilted axis.
 // Its front, facing the camera at the original upper row's height, shows
 // exactly what the upper row shows at the centre of the 4:3 frame, moving
@@ -189,15 +214,18 @@ fn ring_distance(phi:f32,gy:f32)->f32 {
 // rows, positive inside, over the world plane the rows and overlay occupy.
 // In the ring layout, the letters' channel holds the ring's bands instead.
 @fragment fn glyph_field(v:Vertex)->@location(0) vec4f {
-    let p=(v.uv*2.0-1.0)*vec2f(1,-1)*FIELD_EXTENT;
+    let p=(v.uv*2.0-1.0)*vec2f(1,-1)*field_extent();
     var letters=0.0;
     if ring() {
         let band=floor(v.uv.y*4.0);
         let phi=RING_SEAM+(band+v.uv.x)*.5*PI-2.0*PI;
         let gy=fract(v.uv.y*4.0)*(CELL.y+2.0*ATLAS_PAD)-ATLAS_PAD;
         letters=ring_distance(phi,gy);
-    } else {
+    } else if u.misc.w<.5 {
         letters=rows_distance(p);
+    } else {
+        // Letters at surface x lie this far along the arc from the centre.
+        letters=rows_distance(vec2f(arc_length(p.x),p.y));
     }
     // Faithful HD also needs the letters' original grey and the plain dots.
     if u.misc.w<.5 {return vec4f(letters,-FAR,rows_shade(p),dot_distance(source(p)));}
@@ -205,9 +233,10 @@ fn ring_distance(phi:f32,gy:f32)->f32 {
 }
 // Both cached fields at a world position, with a lower bound outside them.
 fn fields(p:vec2f)->vec2f {
-    let uv=p/FIELD_EXTENT*vec2f(.5,-.5)+.5;
+    let extent=field_extent();
+    let uv=p/extent*vec2f(.5,-.5)+.5;
     let f=textureSampleLevel(glyph_fields,linear,clamp(uv,vec2f(0),vec2f(1)),0).rg;
-    let outside=length(max(abs(p)-FIELD_EXTENT,vec2f(0)))/ROW;
+    let outside=length(max(abs(p)-extent,vec2f(0)))/ROW;
     return select(f,min(f,vec2f(-outside)),outside>0.0);
 }
 fn letter_field(p:vec2f)->f32 {return fields(p).x;}
@@ -240,16 +269,19 @@ fn dot_distance(s:vec2f)->f32 {
     return -best;
 }
 // Projected shadows and reflections fade where the rows turn away.
-fn field_coverage(p:vec2f)->f32 {return 1.0-smoothstep(1.6,2.0,abs(p.x));}
+fn field_coverage(p:vec2f)->f32 {
+    if curved() {let x=arc_extent();return 1.0-smoothstep(.8*x,x,abs(p.x));}
+    return 1.0-smoothstep(1.6,2.0,abs(p.x));
+}
+// Depth of the rows' surface at world x.
 fn ribbon_z(x:f32)->f32 {
-    if u.scroller.z>.5 && u.scroller.z<1.5 {return 0.0;}
-    // A legible central track, with the ends turning into the chamber.
-    let edge=max(abs(x)/aspect()-.48,0.0)/.52;
-    return -1.5*edge*edge;
+    if !curved() {return 0.0;}
+    let r=arc_radius();
+    return sqrt(max(r*r-x*x,0.0))-r;
 }
 fn filament_z(p:vec2f)->f32 {
     // Keep a fixed row order: the vertical text passes over the lower row and
-    // under the upper row. Follow the ribbon's bend so this holds at its ends.
+    // under the upper row. Follow the rows' arc so this holds across it.
     // The depth crossover stays in the gap between the two horizontal rows.
     return ribbon_z(p.x)-.075+mix(.30,-.30,smoothstep(-.08,.08,p.y));
 }
@@ -278,23 +310,51 @@ fn ring_letters(p:vec3f)->f32 {
     if d>-FAR-.5 {d=textureSampleLevel(glyph_fields,linear,ring_texel(phi,gy),0).r;}
     return extrusion(-d*ROW*min(rho/RING_RADIUS,1.0),rho-RING_RADIUS,.12,.018);
 }
-fn shapes(p:vec3f)->vec2f {
+// Radial depth of a point from the rows' surface, and the surface x on its
+// radius, where the rows' field channel holds the arc's letters.
+fn on_arc(p:vec3f)->vec2f {
+    if !curved() {return vec2f(p.z,p.x);}
+    let r=arc_radius();
+    let c=vec2f(p.x,p.z+r);
+    let rho=length(c);
+    return vec2f(rho-r,c.x*r/max(rho,1e-4));
+}
+fn letter_shape(p:vec3f)->f32 {
+    if ring() {return ring_letters(p);}
+    let a=on_arc(p);
+    return extrusion(-fields(vec2f(a.y,p.y)).x*ROW,a.x+.075,.12,.018);
+}
+fn filament_shape(p:vec3f)->f32 {
     if ring() {
         let s=ring_sine(p.xy);
-        let g=fields(s.xy).y;
-        let z=ring_centre().z;
-        return vec2f(ring_letters(p),extrusion(-(g+.20)*ROW/s.z,p.z-z,.018/s.z,.009));
+        return extrusion(-(fields(s.xy).y+.20)*ROW/s.z,p.z-ring_centre().z,.018/s.z,.009);
     }
-    let f=fields(p.xy);
-    let letter=extrusion(-f.x*ROW,p.z-ribbon_z(p.x)+.075,.12,.018);
     // Authored depth fixes the overlay's layering relative to the rows.
-    let filament=extrusion(-(f.y+.20)*ROW,p.z-filament_z(p.xy),.018,.009);
-    return vec2f(letter,filament);
+    return extrusion(-(fields(p.xy).y+.20)*ROW,p.z-filament_z(p.xy),.018,.009);
 }
-fn shape(p:vec3f,material:f32)->f32 {return shapes(p)[u32(material)];}
+fn shape(p:vec3f,material:f32)->f32 {
+    if material>.5 {return filament_shape(p);}
+    return letter_shape(p);
+}
 fn scene(p:vec3f)->vec2f {
-    let d=shapes(p);
-    return select(vec2f(d.x,0),vec2f(d.y,1),d.y<d.x);
+    // Each slab's depth alone bounds its distance: skip the field lookup of
+    // whichever can't be nearer.
+    var letter_bound=0.0;
+    var filament_bound=0.0;
+    if !ring() {
+        letter_bound=abs(on_arc(p).x+.075)-.12;
+        filament_bound=abs(p.z-filament_z(p.xy))-.018;
+    }
+    if filament_bound<letter_bound {
+        let b=filament_shape(p);
+        if letter_bound>=b {return vec2f(b,1);}
+        let a=letter_shape(p);
+        return select(vec2f(a,0),vec2f(b,1),b<a);
+    }
+    let a=letter_shape(p);
+    if filament_bound>=a {return vec2f(a,0);}
+    let b=filament_shape(p);
+    return select(vec2f(a,0),vec2f(b,1),b<a);
 }
 fn normal(p:vec3f,material:f32)->vec3f {
     let e=vec2f(.008,0);
@@ -350,7 +410,11 @@ fn chamber(ray:vec3f)->vec3f {
 fn shadow(p:vec3f,light:vec3f)->f32 {
     let direction=normalize(light-p);var shade=1.0;var t=.035;
     for(var i=0;i<7;i++) {
-        let d=scene(p+direction*t).x;
+        let q=p+direction*t;
+        // Every letter and the overlay lie behind z = .25, and the lamps are
+        // well in front: past this point no later step can darken the shade.
+        if (q.z-.25)*10.0>t {break;}
+        let d=scene(q).x;
         shade=min(shade,10.0*max(d,0.0)/t);
         t+=clamp(d,.025,.16);
     }
@@ -421,13 +485,17 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
     if u.state.x>=8.0 {
         let eye=vec3f(0,0,5.5);var t=5.05/-ray.z;var hit=false;var material=0.0;
         var p=eye+ray*t;
-        // The ring reaches further back than the rows' curved ends.
-        let deepest=select(-2.2,-4.75,ring());
-        let wide=select(vec2f(2.05,1.1),vec2f(2.6,1.7),ring());
+        // The ring reaches further back than the rows' arc.
+        let arc=arc_radius()*(cos(arc_limit())-1.0)-.3;
+        let deepest=select(select(-.5,arc,curved()),-4.75,ring());
+        let wide=select(vec2f(field_extent().x+.1,1.25),vec2f(2.6,1.7),ring());
         let steps=select(80,128,ring());
         for(var i=0;i<steps;i++) {
             p=eye+ray*t;
             if p.z<deepest || abs(p.x)>wide.x || abs(p.y)>wide.y {break;}
+            // Behind both the rows' slab and the overlay, a ray can only leave
+            // the cylinder past its silhouette, where there are no letters.
+            if !ring() && on_arc(p).x< -.3 && p.z<filament_z(p.xy)-.05 {break;}
             let sample=scene(p);
             if sample.x<.0012 {hit=true;material=sample.y;break;}
             t+=max(sample.x*.50,.001);
@@ -437,8 +505,10 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
             let surface=shade(p,n,ray,material);
             // The ring's far side stays visible behind the front.
             let depth=1.0-exp(-max(-p.z,0.0)*select(1.0,.22,ring()));
-            // Fade the rows out before they fold away at the screen sides.
-            let edge=select(smoothstep(.70,.95,abs(p.x)/aspect()),0.0,ring());
+            // Letters on the arc fade as they turn edge-on, past the sides.
+            let turn=abs(atan2(p.x,p.z+arc_radius()));
+            let limit=arc_limit();
+            let edge=select(smoothstep(limit-.35,limit-.04,turn),0.0,ring() || !curved());
             color=mix(surface,color,max(depth*.65,edge));
         }
     }

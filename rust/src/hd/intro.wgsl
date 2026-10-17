@@ -18,7 +18,7 @@ struct Controls {
 // glyph_field(): letters (source rows, positive inside), unused, the letters'
 // original grey, and the overlay dots.
 @group(0) @binding(7) var glyph_fields: texture_2d<f32>;
-const FIELD_EXTENT=vec2f(2.2,1.15); // scroller.wgsl
+const FIELD_EXTENT=vec2f(2.2,1.3);  // scroller.wgsl
 const ROW=0.0086;                   // scroller.wgsl: world units per source row
 
 struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
