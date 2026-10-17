@@ -17,6 +17,8 @@ pub struct Frame {
     pub state: Presentation,
     pub indices: Vec<u8>,
     pub palette: Vec<u8>,
+    /// HD-only sine samples at the reconstructed raster split; never used by rgba().
+    pub scroller_seam: Option<[bool; WIDTH]>,
 }
 
 impl Frame {
@@ -62,7 +64,16 @@ impl Frame {
             // Join those logical samples into continuous strokes for this
             // authored treatment; the comparison retains the original dots.
             for (at, &index) in self.indices.iter().enumerate() {
-                if index & 128 == 0 {
+                // A single sine row can straddle the reconstructed raster split.
+                // Use its intact plane samples, not interpolation across a gap.
+                let ink = if at / WIDTH == 100 {
+                    self.scroller_seam
+                        .as_ref()
+                        .map_or(index & 128 != 0, |row| row[at % WIDTH])
+                } else {
+                    index & 128 != 0
+                };
+                if !ink {
                     continue;
                 }
                 for dy in -1..=2 {
@@ -272,6 +283,7 @@ impl Clip {
                 state,
                 indices: vga.indices.clone(),
                 palette: vga.palette.clone(),
+                scroller_seam: None,
             });
             if state.phase >= 5 {
                 break;
@@ -352,6 +364,7 @@ impl Clip {
                     },
                     indices: vga.indices.clone(),
                     palette: vga.palette.clone(),
+                    scroller_seam: scroller.hd_overlay_seam(&vga),
                 });
                 // The transition-only experiment stops on the backdrop. The
                 // scroller experiment continues to the original part-2 boundary.
@@ -696,6 +709,57 @@ pub fn signed_distance(mask: &[bool], w: usize, h: usize) -> Vec<f32> {
 mod tests {
     use super::*;
     #[test]
+    fn scroller_seam_repairs_only_hd_sine_contours() {
+        let mut frame = Frame {
+            state: Presentation {
+                phase: 8,
+                frame: 1700,
+                tick: 0,
+                door: 76,
+            },
+            indices: vec![80; WIDTH * HEIGHT],
+            palette: vec![32; 768],
+            scroller_seam: None,
+        };
+        for y in [92, 96, 104, 108] {
+            for x in (120..144).step_by(4) {
+                frame.indices[y * WIDTH + x] |= 128;
+            }
+        }
+        // A displaced point must also disappear from the modern mask.
+        frame.indices[100 * WIDTH + 200] |= 128;
+        let original = frame.rgba();
+        let before = frame.field();
+        let sample = |f: &[f16], x: usize, y: usize| f[(y * WIDTH + x) * 4 + 1].to_f32();
+        assert!(sample(&before, 130, 100) < 0.2);
+        frame.scroller_seam = Some(std::array::from_fn(|x| {
+            (120..144).contains(&x) && x % 4 == 0
+        }));
+        let after = frame.field();
+        for y in 94..107 {
+            assert!(sample(&after, 130, y) > 0.2, "Missing sine stroke at {y}");
+        }
+        assert!(sample(&after, 200, 100) < -1.0);
+        assert_eq!(
+            original,
+            frame.rgba(),
+            "Faithful scanout must remain unchanged"
+        );
+        assert!(
+            before
+                .chunks_exact(4)
+                .zip(after.chunks_exact(4))
+                .all(|(a, b)| a[0] == b[0]),
+            "Large font contours must remain unchanged"
+        );
+        frame.scroller_seam = Some([false; WIDTH]);
+        assert!(
+            sample(&frame.field(), 130, 100) < 0.2,
+            "Retain real blank glyph rows"
+        );
+    }
+
+    #[test]
     fn backdrop_filters_alternating_palette_but_tracks_a_sustained_change() {
         let frames: Vec<_> = (0..210)
             .map(|n| Frame {
@@ -707,6 +771,7 @@ mod tests {
                 },
                 indices: vec![],
                 palette: vec![if n < 140 && n % 2 == 0 { 0 } else { 63 }; 768],
+                scroller_seam: None,
             })
             .collect();
         let filtered = backdrop_palettes(&frames, 0, [[0.0, 0.0, 0.0, 1.0]; 64]);
@@ -787,6 +852,7 @@ mod tests {
             },
             indices: vec![80; WIDTH * HEIGHT],
             palette: vec![0; 768],
+            scroller_seam: None,
         };
         for y in 40..70 {
             for x in 50..80 {
@@ -833,6 +899,30 @@ mod tests {
         );
         assert_eq!(clip.frames[scroll.start_tick].state.phase, 8);
         assert_eq!(clip.frames[scroll.end_tick].state.phase, 9);
+        // The reported E tear at 29.2167 s: source scanout loses row 100, but
+        // the original plane samples still contain the connecting stroke.
+        let seam_frame = &clip.frames[2045];
+        assert!(
+            seam_frame.indices[100 * WIDTH..101 * WIDTH]
+                .iter()
+                .all(|i| i & 128 == 0)
+        );
+        let row = seam_frame
+            .scroller_seam
+            .as_ref()
+            .expect("Sine row at the raster split");
+        let x = row
+            .iter()
+            .position(|&ink| ink)
+            .expect("Intact row in the planes")
+            + 4;
+        let field = seam_frame.field();
+        for y in 98..103 {
+            assert!(
+                field[(y * WIDTH + x) * 4 + 1].to_f32() > 0.2,
+                "E stroke at {x},{y}"
+            );
+        }
         println!(
             "Scroller {:.3}–{:.3}s; {} frames and full PCM match",
             scroll.start_tick as f64 / 70.0,
@@ -896,6 +986,7 @@ mod tests {
             },
             indices: vec![180; WIDTH * HEIGHT],
             palette: vec![32; 768],
+            scroller_seam: None,
         };
         frame.indices[100 * WIDTH + 160] = 24;
         frame.indices[100 * WIDTH + 161] = 52;

@@ -171,6 +171,10 @@ intro, or use `--seek 18` to start at the transition.
 The GPU extrudes signed distance fields derived from the original indexed
 frames: low seven bits distinguish the large font from the background; bit 7
 contains the sine overlay. Its sparse VGA samples are joined into strokes.
+When a sine row crosses the reconstructed raster split, the modern contour
+reads that row directly from the video planes before the lower-half offset.
+This removes a periodic horizontal tear while preserving actual glyph gaps;
+the faithful scanout and original comparison remain unchanged.
 Contour smoothing deliberately rounds raster steps for the authored bevels;
 it does not recover vector artwork. Adjacent fields are interpolated at display
 time. The modern background filters the reconstruction's rapid palette cycling
