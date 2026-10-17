@@ -34,6 +34,35 @@ pub struct Scroller {
     parity: usize,
 }
 
+/// The scroll text, large font and sine-overlay data for the HD preview, read
+/// from the loaded executable exactly as `font()` and `overlay()` read them.
+#[cfg(feature = "hires")]
+pub struct HdFont {
+    /// Font code of each 104-pixel character cell (26 four-pixel columns).
+    pub text: Vec<u8>,
+    /// Each distinct code's 104 × 80 indexed cell, assembled column by column
+    /// through the descriptor table as `font()` blits it. Indices below 64 are
+    /// letter pixels; the rest is the tiled background stored with the font.
+    pub glyphs: Vec<(u8, Vec<u8>)>,
+    /// Words of the overlay's x-position table at 0x49c20, from word 0.
+    pub sine: Vec<u16>,
+    /// One period of the overlay's row codes at 0x4cda2, as 12-dot masks.
+    pub rows: Vec<[bool; 12]>,
+}
+
+/// Displayed scroll positions for the HD preview, in source pixels and
+/// overlay steps. See [`Scroller::hd_scroll`].
+#[cfg(feature = "hires")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HdScroll {
+    /// Text pixel (104 per character, wrapping) at screen x = 0, upper row.
+    pub upper: i64,
+    /// Text pixel at screen x = 0, lower row.
+    pub lower: i64,
+    /// `overlay()` step drawn into the displayed page.
+    pub overlay: i64,
+}
+
 impl Scroller {
     /// Read-only timeline and locally loaded tile schedule for the HD preview.
     #[cfg(feature = "hires")]
@@ -41,20 +70,62 @@ impl Scroller {
         (self.phase, self.tick)
     }
 
-    /// Optional HD-only sampling of the sine row that straddles the raster split.
-    /// The original scanout remains unchanged for the faithful comparison.
+    /// Read-only copy of the font, text and overlay tables for the HD preview.
     #[cfg(feature = "hires")]
-    pub fn hd_overlay_seam(&self, vga: &Vga) -> Option<[bool; 320]> {
-        // The displayed overlay is two y steps behind the writer. At phase 0,
-        // overlay() places sample 24 on line 100 using the upper-half address;
-        // scanout() already uses the lower-half offset there. Sample that one
-        // row before the offset for HD contours, retaining actual glyph gaps.
-        if self.phase < 4 || self.y.wrapping_sub(2) & 3 != 0 {
-            return None;
+    pub fn hd_font(&self) -> HdFont {
+        let mut codes = self.text.clone();
+        codes.sort_unstable();
+        codes.dedup();
+        let glyphs = codes
+            .into_iter()
+            .map(|ch| {
+                let mut cell = vec![0; 104 * 80];
+                for position in 0..26 {
+                    let descriptor =
+                        word(&self.memory, 0x4bdf2 + 2 * (ch as usize * 32 + position)) as usize;
+                    let (offset, segment) = self.descriptors[descriptor];
+                    for p in 0..4 {
+                        for row in 0..80 {
+                            cell[row * 104 + position * 4 + p] =
+                                self.memory[segment * 16 + ((offset + p + 320 * row) & 65535)];
+                        }
+                    }
+                }
+                (ch, cell)
+            })
+            .collect();
+        // overlay() reads word (2048 - y - (y & 3) + 4i) & 32767 and stays
+        // below 2300 during this part; keep a margin for the HD extension.
+        let sine = (0..2400)
+            .map(|i| word(&self.memory, 0x49c20 + 2 * i))
+            .collect();
+        let rows = (0..375)
+            .map(|t| std::array::from_fn(|j| glyph(self.memory[0x4cda2 + 2 * t], j)))
+            .collect();
+        HdFont {
+            text: self.text.clone(),
+            glyphs,
+            sine,
+            rows,
         }
-        Some(std::array::from_fn(|x| {
-            vga.planes[x & 3][(self.display + 100 * 160 + (x >> 2)) & 65535] & 128 != 0
-        }))
+    }
+
+    /// What the current scanout shows, derived from the scroll counters rather
+    /// than from the pixels. Both rows keep a strip of text columns in VGA
+    /// memory at fixed addresses (written at the window edge and at a copy 80
+    /// bytes away) and move the display window across it. The displayed page
+    /// was written one `render_frame` earlier, so the upper row's newest
+    /// visible column is `forward - 2` at byte 79, and the lower row's is
+    /// `backward + 2` at byte 0. The displayed overlay was drawn two `y`
+    /// steps earlier. The ignored original-data tests check these against the
+    /// reference frames.
+    #[cfg(feature = "hires")]
+    pub fn hd_scroll(&self) -> HdScroll {
+        HdScroll {
+            upper: 4 * (self.forward as i64 - 81),
+            lower: 4 * (self.backward as i64 + 2),
+            overlay: self.y as i64 - 2,
+        }
     }
 
     #[cfg(feature = "hires")]

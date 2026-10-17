@@ -77,27 +77,43 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 
 | Flag | Experiment |
 | --- | --- |
-| `--scroller` | Glass lettering with reflective edges; the row ends curve into depth |
+| `--scroller` | Glass lettering with reflective edges, on a shallow arc |
 | `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights |
 | `--scroller-lighting studio` | Steady lighting, selected by default |
+| `--scroller-layout ring` | Experimental: each row becomes a whole ring of letters |
+| `--faithful` | Faithful HD: the original look, with smooth letters and dots |
 
 The scroller includes the laser transition and continues to the end of
 part 2, around 42 seconds. Omit `--seek` for the complete intro; use `--seek 18`
 to watch the tiles reveal the new scene. Add `--split` for the original on the
-left. In the app, **L** switches lighting without restarting the music.
+left. In the app, **L** switches lighting and **G** switches between rows and
+rings without restarting the music.
 
 Glass with studio lighting was chosen from three presets. The other two,
 coated titanium ribbons and straight sculpted extrusions, were removed from the
 code but remain in the Git history: commit `5e717ff` introduced them, and
 `ad08523` is the last commit that still has them.
 
-The vertical sine scroller passes in front of the lower horizontal row and
-behind the upper row, where it remains visible through the glass.
+The letters are drawn from the original font, text and sine tables, read from
+your local data when the preview starts, at the proportions of the original
+4:3 display. Both rows and the sine text move continuously at the original's
+speeds and stay in step with its timeline. Both rows run round one shallow
+arc, a slice of a large cylinder, so they read flat in the centre and turn
+away as they reach and pass the sides of the screen. The vertical sine
+scroller runs off the top and bottom of the screen, passing in front of the
+lower row and behind the upper row, where it remains visible through the glass.
 
-The large lettering and sine overlay use smoothed contours from locally
-rendered reference frames. Depth, the curved row ends, materials and lighting
-are authored experiments. Glass transmission, reflections, haze and contact shadows
-are analytic approximations, not a full optical simulation.
+Depth, extrusion, the arc, materials and lighting are authored experiments.
+Glass transmission, reflections, haze and contact shadows are analytic
+approximations, not a full optical simulation. Letters and the sine text
+fade in as part 2 begins, and the scene fades out with its end.
+
+The rings are an experiment: one whole ring of letters per row, seen level
+from between them. Each ring's front matches its row exactly and turns the
+row's way. Its letters then travel round the back, seen from behind and
+mirrored, visible behind the fronts and through the glass. The text is longer
+than a ring, so letters fade out and in again at a seam at the back. The two
+rows, on their arc, remain the default.
 
 | Key | Action |
 | --- | --- |

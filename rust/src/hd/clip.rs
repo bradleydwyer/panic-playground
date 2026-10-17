@@ -3,7 +3,7 @@ use crate::{
     engine::{FRAME_RATE, SAMPLE_RATE},
     music::Music,
     scenes::intro::{Intro, Presentation},
-    scenes::scroller::Scroller,
+    scenes::scroller::{HdFont, HdScroll, Scroller},
     vga::Vga,
 };
 use half::f16;
@@ -17,13 +17,12 @@ pub struct Frame {
     pub state: Presentation,
     pub indices: Vec<u8>,
     pub palette: Vec<u8>,
-    /// HD-only sine samples at the reconstructed raster split; never used by rgba().
-    pub scroller_seam: Option<[bool; WIDTH]>,
 }
 
 impl Frame {
     pub fn shape_key(&self) -> (u8, usize) {
         if self.state.phase >= 8 {
+            // Scroller frames upload their backdrop for faithful HD instead.
             return (self.state.phase, self.state.frame);
         }
         (
@@ -50,52 +49,44 @@ impl Frame {
             .collect()
     }
 
+    /// The original part-2 picture without its letters or overlay dots, as
+    /// half-float sRGB, for faithful HD to draw smooth letters over. Bit 7
+    /// (the overlay) is cleared. Letter pixels (low seven bits below 64) take
+    /// the nearest background pixel 8 columns or rows away, the period of the
+    /// tile pattern, so the backdrop keeps its original colours.
+    pub fn backdrop(&self) -> Vec<f16> {
+        let background = |x: i32, y: i32| {
+            (0..HEIGHT as i32 / 8).find_map(|k| {
+                [
+                    (x - 8 * k, y),
+                    (x + 8 * k, y),
+                    (x, y - 8 * k),
+                    (x, y + 8 * k),
+                ]
+                .into_iter()
+                .filter(|&(x, y)| (0..WIDTH as i32).contains(&x) && (0..HEIGHT as i32).contains(&y))
+                .map(|(x, y)| self.indices[y as usize * WIDTH + x as usize] & 127)
+                .find(|&i| i >= 64)
+            })
+        };
+        let channel = |c: u8| f16::from_f32((((c & 63) << 2) | ((c & 63) >> 4)) as f32 / 255.0);
+        (0..WIDTH * HEIGHT)
+            .flat_map(|at| {
+                let mut index = self.indices[at] & 127;
+                if index < 64 {
+                    index = background((at % WIDTH) as i32, (at / WIDTH) as i32).unwrap_or(index);
+                }
+                let p = &self.palette[index as usize * 3..][..3];
+                [channel(p[0]), channel(p[1]), channel(p[2]), f16::ONE]
+            })
+            .collect()
+    }
+
     /// Derive shape and material fields from caller-supplied indexed artwork.
     /// The contour is limited by the original raster; shading is newly generated
     /// at display resolution. Nothing here restores absent source artwork.
+    /// The scroller does not use frame fields; see [`ScrollerGlyphs`].
     pub fn field(&self) -> Vec<f16> {
-        if self.state.phase >= 8 {
-            // The original uses bits 0..6 for the large font/background and
-            // bit 7 for the overlaid sine text. Contours stay locally derived;
-            // extrusion, glass and the curved row ends are authored.
-            let large: Vec<bool> = self.indices.iter().map(|i| i & 127 < 64).collect();
-            let mut small = vec![false; WIDTH * HEIGHT];
-            // The sine overlay writes one VGA plane every four pixels/rows.
-            // Join those logical samples into continuous strokes for this
-            // authored treatment; the comparison retains the original dots.
-            for (at, &index) in self.indices.iter().enumerate() {
-                // A single sine row can straddle the reconstructed raster split.
-                // Use its intact plane samples, not interpolation across a gap.
-                let ink = if at / WIDTH == 100 {
-                    self.scroller_seam
-                        .as_ref()
-                        .map_or(index & 128 != 0, |row| row[at % WIDTH])
-                } else {
-                    index & 128 != 0
-                };
-                if !ink {
-                    continue;
-                }
-                for dy in -1..=2 {
-                    for dx in -1..=2 {
-                        let x = (at % WIDTH) as i32 + dx;
-                        let y = (at / WIDTH) as i32 + dy;
-                        if x >= 0 && x < WIDTH as i32 && y >= 0 && y < HEIGHT as i32 {
-                            small[y as usize * WIDTH + x as usize] = true;
-                        }
-                    }
-                }
-            }
-            return smooth_contour(&signed_distance(&large, WIDTH, HEIGHT), WIDTH, HEIGHT)
-                .iter()
-                .zip(smooth_contour(
-                    &signed_distance(&small, WIDTH, HEIGHT),
-                    WIDTH,
-                    HEIGHT,
-                ))
-                .flat_map(|(&a, b)| [f16::from_f32(a), f16::from_f32(b), f16::ZERO, f16::ONE])
-                .collect();
-        }
         let logo = self.state.phase >= 4;
         let mask: Vec<bool> = self
             .indices
@@ -190,12 +181,43 @@ impl std::str::FromStr for ScrollerLighting {
     }
 }
 
+/// Where the modern view places the two large rows of text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ScrollerLayout {
+    /// The original's two rows, at its proportions, on one authored arc of
+    /// constant curvature that turns away towards the sides of the screen.
+    Rows = 0,
+    /// Authored alternative: one whole ring of letters per row. Each front
+    /// follows its row exactly; the far sides carry the same text seen from
+    /// behind, with letters replaced at a fading seam at the back.
+    Ring = 1,
+}
+
+impl std::str::FromStr for ScrollerLayout {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, String> {
+        match value {
+            "rows" => Ok(Self::Rows),
+            "ring" => Ok(Self::Ring),
+            _ => Err("Use --scroller-layout rows or ring".into()),
+        }
+    }
+}
+
 pub struct ScrollerPreview {
     pub start_tick: usize,
     pub end_tick: usize,
     /// Musical mode reads `Clip::audio`, precomputed on the audio timeline so
     /// seeking and exports agree; studio mode ignores it.
     pub lighting: ScrollerLighting,
+    pub layout: ScrollerLayout,
+    /// Displayed scroll positions for every clip frame, without wrapping:
+    /// upper and lower row text pixel at screen x = 0, and overlay step.
+    /// Read from the scroll counters (`Scroller::hd_scroll`), not the pixels.
+    pub scroll: Vec<[f64; 3]>,
+    /// Letter shapes built from the locally loaded font and overlay tables.
+    pub glyphs: ScrollerGlyphs,
     /// Modern ambient palette with the rapid original cycling filtered out.
     /// Reference frames retain the original palette, including its alternating phase.
     pub backdrop: Vec<[[f32; 4]; 64]>,
@@ -221,10 +243,29 @@ impl Clip {
         Self::load_mode(data, true, false)
     }
 
-    pub fn load_scroller(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
+    pub fn load_scroller(
+        data: &Data,
+        lighting: ScrollerLighting,
+        layout: ScrollerLayout,
+    ) -> Result<Self, String> {
         let mut clip = Self::load_mode(data, true, true)?;
-        clip.scroller.as_mut().unwrap().lighting = lighting;
+        let preview = clip.scroller.as_mut().unwrap();
+        preview.lighting = lighting;
+        preview.layout = layout;
         Ok(clip)
+    }
+
+    /// Scroll positions at a clip time, interpolated between 70 Hz frames so
+    /// that each frame's exact position is shown at the moment it appears.
+    pub fn scroll_at(&self, time: f64) -> Option<[f64; 3]> {
+        let scroll = &self.scroller.as_ref()?.scroll;
+        let position = (time.max(0.0) * FRAME_RATE as f64).min((scroll.len() - 1) as f64);
+        let index = position.floor() as usize;
+        let next = (index + 1).min(scroll.len() - 1);
+        let fraction = position - index as f64;
+        Some(std::array::from_fn(|k| {
+            scroll[index][k] + (scroll[next][k] - scroll[index][k]) * fraction
+        }))
     }
 
     fn load_mode(data: &Data, extend: bool, play_scroller: bool) -> Result<Self, String> {
@@ -247,7 +288,6 @@ impl Clip {
                 state,
                 indices: vga.indices.clone(),
                 palette: vga.palette.clone(),
-                scroller_seam: None,
             });
             if state.phase >= 5 {
                 break;
@@ -268,6 +308,14 @@ impl Clip {
             // it, rather than adding an extra frame or restarting the music.
             let logo_state = frames.pop().unwrap().state;
             let mut scroller = Scroller::new(data, &mut vga)?;
+            let font = scroller.hd_font();
+            let period = [
+                (font.text.len() * 104) as i64,
+                (font.text.len() * 104) as i64,
+                2048,
+            ];
+            let mut unwrap = ScrollUnwrap::new(scroller.hd_scroll(), period);
+            let mut scroll = vec![unwrap.position(); frames.len()];
             let mut scroll_start = 0;
             let mut scroll_end = 0;
             let mut transition = TileTransition {
@@ -327,8 +375,8 @@ impl Clip {
                     },
                     indices: vga.indices.clone(),
                     palette: vga.palette.clone(),
-                    scroller_seam: scroller.hd_overlay_seam(&vga),
                 });
+                scroll.push(unwrap.next(scroller.hd_scroll()));
                 // The transition-only experiment stops on the backdrop. The
                 // scroller experiment continues to the original part-2 boundary.
                 if !play_scroller && phase == 3 && tick == FRAME_RATE as usize {
@@ -348,6 +396,9 @@ impl Clip {
                     start_tick: scroll_start,
                     end_tick: scroll_end,
                     lighting: ScrollerLighting::Studio,
+                    layout: ScrollerLayout::Rows,
+                    scroll,
+                    glyphs: ScrollerGlyphs::new(&font, &frames[scroll_start].palette)?,
                     backdrop: backdrop_palettes(&frames, scroll_start, transition.palette),
                 });
             }
@@ -452,45 +503,364 @@ fn backdrop_palettes(
         .collect()
 }
 
-/// Low-pass the locally derived contour to remove one-pixel stair steps from
-/// the new bevels. This deliberately rounds the raster; it is not a recovered
-/// vector outline. Kept separate from the faithful comparison and intro.
-fn smooth_contour(input: &[f32], width: usize, height: usize) -> Vec<f32> {
-    let weights = [1.0, 4.0, 6.0, 4.0, 1.0];
-    let mut a = input.to_vec();
-    let mut b = vec![0.0; input.len()];
-    for _ in 0..2 {
-        for y in 0..height {
-            for x in 0..width {
-                b[y * width + x] = weights
-                    .iter()
-                    .enumerate()
-                    .map(|(i, w)| {
-                        a[y * width
-                            + (x as isize + i as isize - 2).clamp(0, width as isize - 1) as usize]
-                            * w
-                            / 16.0
-                    })
-                    .sum();
+/// Texels per source pixel in the scroller's glyph atlas.
+pub const GLYPH_SCALE: usize = 4;
+/// Source pixels of margin around each 104 × 80 font cell in the atlas.
+pub const GLYPH_PAD: usize = 16;
+/// Atlas distances clamp here, in source rows, inside the margin.
+pub const GLYPH_LIMIT: f32 = 13.0;
+/// Atlas cells per row. scroller.wgsl repeats these constants.
+pub const GLYPH_COLUMNS: usize = 3;
+/// Width of the scroller data texture, in texels.
+pub const SCROLL_DATA_WIDTH: usize = 1200;
+/// A 320 × 200 frame shown at 4:3 has pixels 5/6 as wide as they are tall.
+pub const PIXEL_ASPECT: f32 = 5.0 / 6.0;
+
+/// Letter shapes and tables for the modern scroller, built in memory from the
+/// locally loaded executable when the clip loads. Nothing here is stored.
+pub struct ScrollerGlyphs {
+    /// Two half floats per texel. Red: signed distance to the smoothed outline
+    /// of a font cell's letter pixels, in source rows (positive inside). Green:
+    /// the letter pixels' original grey, interpolated between letter pixels.
+    pub atlas: Vec<f16>,
+    pub atlas_size: (u32, u32),
+    /// Four floats per texel, `SCROLL_DATA_WIDTH` wide. Row 0: atlas slot for
+    /// each character of the text (0 for blank cells) and the distance to the
+    /// nearest non-blank cell, in cells; its last texel holds
+    /// the text length and the overlay's row period. Row 1: even words of the
+    /// overlay's x table, the only ones `overlay()` reads, and the same with
+    /// the rounding to whole pixels smoothed. Row 2: each overlay
+    /// row's runs of dots as two [start, end) pairs, unused runs at 1000.
+    /// Row 3: rows from each overlay row to the nearest row with dots.
+    pub data: Vec<f32>,
+    pub data_size: (u32, u32),
+}
+
+impl ScrollerGlyphs {
+    pub fn new(font: &HdFont, palette: &[u8]) -> Result<Self, String> {
+        let width = SCROLL_DATA_WIDTH;
+        if font.text.len() >= width || font.rows.len() > width || font.sine.len() < 2 * width {
+            return Err("Scroller tables exceed the HD data texture".into());
+        }
+        let cell = (
+            (104 + 2 * GLYPH_PAD) * GLYPH_SCALE,
+            (80 + 2 * GLYPH_PAD) * GLYPH_SCALE,
+        );
+        let mut slots = [0_u8; 256];
+        let mut cells = Vec::new();
+        for (code, pixels) in &font.glyphs {
+            let mask: Vec<bool> = pixels.iter().map(|&i| i < 64).collect();
+            if !mask.contains(&true) {
+                continue;
+            }
+            cells.push((
+                smooth_signed_distance(&mask, 104, 80, GLYPH_SCALE, GLYPH_PAD, 0.65, GLYPH_LIMIT),
+                glyph_shade(pixels, palette),
+            ));
+            slots[*code as usize] = cells.len() as u8;
+        }
+        let atlas_size = (
+            GLYPH_COLUMNS * cell.0,
+            cells.len().div_ceil(GLYPH_COLUMNS).max(1) * cell.1,
+        );
+        let mut atlas = vec![f16::ZERO; atlas_size.0 * atlas_size.1 * 2];
+        for (slot, (distance, shade)) in cells.iter().enumerate() {
+            let origin = (slot % GLYPH_COLUMNS * cell.0, slot / GLYPH_COLUMNS * cell.1);
+            for y in 0..cell.1 {
+                for x in 0..cell.0 {
+                    let at = ((origin.1 + y) * atlas_size.0 + origin.0 + x) * 2;
+                    atlas[at] = f16::from_f32(distance[y * cell.0 + x]);
+                    atlas[at + 1] = f16::from_f32(shade[y * cell.0 + x]);
+                }
             }
         }
-        for y in 0..height {
-            for x in 0..width {
-                a[y * width + x] = weights
-                    .iter()
-                    .enumerate()
-                    .map(|(i, w)| {
-                        b[(y as isize + i as isize - 2).clamp(0, height as isize - 1) as usize
-                            * width
-                            + x]
-                            * w
-                            / 16.0
-                    })
-                    .sum();
+        let mut data = vec![0.0; width * 4 * 4];
+        let n = font.text.len();
+        for (i, &code) in font.text.iter().enumerate() {
+            data[i * 4] = slots[code as usize] as f32;
+            // Cells to the nearest letter, around the wrapping text, so the
+            // shader can step quickly across blank stretches.
+            data[i * 4 + 1] = (0..n)
+                .filter(|&j| slots[font.text[j] as usize] != 0)
+                .map(|j| (i + n - j) % n)
+                .map(|d| d.min(n - d))
+                .min()
+                .unwrap_or(1000) as f32;
+        }
+        data[(width - 1) * 4] = font.text.len() as f32;
+        data[(width - 1) * 4 + 1] = font.rows.len() as f32;
+        // The table holds whole pixels. A short Gaussian over the even words
+        // smooths that rounding for the continuous HD curve (authored).
+        for k in 0..width {
+            let (mut sum, mut total) = (0.0, 0.0);
+            for d in -4_i32..=4 {
+                let at = (k as i32 + d).clamp(0, width as i32 - 1) as usize;
+                let w = (-(d * d) as f32 / 4.5).exp();
+                sum += font.sine[2 * at] as f32 * w;
+                total += w;
+            }
+            data[(width + k) * 4] = font.sine[2 * k] as f32;
+            data[(width + k) * 4 + 1] = sum / total;
+        }
+        for (r, dots) in font.rows.iter().enumerate() {
+            let mut runs = Vec::new();
+            let mut j = 0;
+            while j < 12 {
+                if dots[j] {
+                    let start = j;
+                    while j < 12 && dots[j] {
+                        j += 1;
+                    }
+                    runs.extend([start as f32, j as f32]);
+                } else {
+                    j += 1;
+                }
+            }
+            if runs.len() > 4 {
+                return Err(format!("Overlay row {r} has more than two runs"));
+            }
+            runs.resize(4, 1000.0);
+            data[(2 * width + r) * 4..][..4].copy_from_slice(&runs);
+            let rows = font.rows.len();
+            data[(3 * width + r) * 4] = (0..rows)
+                .filter(|&k| font.rows[k].contains(&true))
+                .map(|k| (r + rows - k) % rows)
+                .map(|d| d.min(rows - d))
+                .min()
+                .unwrap_or(1000) as f32;
+        }
+        Ok(Self {
+            atlas,
+            atlas_size: (atlas_size.0 as u32, atlas_size.1 as u32),
+            data,
+            data_size: (width as u32, 4),
+        })
+    }
+}
+
+/// The original grey of letter pixels at each atlas texel, bilinearly
+/// interpolated between letter pixels only, so edges don't darken.
+fn glyph_shade(pixels: &[u8], palette: &[u8]) -> Vec<f32> {
+    let width = (104 + 2 * GLYPH_PAD) * GLYPH_SCALE;
+    let height = (80 + 2 * GLYPH_PAD) * GLYPH_SCALE;
+    let grey = |i: u8| {
+        let p = &palette[i as usize * 3..][..3];
+        p.iter().map(|&c| (c & 63) as f32).sum::<f32>() / 189.0
+    };
+    let mut shade = vec![0.0; width * height];
+    for y in 0..height {
+        let fy = (y as f32 + 0.5) / GLYPH_SCALE as f32 - GLYPH_PAD as f32 - 0.5;
+        for x in 0..width {
+            let fx = (x as f32 + 0.5) / GLYPH_SCALE as f32 - GLYPH_PAD as f32 - 0.5;
+            let (mut sum, mut weight) = (0.0, 0.0);
+            let (ty, tx) = (fy - fy.floor(), fx - fx.floor());
+            for (dy, wy) in [(0, 1.0 - ty), (1, ty)] {
+                for (dx, wx) in [(0, 1.0 - tx), (1, tx)] {
+                    let (px, py) = (fx.floor() as i32 + dx, fy.floor() as i32 + dy);
+                    if (0..104).contains(&px) && (0..80).contains(&py) {
+                        let i = pixels[py as usize * 104 + px as usize];
+                        if i < 64 {
+                            sum += grey(i) * wx * wy;
+                            weight += wx * wy;
+                        }
+                    }
+                }
+            }
+            if weight > 0.0 {
+                shade[y * width + x] = sum / weight;
             }
         }
     }
-    a
+    shade
+}
+
+/// Signed distance to a smoothed outline of a pixel mask, positive inside.
+/// Texel (i, j) is centred on source position ((i + 0.5) / scale - pad,
+/// (j + 0.5) / scale - pad). The mask is blurred by a Gaussian of `sigma`
+/// source pixels and cut at one half, rounding single-pixel stair steps: an
+/// authored interpretation of the raster, not recovered vector artwork.
+/// Distances are Euclidean on the 4:3 display, in source rows (a column is
+/// [`PIXEL_ASPECT`] rows wide), measured to the piecewise-linear outline
+/// between texels, and clamped to ±`limit`.
+pub fn smooth_signed_distance(
+    mask: &[bool],
+    width: usize,
+    height: usize,
+    scale: usize,
+    pad: usize,
+    sigma: f32,
+    limit: f32,
+) -> Vec<f32> {
+    assert_eq!(mask.len(), width * height);
+    let (w, h) = ((width + 2 * pad) * scale, (height + 2 * pad) * scale);
+    let centre = |i: usize| (i as f32 + 0.5) / scale as f32 - pad as f32;
+    let radius = (3.0 * sigma).ceil() as isize + 1;
+    let taps = |count: usize, extent: usize| -> Vec<Vec<(usize, f32)>> {
+        (0..count)
+            .map(|i| {
+                let x = centre(i);
+                let mut taps = Vec::new();
+                let mut total = 0.0;
+                for a in x.floor() as isize - radius..=x.floor() as isize + radius {
+                    let g = (-(x - a as f32 - 0.5).powi(2) / (2.0 * sigma * sigma)).exp();
+                    total += g;
+                    if a >= 0 && (a as usize) < extent {
+                        taps.push((a as usize, g));
+                    }
+                }
+                taps.into_iter().map(|(a, g)| (a, g / total)).collect()
+            })
+            .collect()
+    };
+    let (tx, ty) = (taps(w, width), taps(h, height));
+    let mut rows = vec![0.0_f32; height * w];
+    for b in 0..height {
+        for i in 0..w {
+            rows[b * w + i] = tx[i]
+                .iter()
+                .filter(|(a, _)| mask[b * width + a])
+                .map(|(_, g)| g)
+                .sum();
+        }
+    }
+    let mut field = vec![0.0_f32; w * h];
+    for j in 0..h {
+        for i in 0..w {
+            field[j * w + i] = ty[j].iter().map(|&(b, g)| rows[b * w + i] * g).sum::<f32>() - 0.5;
+        }
+    }
+    let point = |i: usize, j: usize| [centre(i) * PIXEL_ASPECT, centre(j)];
+    let length = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
+    let mut nearest: Vec<Option<[f32; 2]>> = vec![None; w * h];
+    let mut best = vec![f32::INFINITY; w * h];
+    // Seed the texels around each 2 x 2 cell with their closest points on the
+    // outline segments crossing it (marching squares on the blurred mask).
+    for j in 0..h.saturating_sub(1) {
+        for i in 0..w.saturating_sub(1) {
+            let corners = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)];
+            let v = corners.map(|(x, y)| field[y * w + x]);
+            let crossing: [Option<[f32; 2]>; 4] = std::array::from_fn(|k| {
+                let (a, b) = (v[k], v[(k + 1) % 4]);
+                ((a >= 0.0) != (b >= 0.0)).then(|| {
+                    let t = a / (a - b);
+                    let (p, q) = (point(corners[k].0, corners[k].1), {
+                        let c = corners[(k + 1) % 4];
+                        point(c.0, c.1)
+                    });
+                    [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]
+                })
+            });
+            let mut segments = Vec::new();
+            match crossing.iter().flatten().count() {
+                2 => {
+                    let mut ends = crossing.iter().flatten();
+                    segments.push((*ends.next().unwrap(), *ends.next().unwrap()));
+                }
+                4 => {
+                    // Saddle: separate the corners on the other side from the centre.
+                    let inside = v.iter().sum::<f32>() >= 0.0;
+                    for c in 0..4 {
+                        if (v[c] >= 0.0) != inside {
+                            segments.push((crossing[(c + 3) % 4].unwrap(), crossing[c].unwrap()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+            for (a, b) in segments {
+                for (x, y) in corners {
+                    let p = point(x, y);
+                    let ab = [b[0] - a[0], b[1] - a[1]];
+                    let t = (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1])
+                        / (ab[0] * ab[0] + ab[1] * ab[1]).max(1e-12))
+                    .clamp(0.0, 1.0);
+                    let q = [a[0] + ab[0] * t, a[1] + ab[1] * t];
+                    let d = length(p, q);
+                    if d < best[y * w + x] {
+                        best[y * w + x] = d;
+                        nearest[y * w + x] = Some(q);
+                    }
+                }
+            }
+        }
+    }
+    // Spread the closest outline points (an 8-neighbour sequential sweep).
+    let mut adopt = |x: usize, y: usize, dx: isize, dy: isize| {
+        let (nx, ny) = (x as isize + dx, y as isize + dy);
+        if nx < 0 || ny < 0 || nx >= w as isize || ny >= h as isize {
+            return;
+        }
+        if let Some(q) = nearest[ny as usize * w + nx as usize] {
+            let d = length(point(x, y), q);
+            if d < best[y * w + x] {
+                best[y * w + x] = d;
+                nearest[y * w + x] = Some(q);
+            }
+        }
+    };
+    for _ in 0..2 {
+        for y in 0..h {
+            for x in 0..w {
+                for (dx, dy) in [(-1, 0), (-1, -1), (0, -1), (1, -1)] {
+                    adopt(x, y, dx, dy);
+                }
+            }
+            for x in (0..w).rev() {
+                adopt(x, y, 1, 0);
+            }
+        }
+        for y in (0..h).rev() {
+            for x in (0..w).rev() {
+                for (dx, dy) in [(1, 0), (1, 1), (0, 1), (-1, 1)] {
+                    adopt(x, y, dx, dy);
+                }
+            }
+            for x in 0..w {
+                adopt(x, y, -1, 0);
+            }
+        }
+    }
+    field
+        .iter()
+        .zip(best)
+        .map(|(&v, d)| d.min(limit) * if v >= 0.0 { 1.0 } else { -1.0 })
+        .collect()
+}
+
+/// Removes the counters' wrap-around so positions interpolate across it.
+struct ScrollUnwrap {
+    raw: [i64; 3],
+    position: [f64; 3],
+    period: [i64; 3],
+}
+
+impl ScrollUnwrap {
+    fn new(scroll: HdScroll, period: [i64; 3]) -> Self {
+        let raw = [scroll.upper, scroll.lower, scroll.overlay];
+        Self {
+            raw,
+            position: raw.map(|v| v as f64),
+            period,
+        }
+    }
+
+    fn position(&self) -> [f64; 3] {
+        self.position
+    }
+
+    fn next(&mut self, scroll: HdScroll) -> [f64; 3] {
+        let raw = [scroll.upper, scroll.lower, scroll.overlay];
+        for (k, position) in self.position.iter_mut().enumerate() {
+            let period = self.period[k];
+            let mut delta = (raw[k] - self.raw[k]).rem_euclid(period);
+            if delta > period / 2 {
+                delta -= period;
+            }
+            *position += delta as f64;
+        }
+        self.raw = raw;
+        self.position
+    }
 }
 
 /// Measure authored lighting cues from the clip's interleaved stereo PCM, one
@@ -765,57 +1135,6 @@ pub fn signed_distance(mask: &[bool], w: usize, h: usize) -> Vec<f32> {
 mod tests {
     use super::*;
     #[test]
-    fn scroller_seam_repairs_only_hd_sine_contours() {
-        let mut frame = Frame {
-            state: Presentation {
-                phase: 8,
-                frame: 1700,
-                tick: 0,
-                door: 76,
-            },
-            indices: vec![80; WIDTH * HEIGHT],
-            palette: vec![32; 768],
-            scroller_seam: None,
-        };
-        for y in [92, 96, 104, 108] {
-            for x in (120..144).step_by(4) {
-                frame.indices[y * WIDTH + x] |= 128;
-            }
-        }
-        // A displaced point must also disappear from the modern mask.
-        frame.indices[100 * WIDTH + 200] |= 128;
-        let original = frame.rgba();
-        let before = frame.field();
-        let sample = |f: &[f16], x: usize, y: usize| f[(y * WIDTH + x) * 4 + 1].to_f32();
-        assert!(sample(&before, 130, 100) < 0.2);
-        frame.scroller_seam = Some(std::array::from_fn(|x| {
-            (120..144).contains(&x) && x % 4 == 0
-        }));
-        let after = frame.field();
-        for y in 94..107 {
-            assert!(sample(&after, 130, y) > 0.2, "Missing sine stroke at {y}");
-        }
-        assert!(sample(&after, 200, 100) < -1.0);
-        assert_eq!(
-            original,
-            frame.rgba(),
-            "Faithful scanout must remain unchanged"
-        );
-        assert!(
-            before
-                .chunks_exact(4)
-                .zip(after.chunks_exact(4))
-                .all(|(a, b)| a[0] == b[0]),
-            "Large font contours must remain unchanged"
-        );
-        frame.scroller_seam = Some([false; WIDTH]);
-        assert!(
-            sample(&frame.field(), 130, 100) < 0.2,
-            "Retain real blank glyph rows"
-        );
-    }
-
-    #[test]
     fn backdrop_filters_alternating_palette_but_tracks_a_sustained_change() {
         let frames: Vec<_> = (0..210)
             .map(|n| Frame {
@@ -827,7 +1146,6 @@ mod tests {
                 },
                 indices: vec![],
                 palette: vec![if n < 140 && n % 2 == 0 { 0 } else { 63 }; 768],
-                scroller_seam: None,
             })
             .collect();
         let filtered = backdrop_palettes(&frames, 0, [[0.0, 0.0, 0.0, 1.0]; 64]);
@@ -897,41 +1215,11 @@ mod tests {
     }
 
     #[test]
-    fn scroller_fields_separate_font_overlay_and_background() {
-        let mut frame = Frame {
-            state: Presentation {
-                phase: 8,
-                frame: 1700,
-                tick: 0,
-                door: 76,
-            },
-            indices: vec![80; WIDTH * HEIGHT],
-            palette: vec![0; 768],
-            scroller_seam: None,
-        };
-        for y in 40..70 {
-            for x in 50..80 {
-                frame.indices[y * WIDTH + x] = 20;
-            }
-        }
-        for y in (100..124).step_by(4) {
-            for x in (120..144).step_by(4) {
-                frame.indices[y * WIDTH + x] |= 128;
-            }
-        }
-        let f = frame.field();
-        let sample = |x: usize, y: usize, channel: usize| f[(y * WIDTH + x) * 4 + channel].to_f32();
-        assert!(sample(65, 55, 0) > 0.0 && sample(65, 55, 1) < 0.0);
-        assert!(sample(130, 110, 0) < 0.0 && sample(130, 110, 1) > 0.0);
-        assert!(sample(200, 150, 0) < 0.0 && sample(200, 150, 1) < 0.0);
-        assert_eq!(frame.shape_key(), (8, 1700));
-    }
-
-    #[test]
     #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
     fn scroller_matches_complete_engine_reference_and_pcm() {
         let data = crate::test_support::data();
-        let clip = Clip::load_scroller(&data, ScrollerLighting::Musical).unwrap();
+        let clip =
+            Clip::load_scroller(&data, ScrollerLighting::Musical, ScrollerLayout::Rows).unwrap();
         let mut engine = crate::engine::Engine::new(data, false).unwrap();
         let mut pcm = Vec::new();
         for (i, frame) in clip.frames.iter().enumerate() {
@@ -959,36 +1247,327 @@ mod tests {
         }
         assert_eq!(clip.frames[scroll.start_tick].state.phase, 8);
         assert_eq!(clip.frames[scroll.end_tick].state.phase, 9);
-        // The reported E tear at 29.2167 s: source scanout loses row 100, but
-        // the original plane samples still contain the connecting stroke.
-        let seam_frame = &clip.frames[2045];
-        assert!(
-            seam_frame.indices[100 * WIDTH..101 * WIDTH]
-                .iter()
-                .all(|i| i & 128 == 0)
-        );
-        let row = seam_frame
-            .scroller_seam
-            .as_ref()
-            .expect("Sine row at the raster split");
-        let x = row
-            .iter()
-            .position(|&ink| ink)
-            .expect("Intact row in the planes")
-            + 4;
-        let field = seam_frame.field();
-        for y in 98..103 {
-            assert!(
-                field[(y * WIDTH + x) * 4 + 1].to_f32() > 0.2,
-                "E stroke at {x},{y}"
-            );
-        }
+        assert_eq!(scroll.scroll.len(), clip.frames.len());
         println!(
             "Scroller {:.3}–{:.3}s; {} frames and full PCM match",
             scroll.start_tick as f64 / 70.0,
             clip.duration(),
             clip.frames.len()
         );
+    }
+
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
+    fn scroller_glyphs_and_positions_rebuild_every_reference_frame() {
+        // Rebuild both rows and the overlay of every part-2 frame from the font,
+        // text and tables alone, placed by Scroller::hd_scroll, and compare
+        // them with the reference scanout pixel for pixel.
+        let data = crate::test_support::data();
+        let clip =
+            Clip::load_scroller(&data, ScrollerLighting::Studio, ScrollerLayout::Rows).unwrap();
+        let font = Scroller::new(&data, &mut Vga::new()).unwrap().hd_font();
+        let preview = clip.scroller.as_ref().unwrap();
+        let strip = (font.text.len() * 104) as i64;
+        let pixel = |u: i64, row: usize| {
+            let u = u.rem_euclid(strip) as usize;
+            let code = font.text[u / 104];
+            let cell = &font.glyphs.iter().find(|g| g.0 == code).unwrap().1;
+            cell[row * 104 + u % 104]
+        };
+        let (mut letters, mut dots, mut skipped) = (0, 0, 0);
+        for (n, frame) in clip.frames.iter().enumerate() {
+            if frame.state.phase < 8 {
+                continue;
+            }
+            let [upper, lower, overlay] = preview.scroll[n].map(|v| v as i64);
+            for row in 0..80 {
+                for x in 0..320 {
+                    // Columns the original has not written yet show the backdrop.
+                    let u = x as i64 + upper;
+                    if u.div_euclid(4) >= 1 {
+                        let got = frame.indices[(row + 8) * WIDTH + x] & 127;
+                        assert_eq!(got, pixel(u, row), "upper {x},{row} at frame {n}");
+                        letters += 1;
+                    }
+                    // When `a` wraps, the lower window starts one byte past
+                    // its usual range, and its last byte shows the next glyph
+                    // row (an original one-frame artefact, not reproduced).
+                    let wrapped = x >= 316 && (1 - lower / 4) % 80 == 0;
+                    let u = x as i64 + lower;
+                    if u.div_euclid(4) <= 0 && !wrapped {
+                        let got = frame.indices[(row + 112) * WIDTH + x] & 127;
+                        assert_eq!(got, pixel(u, row), "lower {x},{row} at frame {n}");
+                        letters += 1;
+                    }
+                }
+            }
+            // The overlay as overlay() drew it at step `overlay`: one 12-dot row
+            // every four lines, only even words of the x table.
+            let mut expected = vec![false; WIDTH * HEIGHT];
+            if overlay >= 0 {
+                let y = overlay as usize;
+                let t = y / 4 % font.rows.len();
+                for i in 0..50 {
+                    let line = 4 + 4 * i - (y & 3);
+                    let x = font.sine[(2048 - y - (y & 3) + 4 * i) & 32767] as usize;
+                    let dots = font.rows[(t + i) % font.rows.len()];
+                    for (j, _) in dots.iter().enumerate().filter(|d| *d.1) {
+                        if line < HEIGHT {
+                            expected[line * WIDTH + x + 4 * j] = true;
+                        }
+                    }
+                }
+            }
+            for line in 0..HEIGHT {
+                // overlay() places its row 24 on line 100 without the lower
+                // band's offset, so the scanout shows it displaced there.
+                if line == 100 && overlay >= 0 && overlay & 3 == 0 {
+                    skipped += 1;
+                    continue;
+                }
+                for x in 0..WIDTH {
+                    let got = frame.indices[line * WIDTH + x] & 128 != 0;
+                    assert_eq!(got, expected[line * WIDTH + x], "dot {x},{line} at {n}");
+                    dots += got as usize;
+                }
+            }
+        }
+        assert!(letters > 50_000_000 && dots > 100_000, "{letters} {dots}");
+        // The smoothed outlines keep each glyph's pixels: compare the atlas
+        // sign at every pixel centre with the font's letter mask.
+        let glyphs = &preview.glyphs;
+        let cell = (
+            (104 + 2 * GLYPH_PAD) * GLYPH_SCALE,
+            (80 + 2 * GLYPH_PAD) * GLYPH_SCALE,
+        );
+        let (mut pixels, mut flipped) = (0, 0);
+        for (slot, (_, cell_pixels)) in font
+            .glyphs
+            .iter()
+            .filter(|(_, p)| p.iter().any(|&i| i < 64))
+            .enumerate()
+        {
+            let origin = (slot % GLYPH_COLUMNS * cell.0, slot / GLYPH_COLUMNS * cell.1);
+            for y in 0..80 {
+                for x in 0..104 {
+                    let texel = |v: usize| (v + GLYPH_PAD) * GLYPH_SCALE + GLYPH_SCALE / 2;
+                    let at =
+                        (origin.1 + texel(y)) * glyphs.atlas_size.0 as usize + origin.0 + texel(x);
+                    let inside = glyphs.atlas[at * 2].to_f32() > 0.0;
+                    pixels += 1;
+                    flipped += (inside != (cell_pixels[y * 104 + x] < 64)) as usize;
+                }
+            }
+        }
+        assert!(
+            flipped * 200 < pixels,
+            "{flipped} of {pixels} pixel centres changed side"
+        );
+        println!(
+            "Rebuilt {letters} letter pixels and {dots} overlay dots; {skipped} split rows; \
+             smoothing moved {flipped} of {pixels} glyph pixel centres across the outline"
+        );
+    }
+
+    fn synthetic_font() -> HdFont {
+        let mut block = vec![70; 104 * 80];
+        for y in 10..70 {
+            for x in 8..90 {
+                block[y * 104 + x] = 20;
+            }
+        }
+        let mut rows = vec![[false; 12]; 375];
+        rows[100] = std::array::from_fn(|j| !(3..9).contains(&j));
+        rows[101] = [true; 12];
+        HdFont {
+            text: vec![0, 5, 0, 0, 5],
+            glyphs: vec![(0, vec![70; 104 * 80]), (5, block)],
+            sine: (0..2400).map(|i| 100 + (i as u16 / 2) % 3).collect(),
+            rows,
+        }
+    }
+
+    #[test]
+    fn smoothed_outline_distances_are_euclidean_on_the_4_3_display() {
+        // A 20 x 10 pixel block with a one-pixel staircase on its right side.
+        let (w, h) = (40, 30);
+        let mut mask = vec![false; w * h];
+        for y in 10..20 {
+            for x in 10..30 + (y - 10) {
+                mask[y * w + x] = true;
+            }
+        }
+        let (scale, pad) = (4, 4);
+        let d = smooth_signed_distance(&mask, w, h, scale, pad, 0.65, 6.0);
+        let tw = (w + 2 * pad) * scale;
+        // Texel centre for a source position given in quarter pixels.
+        let at = |qx: usize, qy: usize| d[(qy + pad * scale) * tw + qx + pad * scale];
+        assert!(at(60, 60) > 0.0 && at(4, 4) < 0.0);
+        // Left edge at x = 10: horizontal distances are 5/6 of a row per column.
+        for qx in [30, 38, 42, 50] {
+            let expected = ((qx as f32 + 0.5) / 4.0 - 10.0) * PIXEL_ASPECT;
+            let got = at(qx, 60);
+            assert!((got - expected).abs() < 0.03, "{qx}: {got} vs {expected}");
+        }
+        // Top edge at y = 10: vertical distances are in rows.
+        for (qy, expected) in [(30, -2.375), (39, -0.125), (45, 1.375)] {
+            let got = at(80, qy);
+            assert!((got - expected).abs() < 0.03, "{qy}: {got}");
+        }
+        // The staircase becomes a straight diagonal through the middles of
+        // its risers, within a tenth of a pixel.
+        for y in 12..18 {
+            let qy = y * 4 + 2;
+            let qx = (100..160).find(|&qx| at(qx, qy) < 0.0).unwrap();
+            let (a, b) = (at(qx - 1, qy), at(qx, qy));
+            let crossing = (qx as f32 - 0.5 + a / (a - b)) / 4.0;
+            let ideal = 30.0 + (qy as f32 + 0.5) / 4.0 - 10.5;
+            assert!(
+                (crossing - ideal).abs() < 0.1,
+                "row {y}: {crossing} vs {ideal}"
+            );
+        }
+        assert!(d.iter().all(|v| v.abs() <= 6.0));
+        assert_eq!(d[0], -6.0);
+    }
+
+    #[test]
+    fn scroller_glyphs_pack_atlas_slots_tables_and_runs() {
+        let font = synthetic_font();
+        let glyphs = ScrollerGlyphs::new(&font, &vec![32; 768]).unwrap();
+        let cell = (
+            (104 + 2 * GLYPH_PAD) * GLYPH_SCALE,
+            (80 + 2 * GLYPH_PAD) * GLYPH_SCALE,
+        );
+        // Blank cells take no atlas space.
+        assert_eq!(glyphs.atlas_size, ((3 * cell.0) as u32, cell.1 as u32));
+        assert_eq!(glyphs.data_size, (SCROLL_DATA_WIDTH as u32, 4));
+        let texel = |x: usize, y: usize| &glyphs.data[(y * SCROLL_DATA_WIDTH + x) * 4..][..4];
+        let slots: Vec<_> = (0..5).map(|i| texel(i, 0)[0]).collect();
+        assert_eq!(slots, [0.0, 1.0, 0.0, 0.0, 1.0]);
+        let nearest: Vec<_> = (0..5).map(|i| texel(i, 0)[1]).collect();
+        assert_eq!(
+            nearest,
+            [1.0, 0.0, 1.0, 1.0, 0.0],
+            "Distances wrap round the text"
+        );
+        assert_eq!(&texel(SCROLL_DATA_WIDTH - 1, 0)[..2], &[5.0, 375.0]);
+        // Raw even words, and the same smoothed.
+        assert_eq!(texel(7, 1)[0], font.sine[14] as f32);
+        assert!((texel(7, 1)[1] - 101.0).abs() < 0.5);
+        assert_eq!(texel(100, 2), &[0.0, 3.0, 9.0, 12.0]);
+        assert_eq!(texel(101, 2), &[0.0, 12.0, 1000.0, 1000.0]);
+        assert_eq!(texel(0, 2), &[1000.0; 4]);
+        assert_eq!(
+            [texel(99, 3)[0], texel(100, 3)[0], texel(98, 3)[0]],
+            [1.0, 0.0, 2.0]
+        );
+        // The block glyph's distance is positive at its centre, grey from the palette.
+        let texel_of = |v: usize| (v + GLYPH_PAD) * GLYPH_SCALE + GLYPH_SCALE / 2;
+        let centre = texel_of(40) * glyphs.atlas_size.0 as usize + texel_of(49);
+        assert!(glyphs.atlas[centre * 2].to_f32() > 10.0);
+        assert!((glyphs.atlas[centre * 2 + 1].to_f32() - 32.0 / 63.0).abs() < 0.01);
+        let mut wide = synthetic_font();
+        wide.rows[7] = std::array::from_fn(|j| j % 4 == 0);
+        assert!(ScrollerGlyphs::new(&wide, &vec![32; 768]).is_err());
+    }
+
+    #[test]
+    fn scroll_positions_unwrap_and_interpolate_between_frames() {
+        let at = |upper, lower, overlay| HdScroll {
+            upper,
+            lower,
+            overlay,
+        };
+        let mut unwrap = ScrollUnwrap::new(at(-320, 8, -2), [520, 520, 2048]);
+        assert_eq!(unwrap.next(at(-316, 524, -1)), [-316.0, 4.0, -1.0]);
+        assert_eq!(unwrap.next(at(-312, 520, 0)), [-312.0, 0.0, 0.0]);
+        assert_eq!(unwrap.next(at(-312, 516, 2047)), [-312.0, -4.0, -1.0]);
+        let mut clip = Clip {
+            frames: Vec::new(),
+            pcm: Vec::new(),
+            logo_at: 0.0,
+            logo_ready_at: 0.0,
+            transition: None,
+            scroller: None,
+            flights: [[0.0; 4]; 10],
+            audio: Vec::new(),
+        };
+        assert_eq!(clip.scroll_at(1.0), None);
+        clip.scroller = Some(ScrollerPreview {
+            start_tick: 0,
+            end_tick: 3,
+            lighting: ScrollerLighting::Studio,
+            layout: ScrollerLayout::Rows,
+            scroll: vec![
+                [0.0, 8.0, 0.0],
+                [4.0, 4.0, 1.0],
+                [8.0, 0.0, 2.0],
+                [8.0, 0.0, 2.0],
+            ],
+            glyphs: ScrollerGlyphs::new(&synthetic_font(), &vec![0; 768]).unwrap(),
+            backdrop: Vec::new(),
+        });
+        // Each frame's own position at the moment it appears, linear between.
+        let near = |time: f64, expected: [f64; 3]| {
+            let got = clip.scroll_at(time).unwrap();
+            assert!(
+                got.iter().zip(expected).all(|(a, b)| (a - b).abs() < 1e-9),
+                "{time}: {got:?}"
+            );
+        };
+        near(1.0 / 70.0, [4.0, 4.0, 1.0]);
+        near(1.25 / 70.0, [5.0, 3.0, 1.25]);
+        near(2.5 / 70.0, [8.0, 0.0, 2.0]); // Holds when the counters stop.
+        near(-1.0, [0.0, 8.0, 0.0]);
+        near(10.0, [8.0, 0.0, 2.0]);
+    }
+
+    #[test]
+    fn faithful_backdrop_replaces_letters_and_dots_with_the_tiles() {
+        let mut frame = Frame {
+            state: Presentation {
+                phase: 8,
+                frame: 1700,
+                tick: 0,
+                door: 76,
+            },
+            indices: (0..WIDTH * HEIGHT)
+                .map(|at| (64 + at % WIDTH % 8 + 8 * (at / WIDTH % 8)) as u8)
+                .collect(),
+            palette: (0..768).map(|i| (i / 3 % 64) as u8).collect(),
+        };
+        let tiles = frame.backdrop();
+        for y in 30..60 {
+            for x in 100..140 {
+                frame.indices[y * WIDTH + x] = 20;
+            }
+        }
+        frame.indices[150 * WIDTH + 200] |= 128;
+        let original = frame.rgba();
+        assert_eq!(frame.backdrop(), tiles);
+        assert_eq!(frame.rgba(), original, "The reference picture is unchanged");
+        assert!((tiles[(41 * WIDTH + 121) * 4].to_f32() - 36.0 / 255.0).abs() < 1e-3);
+        assert_eq!(frame.shape_key(), (8, 1700));
+    }
+
+    #[test]
+    fn shaders_repeat_the_glyph_atlas_layout() {
+        let scroller = include_str!("scroller.wgsl");
+        for constant in [
+            format!("const ATLAS_SCALE={GLYPH_SCALE}.0;"),
+            format!("const ATLAS_PAD={GLYPH_PAD}.0;"),
+            format!("const ATLAS_COLUMNS={GLYPH_COLUMNS}u;"),
+            format!("const FAR={GLYPH_LIMIT:.1};"),
+            format!("table({},0)", SCROLL_DATA_WIDTH - 1),
+        ] {
+            assert!(
+                scroller.contains(&constant),
+                "scroller.wgsl lacks {constant}"
+            );
+        }
+        let extent = "const FIELD_EXTENT=vec2f(2.2,1.3);";
+        assert!(scroller.contains(extent) && include_str!("intro.wgsl").contains(extent));
     }
 
     #[test]
@@ -1183,7 +1762,6 @@ mod tests {
             },
             indices: vec![180; WIDTH * HEIGHT],
             palette: vec![32; 768],
-            scroller_seam: None,
         };
         frame.indices[100 * WIDTH + 160] = 24;
         frame.indices[100 * WIDTH + 161] = 52;

@@ -1,4 +1,4 @@
-use super::clip::{Clip, HEIGHT, ScrollerLighting, WIDTH, plate_transform};
+use super::clip::{Clip, HEIGHT, ScrollerLighting, ScrollerPreview, WIDTH, plate_transform};
 use super::modern::Modern;
 use bytemuck::{Pod, Zeroable};
 use std::{fs::File, io::BufWriter, path::Path};
@@ -29,6 +29,10 @@ struct Uniforms {
     plate_open_rotation: [f32; 4],
     /// On-screen counter: shown, frames per second, milliseconds per frame.
     hud: [f32; 4],
+    /// Scroller text positions read from the original's scroll counters and
+    /// interpolated between its frames: upper and lower row text pixel at
+    /// screen x = 0, overlay step, and the authored layout (0 rows, 1 ring).
+    glyphs: [f32; 4],
 }
 
 /// The only WGSL declaration of [`Uniforms`] and its binding. [`wgsl`]
@@ -48,6 +52,9 @@ struct Controls {
     audio: vec4f,
     plate_open_center: vec4f, plate_open_rotation: vec4f,
     hud: vec4f,    // on-screen counter: shown, frames per second, milliseconds per frame
+    // Scroller text positions from the original's scroll counters: upper and
+    // lower row text pixel at screen x = 0, overlay step, layout (0 rows, 1 ring).
+    glyphs: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: Controls;
 ";
@@ -82,6 +89,20 @@ pub struct Renderer {
     field_keys: [Option<(u8, usize)>; 2],
     reference: wgpu::Texture,
     reference_index: Option<usize>,
+    /// Scroller glyph atlas and tables; 1 × 1 until a scroller clip is shown.
+    glyph_atlas: wgpu::Texture,
+    scroll_data: wgpu::Texture,
+    glyph_key: Option<(usize, usize)>,
+    /// Both scroller distance fields for the displayed moment, rendered once
+    /// per frame in world space, so marched rays sample rather than evaluate.
+    /// Also 1 × 1 until a scroller clip is shown.
+    glyph_field: wgpu::Texture,
+    glyph_field_pipeline: wgpu::RenderPipeline,
+    field_inputs: wgpu::BindGroupLayout,
+    field_bind_group: wgpu::BindGroup,
+    glyphs_active: bool,
+    inputs: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
     bind_group: wgpu::BindGroup,
     background: wgpu::RenderPipeline,
     stars: wgpu::RenderPipeline,
@@ -184,38 +205,91 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                texture_entry(5),
+                table_entry(),
+                texture_entry(7),
             ],
         });
-        let views = [
-            fields[0].create_view(&Default::default()),
-            fields[1].create_view(&Default::default()),
-            reference.create_view(&Default::default()),
-        ];
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Intro fields"),
-            layout: &layout,
+        let field_inputs = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Scroller field inputs"),
             entries: &[
-                wgpu::BindGroupEntry {
+                wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    resource: uniform.as_entire_binding(),
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&views[0]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&views[1]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&views[2]),
-                },
-                wgpu::BindGroupEntry {
+                wgpu::BindGroupLayoutEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
                 },
+                texture_entry(5),
+                table_entry(),
             ],
+        });
+        let glyph_atlas = data_texture(&device, (1, 1), wgpu::TextureFormat::Rg16Float);
+        let scroll_data = data_texture(&device, (1, 1), wgpu::TextureFormat::Rgba32Float);
+        let glyph_field = field_texture(&device, (1, 1));
+        let bind_group = bind_inputs(
+            &device,
+            &layout,
+            &uniform,
+            [
+                &fields[0],
+                &fields[1],
+                &reference,
+                &glyph_atlas,
+                &scroll_data,
+                &glyph_field,
+            ],
+            &sampler,
+        );
+        let field_bind_group = bind_field(
+            &device,
+            &field_inputs,
+            &uniform,
+            [&glyph_atlas, &scroll_data],
+            &sampler,
+        );
+        let scroller_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Scroller distance fields"),
+            source: wgpu::ShaderSource::Wgsl(wgsl(include_str!("scroller.wgsl")).into()),
+        });
+        let field_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Scroller fields"),
+            bind_group_layouts: &[Some(&field_inputs)],
+            immediate_size: 0,
+        });
+        let glyph_field_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("glyph_field"),
+            layout: Some(&field_layout),
+            vertex: wgpu::VertexState {
+                module: &scroller_shader,
+                entry_point: Some("fullscreen"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &scroller_shader,
+                entry_point: Some("glyph_field"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Intro pipeline"),
@@ -272,6 +346,16 @@ impl Renderer {
                 field_keys: [None, None],
                 reference,
                 reference_index: None,
+                glyph_atlas,
+                scroll_data,
+                glyph_key: None,
+                glyph_field,
+                glyph_field_pipeline,
+                field_inputs,
+                field_bind_group,
+                glyphs_active: false,
+                inputs: layout,
+                sampler,
                 bind_group,
                 background,
                 stars,
@@ -308,6 +392,7 @@ impl Renderer {
         }
         let index = clip.frame_index(time);
         let frame = &clip.frames[index];
+        self.glyphs_active = clip.scroller.is_some() && frame.state.phase >= 8;
         let mut next = index;
         if frame.state.phase >= 8 {
             next = (index + 1).min(clip.frames.len() - 1);
@@ -325,10 +410,17 @@ impl Renderer {
         }
         for (slot, i) in [index, next].into_iter().enumerate() {
             let source = &clip.frames[i];
-            if (source.state.phase < 6 || source.state.phase >= 8)
+            // Faithful HD draws smooth scroller letters over the original
+            // backdrop; the modern scroller needs no frame fields at all.
+            let backdrop = source.state.phase >= 8 && !modern && slot == 0;
+            if (source.state.phase < 6 || backdrop)
                 && self.field_keys[slot] != Some(source.shape_key())
             {
-                let field = source.field();
+                let field = if backdrop {
+                    source.backdrop()
+                } else {
+                    source.field()
+                };
                 self.queue.write_texture(
                     self.fields[slot].as_image_copy(),
                     bytemuck::cast_slice(&field),
@@ -396,7 +488,14 @@ impl Renderer {
         let audio = clip.audio_at(time);
         let mut scroller = [0.0; 4];
         let mut scroll_light = [0.0; 4];
+        let mut glyphs = [0.0; 4];
         if let Some(scroll) = &clip.scroller {
+            self.upload_glyphs(scroll);
+            if let Some([upper, lower, overlay]) = clip.scroll_at(time) {
+                // Faithful HD keeps the original's two rows.
+                let layout = if modern { scroll.layout as u32 } else { 0 };
+                glyphs = [upper as f32, lower as f32, overlay as f32, layout as f32];
+            }
             scroller = [
                 1.0,
                 (time - scroll.start_tick as f64 / 70.0) as f32,
@@ -453,12 +552,101 @@ impl Renderer {
             plate_open_center,
             plate_open_rotation,
             hud: hud.map_or([0.0; 4], |[fps, ms]| [1.0, fps, ms, 0.0]),
+            glyphs,
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
     }
 
+    /// Upload a scroller clip's glyph atlas and tables once, on first use.
+    fn upload_glyphs(&mut self, scroll: &ScrollerPreview) {
+        let glyphs = &scroll.glyphs;
+        // The clip owns these buffers for its lifetime; identify it by them.
+        let key = (glyphs.atlas.as_ptr() as usize, glyphs.atlas.len());
+        if self.glyph_key == Some(key) {
+            return;
+        }
+        let upload = |texture: &wgpu::Texture, bytes: &[u8], (width, height): (u32, u32)| {
+            self.queue.write_texture(
+                texture.as_image_copy(),
+                bytes,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes.len() as u32 / height),
+                    rows_per_image: Some(height),
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        };
+        self.glyph_atlas = data_texture(
+            &self.device,
+            glyphs.atlas_size,
+            wgpu::TextureFormat::Rg16Float,
+        );
+        self.scroll_data = data_texture(
+            &self.device,
+            glyphs.data_size,
+            wgpu::TextureFormat::Rgba32Float,
+        );
+        self.glyph_field = field_texture(&self.device, GLYPH_FIELD_SIZE);
+        upload(
+            &self.glyph_atlas,
+            bytemuck::cast_slice(&glyphs.atlas),
+            glyphs.atlas_size,
+        );
+        upload(
+            &self.scroll_data,
+            bytemuck::cast_slice(&glyphs.data),
+            glyphs.data_size,
+        );
+        self.bind_group = bind_inputs(
+            &self.device,
+            &self.inputs,
+            &self.uniform,
+            [
+                &self.fields[0],
+                &self.fields[1],
+                &self.reference,
+                &self.glyph_atlas,
+                &self.scroll_data,
+                &self.glyph_field,
+            ],
+            &self.sampler,
+        );
+        self.field_bind_group = bind_field(
+            &self.device,
+            &self.field_inputs,
+            &self.uniform,
+            [&self.glyph_atlas, &self.scroll_data],
+            &self.sampler,
+        );
+        self.glyph_key = Some(key);
+    }
+
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        if self.glyphs_active {
+            let field = self.glyph_field.create_view(&Default::default());
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Scroller distance fields"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &field,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &self.field_bind_group, &[]);
+            pass.set_pipeline(&self.glyph_field_pipeline);
+            pass.draw(0..3, 0..1);
+        }
         if self.modern_view {
             self.modern_renderer.draw(
                 encoder,
@@ -628,6 +816,133 @@ impl Renderer {
     }
 }
 
+fn data_texture(
+    device: &wgpu::Device,
+    (width, height): (u32, u32),
+    format: wgpu::TextureFormat,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Scroller glyphs and tables"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
+/// Texels of the per-frame scroller field texture; scroller.wgsl maps it
+/// onto a fixed world-space extent.
+const GLYPH_FIELD_SIZE: (u32, u32) = (2048, 1024);
+
+/// Target for the per-frame scroller fields; 1 × 1 until a scroller clip is shown.
+fn field_texture(device: &wgpu::Device, (width, height): (u32, u32)) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Scroller distance fields"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    })
+}
+
+/// Inputs for rendering the scroller fields: controls, sampler, atlas, tables.
+fn bind_field(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniform: &wgpu::Buffer,
+    [atlas, data]: [&wgpu::Texture; 2],
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    let (atlas, data) = (
+        atlas.create_view(&Default::default()),
+        data.create_view(&Default::default()),
+    );
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Scroller field inputs"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(&atlas),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: wgpu::BindingResource::TextureView(&data),
+            },
+        ],
+    })
+}
+
+/// Shared scene inputs: controls, two shape fields, the reference frame, a
+/// filtering sampler, the scroller glyph atlas, its tables and the per-frame
+/// scroller fields.
+fn bind_inputs(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniform: &wgpu::Buffer,
+    textures: [&wgpu::Texture; 6],
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    let views = textures.map(|t| t.create_view(&Default::default()));
+    let mut entries = vec![
+        wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+            binding: 4,
+            resource: wgpu::BindingResource::Sampler(sampler),
+        },
+    ];
+    for (view, binding) in views.iter().zip([1, 2, 3, 5, 6, 7]) {
+        entries.push(wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(view),
+        });
+    }
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Scene inputs"),
+        layout,
+        entries: &entries,
+    })
+}
+
+/// The scroller tables are read texel by texel, never filtered.
+fn table_entry() -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: 6,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
 fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -731,6 +1046,7 @@ mod tests {
             plate_open_center,
             plate_open_rotation,
             hud,
+            glyphs,
         ];
         // A field missing from this list leaves bytes unaccounted for.
         let last = size_of::<[f32; 4]>();
