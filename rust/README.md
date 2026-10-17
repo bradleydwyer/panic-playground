@@ -103,12 +103,23 @@ the 16 by 10 activation order from your local data and follows `Scroller`'s
 18.34–20.76 seconds, with uninterrupted original music. The preview then holds
 for one second, ending before the scrolling text begins.
 
-The modern cut effect is authored: each surviving square has a shallow bevel,
-slight recession, a cooler glint on the left or a heated orange edge on the
-right, and sparse cooling residue. The logo's surface keeps moving during the
-wipe. This is an HDR compositing effect with apparent thickness, not a
-volumetric fracture simulation. The original destination is a plain light
-screen at this point; the modern view gives it a muted brushed-metal finish.
+The modern cut effect uses tessellated 3D sheets with asymmetric curls, narrow
+cut walls and depth testing. A ragged incandescent edge burns towards each
+square's centre, leaving a scorched band, embers and wisps of smoke. Moving
+reflections pick out the curved surfaces; nearby cuts illuminate the exposed
+brushed metal underneath. The logo's surface keeps moving during the wipe.
+
+Use `--tear` for an alternative that peels the squares loose and drops them
+under gravity. They curl like thin paper, flutter slightly and burn inward
+while falling. Each square burns away in about 0.51 seconds, compared with
+0.14 seconds in the reference wipe. The activation order and music stay the
+same; the last pieces disappear around 21.13 seconds, within the final hold.
+`--tear` selects modern mode automatically and also works with `--split`.
+
+The geometry, gravity, burn treatment and particle motion are authored effects.
+The lighting uses analytic approximations; this isn't a cloth or combustion
+simulation. The original destination is a plain light screen at this point;
+the modern view gives it a dark brushed-metal finish.
 The next scene's patterned palette and scrolling text have not been remade.
 Original/comparison mode shows the actual reference wipe, and faithful HD
 uses the original pixels during this transition.

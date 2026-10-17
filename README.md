@@ -53,9 +53,19 @@ To try the next transition, where squares eat away the logo screen:
 cargo run --release --locked --features hires --bin panic-hd -- --modern --transition
 ```
 
-This uses the original square order and timing, with heated cut edges, shallow
-bevels and a little cooling residue. It stops after the wipe; the following
-scroller hasn't had the modern treatment yet.
+The squares curl as their edges burn inward, with moving reflections, embers
+and wisps of smoke. They use the original activation order and wipe timing.
+
+To try the falling version:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --tear
+```
+
+Here the squares peel loose like thin sheets, fall under gravity and rapidly
+burn towards their centres. Each piece lasts about half a second, with the
+original activation sequence and uninterrupted music. Both versions stop on
+the next backdrop; the following scroller hasn't had the modern treatment yet.
 
 | Key | Action |
 | --- | --- |

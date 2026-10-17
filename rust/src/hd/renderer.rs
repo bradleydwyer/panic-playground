@@ -42,6 +42,7 @@ pub struct Renderer {
     srgb: bool,
     modern_renderer: Modern,
     modern_view: bool,
+    tile_transition: bool,
 }
 
 impl Renderer {
@@ -227,6 +228,7 @@ impl Renderer {
                 srgb: format.is_srgb(),
                 modern_renderer,
                 modern_view: false,
+                tile_transition: false,
             },
             format,
         ))
@@ -240,6 +242,10 @@ impl Renderer {
             modern,
         } = view;
         self.modern_view = modern;
+        self.tile_transition = clip
+            .transition
+            .as_ref()
+            .is_some_and(|cut| time * 70.0 >= cut.start_tick as f64);
         if modern {
             self.modern_renderer
                 .resize(&self.device, &self.uniform, &self.reference, size);
@@ -313,7 +319,7 @@ impl Renderer {
                 (time * 70.0 - cut.start_tick as f64) as f32,
                 1.0,
                 (cut.end_tick - cut.start_tick) as f32,
-                0.0,
+                if cut.falling { 1.0 } else { 0.0 },
             ];
             for (i, &rank) in cut.order.iter().enumerate() {
                 tile_order[i / 4][i % 4] = rank as f32;
@@ -347,7 +353,8 @@ impl Renderer {
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         if self.modern_view {
-            self.modern_renderer.draw(encoder, view, &self.bind_group);
+            self.modern_renderer
+                .draw(encoder, view, &self.bind_group, self.tile_transition);
             return;
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

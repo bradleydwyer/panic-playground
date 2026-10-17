@@ -29,6 +29,7 @@ struct Options {
     comparison: u32,
     modern: bool,
     transition: bool,
+    tear: bool,
     seconds: Option<f64>,
 }
 impl Options {
@@ -47,6 +48,7 @@ impl Options {
             comparison: 0,
             modern: false,
             transition: false,
+            tear: false,
             seconds: None,
         };
         let mut args = std::env::args().skip(1);
@@ -85,13 +87,17 @@ impl Options {
                 "--split" => o.comparison = 2,
                 "--modern" => o.modern = true,
                 "--transition" => o.transition = true,
+                "--tear" => {
+                    o.tear = true;
+                    o.modern = true;
+                }
                 "--logo" => {
                     o.seek = f64::MAX;
                     o.paused = true;
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — opening through the logo\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         3D letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the heated square wipe\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG · Esc: quit\nThe preview holds on the logo. --transition continues to the next backdrop; its scroller is not played."
+                        "Panic HD — opening through the logo\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         3D letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the curling square burn\n  --tear           Curl, burn inward and drop squares under gravity (modern)\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG · Esc: quit\nThe preview holds on the logo. --transition continues to the next backdrop; its scroller is not played."
                     );
                     std::process::exit(0);
                 }
@@ -143,7 +149,9 @@ fn run() -> Result<(), String> {
     let mut o = Options::parse()?;
     let started = Instant::now();
     let data = Data::new(&o.data)?;
-    let clip = if o.transition {
+    let clip = if o.tear {
+        Clip::load_tear(&data)?
+    } else if o.transition {
         Clip::load_transition(&data)?
     } else {
         Clip::load(&data)?

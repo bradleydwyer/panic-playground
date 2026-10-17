@@ -111,12 +111,13 @@ pub struct Clip {
 }
 
 /// Schedule and destination colours read from the local Rust reconstruction.
-/// The GPU's heated cut edges, bevels and recession are authored effects.
+/// The GPU's curling surfaces, burn edges and falling motion are authored effects.
 pub struct TileTransition {
     pub start_tick: usize,
     pub end_tick: usize,
     pub order: [u16; 160],
     pub palette: [[f32; 4]; 64],
+    pub falling: bool,
 }
 
 impl Clip {
@@ -126,6 +127,13 @@ impl Clip {
 
     pub fn load_transition(data: &Data) -> Result<Self, String> {
         Self::load_mode(data, true)
+    }
+
+    /// Alternate material animation over exactly the same reference and audio.
+    pub fn load_tear(data: &Data) -> Result<Self, String> {
+        let mut clip = Self::load_transition(data)?;
+        clip.transition.as_mut().unwrap().falling = true;
+        Ok(clip)
     }
 
     fn load_mode(data: &Data, extend: bool) -> Result<Self, String> {
@@ -172,6 +180,7 @@ impl Clip {
                 end_tick: 0,
                 order: scroller.transition_order(),
                 palette: [[0.0; 4]; 64],
+                falling: false,
             };
             loop {
                 let n = frames.len();
@@ -490,7 +499,15 @@ mod tests {
     fn transition_matches_engine_frames_audio_and_schedule() {
         let data = crate::test_support::data();
         let clip = Clip::load_transition(&data).unwrap();
+        let falling = Clip::load_tear(&data).unwrap();
         let intro = Clip::load(&data).unwrap();
+        assert_eq!(falling.pcm, clip.pcm);
+        assert_eq!(falling.frames.len(), clip.frames.len());
+        let fall_schedule = falling.transition.as_ref().unwrap();
+        let burn_schedule = clip.transition.as_ref().unwrap();
+        assert_eq!(fall_schedule.start_tick, burn_schedule.start_tick);
+        assert_eq!(fall_schedule.end_tick, burn_schedule.end_tick);
+        assert_eq!(fall_schedule.order, burn_schedule.order);
         assert_eq!(clip.logo_ready_at, intro.logo_ready_at);
         assert_eq!(clip.pcm[..intro.pcm.len()], intro.pcm);
         let cut = clip.transition.as_ref().unwrap();
@@ -507,6 +524,14 @@ mod tests {
         for (i, frame) in clip.frames.iter().enumerate() {
             assert_eq!(engine.video.indices, frame.indices, "pixels at tick {i}");
             assert_eq!(engine.video.palette, frame.palette, "palette at tick {i}");
+            assert_eq!(
+                falling.frames[i].indices, frame.indices,
+                "falling reference at tick {i}"
+            );
+            assert_eq!(
+                falling.frames[i].palette, frame.palette,
+                "falling palette at tick {i}"
+            );
             if i + 1 < clip.frames.len() {
                 pcm.extend(engine.step().unwrap());
             }
