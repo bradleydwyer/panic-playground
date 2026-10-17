@@ -118,8 +118,9 @@ same; the last pieces disappear around 21.13 seconds, within the final hold.
 
 Use `--laser` for an intact-plate alternative. Cutting points trace each tile's
 perimeter over 0.21 seconds, leaving a narrow tab on the top edge. The plate
-tips around that attachment until it releases at 0.32 seconds, then falls
-under gravity with a small amount of rotation. The cut glows and cools; sparks
+tips backwards around that attachment until it releases at 0.32 seconds, then
+falls down and away behind the image plane. Perspective and a little depth haze
+make the intact pieces shrink and dim as they recede. The cut glows and cools; sparks
 come from the moving cutting point and the final severing flash. Attachment
 positions vary deterministically between tiles. The pieces keep their size
 and clear the screen during the existing final hold. Several cuts overlap to

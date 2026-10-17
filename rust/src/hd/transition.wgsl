@@ -97,12 +97,14 @@ fn laser_surface(q:vec2f,cell:vec2f,seconds:f32)->vec3f {
     let free=max(seconds-LASER_RELEASE,0.0);
     let pivot=vec3f(tab_x(cell)*half_extent.x,half_extent.y,0);
     let spin=hash(cell+61.0)-.5;
-    var point=rotate(flat-pivot,vec2f(-.42*sag-free*(.7+hash(cell+64.0)),spin*(sag*.12+free*1.5)));
+    var point=rotate(flat-pivot,vec2f(.42*sag+free*(.7+hash(cell+64.0)),spin*(sag*.12+free*1.5)));
     let roll=spin*(sag*.16+free*.8);
     point=vec3f(point.x*cos(roll)-point.y*sin(roll),point.x*sin(roll)+point.y*cos(roll),point.z)+pivot;
     point.x+=(hash(cell+71.0)-.5)*free*.16;
     point.y-=.5*13.5*free*free;
-    point.z-=free*.12;
+    // Release into the space behind the image plane. Perspective makes the
+    // intact plates recede through their openings while gravity pulls down.
+    point.z-=free*2.4+free*free*11.0;
     return point+origin;
 }
 fn edge_parameter(q:vec2f)->f32 {
@@ -281,7 +283,8 @@ fn laser_material(v:TileVertex,original:vec3f)->vec3f {
     metal+=(vec3f(22,30,38)*exp(-d2/.0007)+vec3f(.35,.85,1.5)*exp(-d2/.012))*power;
     // A fine flare makes the moving white-blue cutting point readable.
     metal+=vec3f(.25,.60,1.0)*exp(-abs(delta.x)*14.0-abs(delta.y)*100.0)*power;
-    return metal;
+    let haze=1.0-exp(-max(-v.world.z,0.0)*.10);
+    return mix(metal,vec3f(.014,.022,.031),haze);
 }
 @fragment fn tile_fragment(v:TileVertex)->@location(0) vec4f {
     let original=textureSampleLevel(scene,linear,v.source_uv,0).rgb;

@@ -68,7 +68,7 @@ original activation sequence and uninterrupted music. Both versions stop on
 the next backdrop; the following scroller hasn't had the modern treatment yet.
 
 There's also a laser-cut trial. Bright cutting points trace each square, leave
-a small attachment at the top, then sever it. The intact pieces tip and fall,
+a small attachment at the top, then sever it. The intact pieces tip backwards, then fall down and away into the opening,
 with cooling edges and sparks at the cut:
 
 ```sh
