@@ -426,12 +426,12 @@ impl Clip {
                 scroller_preview = Some(ScrollerPreview {
                     start_tick: scroll_start,
                     end_tick: scroll_end,
-                    lighting: ScrollerLighting::Musical,
+                    lighting: ScrollerLighting::Studio,
                     scroll,
                     glyphs: ScrollerGlyphs::new(&font, &frames[scroll_start].palette)?,
                     backdrop_style: ScrollerBackdrop::Chrome,
                     wall_shape: 0.5,
-                    wall_strength: 0.4,
+                    wall_strength: 0.6,
                     backdrop: walls
                         .iter()
                         .map(|(_, image)| {

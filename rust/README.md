@@ -171,8 +171,8 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --scr
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --faithful --seek 27
 ```
 
-By default the scroller uses glass lettering with musical lighting, on the
-arc described below, over the chrome bump wall (shape 0.5, strength 0.4); the
+By default the scroller uses glass lettering with studio lighting, on the
+arc described below, over the chrome bump wall (shape 0.5, strength 0.6); the
 glass has approximate tinted transmission and reflective edges. The vertical
 sine overlay passes in front of the lower row and behind the upper row. It
 follows the arc, with its depth crossover in the gap between rows. The
@@ -227,18 +227,18 @@ the letters' shapes, once per pixel, over the depth the rows' arc occupies in
 front of the wall. The letters' soft contact
 shadows fall on the wall as they do in the chamber. The glass letters show
 only the wall's average colour, so they don't look textured. `--wall-strength` (0 to 1,
-default 0.4; **-** and **=** in steps of 0.1) sets how present the wall is.
+default 0.6; **-** and **=** in steps of 0.1) sets how present the wall is.
 All of this is authored, not recovered from the original.
 
-`--scroller-lighting musical` (default) uses relative loudness and bass/treble
+`--scroller-lighting musical` uses relative loudness and bass/treble
 onsets from the original PCM. Bass pulses the blue/orange lights, their metal
 reflections and the small lettering; treble adds short white highlights.
 These are authored audio cues, not recovered tracker events. The levels adapt
 to loud passages so the response retains contrast. They come from the same
 causal analysis of the PCM as the intro's music lighting, computed once per
 clip: the bass cue reads the band below about 150 Hz, the treble cue the band
-above about 1.8 kHz. `--scroller-lighting studio` holds the lights steady for
-material comparisons. Press **L** to toggle lighting while playing
+above about 1.8 kHz. `--scroller-lighting studio` (default) holds the lights
+steady. Press **L** to toggle lighting while playing
 or paused. `--split` compares the
 modern view with the locally rendered original. Omit `--seek` for the full
 intro, or use `--seek 18` to start at the transition.
