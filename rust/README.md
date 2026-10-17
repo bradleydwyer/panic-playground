@@ -209,8 +209,9 @@ grid moving this fast reads as op art, so the wall is treated as a defocused
 background: eight samples per pixel spread over a small disc and over a
 1/100 s exposure blur it along the oscillator's own motion. The metal is rough,
 with broad, dim reflections of a studio surround and the letters' lamps, and
-its relief is pulled towards a flat tile's level. A vignette and darker bands
-behind the two text rows keep the letters the brightest thing on screen.
+its relief is pulled towards a flat tile's level. It is kept dim overall, with
+a gentle vignette towards the corners, so the letters stay the brightest thing
+on screen.
 Softened reflections of the letters themselves come from a short march through
 their distance field, once per pixel. The glass letters show only the wall's
 average colour, so they don't look textured. `--wall-strength` (0 to 1,

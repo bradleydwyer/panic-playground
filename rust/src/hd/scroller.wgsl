@@ -313,16 +313,16 @@ fn letter_shadow(p:vec3f)->f32 {
     let shadow_uv=uv_at(p.xy+vec2f(.045,-.065));
     return smoothstep(-9.0,4.0,field(shadow_uv).x)*field_coverage(shadow_uv);
 }
-// Overall presence: the strength control, a vignette, darker bands behind
-// the two text rows (source rows 8..88 and 112..192) and the letters' shade.
+// Overall presence: the strength control, a gentle corner vignette and the
+// letters' shade. No horizontal banding: darkening the text rows, or an
+// ellipse stretched across the wide frame, read as a bright stripe.
 fn wall_presence(p:vec3f)->f32 {
-    let s=p.xy/wall_scale();
-    let q=s/vec2f(4.0/3.0,1.0);
-    let vignette=mix(.30,1.0,1.0-smoothstep(.45,1.35,length(q*vec2f(.75,.9))));
-    let rows=smoothstep(.06,.18,abs(s.y))*(1.0-smoothstep(.86,.98,abs(s.y)));
+    let xy=p.xy*(5.5/6.4); // Back to screen units: x in +-aspect, y in +-1.
+    let corner=length(vec2f(xy.x/aspect(),xy.y))*.7071;
+    let vignette=mix(.6,1.0,1.0-smoothstep(.75,1.05,corner));
     let entrance=smoothstep(-1.7,1.2,u.scroller.y);
-    return u.backdrop_motion.z*.9*vignette*mix(1.0,.62,rows*entrance)
-        *mix(.55,1.0,entrance)*(1.0-letter_shadow(p)*.7);
+    // .58: the calm level the row bands used to give, now applied evenly.
+    return u.backdrop_motion.z*.9*.58*vignette*mix(.55,1.0,entrance)*(1.0-letter_shadow(p)*.7);
 }
 fn wall_point(ray:vec3f)->vec3f {return vec3f(0,0,5.5)+ray*(6.4/-ray.z);}
 // Eight samples per pixel spread over a small defocus disc (about a tenth of
