@@ -3,16 +3,21 @@ use wgpu::*;
 
 struct Targets {
     size: (u32, u32),
+    backdrop: TextureView,
+    tiles: TextureView,
+    probe: TextureView,
     scene: TextureView,
     cut_scene: TextureView,
     cut_depth: TextureView,
     glow: [TextureView; 2],
-    bindings: [BindGroup; 4],
+    bindings: [BindGroup; 6],
 }
 
 pub struct Modern {
     background: RenderPipeline,
     stars: RenderPipeline,
+    tiles: RenderPipeline,
+    probe: RenderPipeline,
     model: RenderPipeline,
     tile_cut: RenderPipeline,
     tile_surface: RenderPipeline,
@@ -151,13 +156,33 @@ impl Modern {
             Some(additive),
             None,
         );
+        // The models read the rendered space backdrop for refraction and
+        // on-screen reflections, so they write the whole scene themselves.
+        let tiles = pipeline(
+            &shader,
+            &post_layout,
+            "fullscreen",
+            "tiles",
+            hdr,
+            None,
+            None,
+        );
+        let probe = pipeline(
+            &shader,
+            &post_layout,
+            "fullscreen",
+            "probe",
+            hdr,
+            None,
+            None,
+        );
         let model = pipeline(
             &shader,
-            scene_layout,
+            &post_layout,
             "fullscreen",
             "model",
             hdr,
-            Some(BlendState::ALPHA_BLENDING),
+            None,
             None,
         );
         let blur_x = pipeline(&post, &post_layout, "fullscreen", "blur_x", hdr, None, None);
@@ -216,6 +241,8 @@ impl Modern {
         Self {
             background,
             stars,
+            tiles,
+            probe,
             model,
             tile_cut,
             tile_surface,
@@ -256,6 +283,11 @@ impl Modern {
                 })
                 .create_view(&Default::default())
         };
+        let backdrop = texture("Space backdrop", size.0, size.1);
+        // One texel per 8 × 8 pixels: which objects can reach them during
+        // the exposure, and how many visibility samples their motion needs.
+        let tiles = texture("Motion tiles", size.0.div_ceil(8), size.1.div_ceil(8));
+        let probe = texture("Model coverage probe", size.0, size.1);
         let scene = texture("HDR scene", size.0, size.1);
         let cut_scene = texture("Heated tile transition", size.0, size.1);
         let cut_depth = device
@@ -279,7 +311,7 @@ impl Modern {
             texture("Bloom vertical", size.0.div_ceil(2), size.1.div_ceil(2)),
         ];
         let reference = reference.create_view(&Default::default());
-        let binding = |source, bloom| {
+        let binding = |source, bloom, extra: &TextureView| {
             device.create_bind_group(&BindGroupDescriptor {
                 label: Some("Postprocess textures"),
                 layout,
@@ -298,7 +330,7 @@ impl Modern {
                     },
                     BindGroupEntry {
                         binding: 3,
-                        resource: BindingResource::TextureView(&reference),
+                        resource: BindingResource::TextureView(extra),
                     },
                     BindGroupEntry {
                         binding: 4,
@@ -309,13 +341,18 @@ impl Modern {
         };
         // Do not bind a render target as an input to its own pass.
         let bindings = [
-            binding(&scene, &scene),
-            binding(&cut_scene, &cut_scene),
-            binding(&glow[0], &glow[0]),
-            binding(&cut_scene, &glow[1]),
+            binding(&scene, &scene, &reference),
+            binding(&cut_scene, &cut_scene, &reference),
+            binding(&glow[0], &glow[0], &reference),
+            binding(&cut_scene, &glow[1], &reference),
+            binding(&backdrop, &probe, &tiles),
+            binding(&backdrop, &backdrop, &tiles),
         ];
         Targets {
             size,
+            backdrop,
+            tiles,
+            probe,
             scene,
             cut_scene,
             cut_depth,
@@ -350,18 +387,21 @@ impl Modern {
         scene_inputs: &BindGroup,
         transition: bool,
     ) {
-        {
-            let attachments = [Some(RenderPassColorAttachment {
-                view: &self.targets.scene,
+        let target = |view| {
+            [Some(RenderPassColorAttachment {
+                view,
                 depth_slice: None,
                 resolve_target: None,
                 ops: Operations {
                     load: LoadOp::Clear(Color::BLACK),
                     store: StoreOp::Store,
                 },
-            })];
+            })]
+        };
+        {
+            let attachments = target(&self.targets.backdrop);
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("Modern 3D scene"),
+                label: Some("Space, stars and door panels"),
                 color_attachments: &attachments,
                 ..Default::default()
             });
@@ -370,6 +410,39 @@ impl Modern {
             pass.draw(0..3, 0..1);
             pass.set_pipeline(&self.stars);
             pass.draw(0..6, 0..3200);
+        }
+        {
+            let attachments = target(&self.targets.tiles);
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("Motion tiles"),
+                color_attachments: &attachments,
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &self.targets.bindings[0], &[]);
+            pass.set_pipeline(&self.tiles);
+            pass.draw(0..3, 0..1);
+        }
+        {
+            // One centre ray per pixel finds silhouettes and creases, so the
+            // model pass only supersamples where edges actually are.
+            let attachments = target(&self.targets.probe);
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("Model coverage probe"),
+                color_attachments: &attachments,
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &self.targets.bindings[5], &[]);
+            pass.set_pipeline(&self.probe);
+            pass.draw(0..3, 0..1);
+        }
+        {
+            let attachments = target(&self.targets.scene);
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("Glass letters, metal plate and logo"),
+                color_attachments: &attachments,
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &self.targets.bindings[4], &[]);
             pass.set_pipeline(&self.model);
             pass.draw(0..3, 0..1);
         }

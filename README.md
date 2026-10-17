@@ -8,9 +8,10 @@ Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
 So far this covers the opening through the PANIC logo: the FUTURE CREW letters
 flying past, the tumbling block and the logo reveal. The idea is to keep the
-sequence and music, and experiment with the rendering. There are chunky 3D
-letters, metal reflections, a starfield that ramps into warp, and a heated
-metal logo with slowly moving surface reflections.
+sequence and music, and experiment with the rendering. There are chunky glass
+letters that refract the stars behind them, a mirrored plate that reflects the
+warp, motion blur, a starfield that ramps into warp, and a heated metal logo
+with slowly moving surface reflections.
 
 This builds on the [Rust port of Panic](https://github.com/bradleydwyer/panic).
 It's a work in progress, and only the intro has the new rendering. The original

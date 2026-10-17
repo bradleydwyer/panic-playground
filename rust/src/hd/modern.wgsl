@@ -1,8 +1,23 @@
 // New geometric models, evaluated in 3D. This shader does not sample the old
 // artwork for geometry. Letterforms and the continuous plate tumble are new;
 // flights fit the locally decoded sequence. Doors use the Rust timeline.
-struct Controls { screen:vec4f, state:vec4f, misc:vec4f, flights:array<vec4f,10>, plate_center:vec4f, plate_rotation:vec4f }
+struct Controls {
+    screen:vec4f, state:vec4f, misc:vec4f, flights:array<vec4f,10>, plate_center:vec4f, plate_rotation:vec4f,
+    transition:vec4f, tile_order:array<vec4f,40>, next_palette:array<vec4f,64>,
+    plate_open_center:vec4f, plate_open_rotation:vec4f,
+}
 @group(0) @binding(0) var<uniform> u:Controls;
+// Only the model and probe passes bind these; the backdrop holds space, stars
+// and door panels without the models, so glass can refract what is behind it.
+@group(0) @binding(1) var backdrop:texture_2d<f32>;
+@group(0) @binding(2) var probe_map:texture_2d<f32>;
+@group(0) @binding(3) var tile_map:texture_2d<f32>;
+@group(0) @binding(4) var linear:sampler;
+// Position within the authored exposure: 0 opens the shutter, 1 is the frame
+// being shown. Model functions read it, so every sample sees one instant.
+var<private> shutter:f32=1.0;
+const CAMERA=vec3f(0,0,4.2);
+const FOCAL=3.8;
 struct Vertex { @builtin(position) position:vec4f, @location(0) uv:vec2f }
 @vertex fn fullscreen(@builtin(vertex_index) index:u32)->Vertex {
     let p=array<vec2f,3>(vec2f(-1,-1),vec2f(3,-1),vec2f(-1,3))[index];
@@ -101,37 +116,49 @@ fn pose(id:u32)->vec4f {
     if id==10u {return vec4f(.045,-.045,0,1);}
     return vec4f(0,0,0,1);
 }
+fn exposure_frame()->f32 {return u.state.y-u.plate_open_center.w*(1.0-shutter);}
+fn plate_quaternion()->vec4f {
+    var open=u.plate_open_rotation;
+    if dot(open,u.plate_rotation)<0.0 {open=-open;}
+    return normalize(mix(open,u.plate_rotation,shutter));
+}
 fn center(id:u32)->vec3f {
-    if id==11u {return u.plate_center.xyz;}
+    if id==11u {return mix(u.plate_open_center.xyz,u.plate_center.xyz,shutter);}
     if id==10u {return vec3f(0);}
     let motion=u.flights[id];
+    let frame=exposure_frame();
     // Begin farther into the starfield, meeting the fitted path before the
     // first cue. Camera crossing times and the original cue spacing stay fixed.
-    let distance=(motion.x-u.state.y)*motion.y;
-    let retreat=1.0+.65*(1.0-smoothstep(0.0,48.0,u.state.y));
+    let distance=(motion.x-frame)*motion.y;
+    let retreat=1.0+.65*(1.0-smoothstep(0.0,48.0,frame));
     return vec3f(motion.z,motion.w,4.2-distance*retreat);
 }
 fn quaternion_rotate(p:vec3f,q:vec4f)->vec3f {
     return p+2.0*cross(q.xyz,cross(q.xyz,p)+q.w*p);
 }
 fn local_direction(p:vec3f,id:u32)->vec3f {
-    if id==11u {return quaternion_rotate(p,vec4f(-u.plate_rotation.xyz,u.plate_rotation.w));}
+    if id==11u {let q=plate_quaternion();return quaternion_rotate(p,vec4f(-q.xyz,q.w));}
     let a=pose(id);
     return rotate_z(rotate_y(rotate_x(p,-a.x),-a.y),-a.z)/a.w;
 }
 fn local(p:vec3f,id:u32)->vec3f {return local_direction(p-center(id),id);}
 fn world(p:vec3f,id:u32)->vec3f {
-    if id==11u {return quaternion_rotate(p,u.plate_rotation);}
+    if id==11u {return quaternion_rotate(p,plate_quaternion());}
     let a=pose(id);
     return rotate_x(rotate_y(rotate_z(p,a.z),a.y),a.x)*a.w;
 }
-fn shape(p:vec3f,id:u32)->f32 {
-    var outline=letter_outline(p.xy,min(id,9u));var depth=.24;var bevel=.010;
-    if id==10u {outline=panic_outline(p.xy);depth=.11;bevel=.022;}
-    if id==11u {outline=box2(p.xy,vec2f(1.45,.47),.01);depth=.08;bevel=.008;}
-    let q=vec2f(outline+bevel,abs(p.z)-depth+bevel);
-    return min(max(q.x,q.y),0.0)+length(max(q,vec2f(0)))-bevel;
+// Every model is a straight extrusion: 2D outline distance, half depth and
+// bevel radius.
+fn profile(p:vec2f,id:u32)->vec3f {
+    if id==10u {return vec3f(panic_outline(p),.11,.022);}
+    if id==11u {return vec3f(box2(p,vec2f(1.45,.47),.01),.08,.008);}
+    return vec3f(letter_outline(p,min(id,9u)),LETTER_DEPTH,.024);
 }
+fn extrude(profile:vec3f,z:f32)->f32 {
+    let q=vec2f(profile.x+profile.z,abs(z)-profile.y+profile.z);
+    return min(max(q.x,q.y),0.0)+length(max(q,vec2f(0)))-profile.z;
+}
+fn shape(p:vec3f,id:u32)->f32 {return extrude(profile(p.xy,id),p.z);}
 fn normal(p:vec3f,id:u32)->vec3f {
     let e=vec2f(.00035,0);
     return normalize(vec3f(shape(p+e.xyy,id)-shape(p-e.xyy,id),shape(p+e.yxy,id)-shape(p-e.yxy,id),shape(p+e.yyx,id)-shape(p-e.yyx,id)));
@@ -148,7 +175,7 @@ fn ambient_occlusion(p:vec3f,n:vec3f,id:u32)->f32 {
 fn softbox(p:vec2f,center:vec2f,size:vec2f,softness:f32)->f32 {
     return 1.0-smoothstep(-softness,softness,box2(p-center,size,.08));
 }
-fn environment(p:vec3f,r:vec3f)->vec3f {
+fn studio(p:vec3f,r:vec3f)->vec3f {
     var c=mix(vec3f(.035,.045,.065),vec3f(.20,.27,.38),r.y*.5+.5);
     if r.z>0.0 {
         let hit=p.xy+r.xy*((3.0-p.z)/max(r.z,.05));
@@ -159,10 +186,114 @@ fn environment(p:vec3f,r:vec3f)->vec3f {
     }
     return c;
 }
+// Authored surroundings for the models while they are out in space. Directions
+// that land on screen read the rendered backdrop, so reflections and refraction
+// show the same stars, warp streaks and doors. Elsewhere a procedural sky of
+// the same character fills in: it is not a copy of the visible starfield.
+fn in_space()->bool {return u.state.x<4.0;}
+// `blur` is the angular radius of the reflection lobe; wider lobes keep the
+// same light per star, so a metal plate shows soft streaks, not glitter.
+fn space_light(r:vec3f,blur:f32)->vec3f {
+    let time=u.screen.z;
+    let warp=smoothstep(12.0,14.2,time);
+    let s=r.xy/(1.0+abs(r.z));
+    let haze=noise(s*5.0+vec2f(time*.008,0))*.7+noise(s*11.0)*.3;
+    let cloud=pow(max(0.0,1.0-abs(s.y+s.x*.28)*2.4),4.0)*haze;
+    // The blue haze, a little brighter than the backdrop's so it reads in
+    // reflections, and a cool glow towards the poles of travel during warp.
+    var c=vec3f(.002,.004,.008)+vec3f(.014,.032,.07)*cloud;
+    c+=vec3f(.06,.13,.30)*warp*pow(abs(r.z),10.0);
+    // Stars in log-polar coordinates about the axis of travel, like the
+    // visible field seen from both ends: ahead they stream outwards, behind
+    // they recede into the centre, and the warp ramp stretches them radially.
+    let ahead=r.z<0.0;
+    let w=r.xy/max(abs(r.z),.02);
+    let radius=max(length(w),1e-4);
+    let cells=vec2f(560.0,60.0);
+    let flow=select(1.0,-1.0,ahead);
+    let g=vec2f((atan2(w.y,w.x)/6.283185+.5)*cells.x,log(radius)*cells.y+flow*star_travel(time)*2.2);
+    // Radians per cell across and along, from the gnomonic mapping.
+    let angular=radius/(1.0+radius*radius);
+    let scale=vec2f(6.283185/cells.x,1.0/cells.y)*angular;
+    let sharp=1.1/(u.screen.y*FOCAL*.5);
+    let sigma=max(sharp,blur);
+    let flux=sharp*sharp/(sigma*sigma);
+    let tail=warp*.12;
+    let reach=min(i32(ceil(tail/scale.y)),16);
+    for(var k=0;k<=reach;k++) {
+        // Tails trail away from the direction of motion in g.y.
+        let cell=vec2f(floor(g.x),floor(g.y)-f32(k)*flow);
+        // About 4000 stars per steradian, like the visible field, whatever
+        // the cell size.
+        if hash(cell)>min(4000.0*scale.x*scale.y,.6) {continue;}
+        let star=cell+.15+.7*vec2f(hash(cell+17.3),hash(cell+41.9));
+        let d=(g-star)*scale*vec2f(1.0,flow);
+        let along=clamp(d.y,0.0,tail);
+        let core=exp(-.5*(d.x*d.x+(d.y-along)*(d.y-along))/(sigma*sigma));
+        let fade=select(1.0,pow(1.0-along/max(tail,1e-5),.65)*(.35+.65*warp),tail>0.0);
+        let temperature=hash(cell+7.7);
+        let color=mix(vec3f(.48,.66,1.0),vec3f(1.0,.95,.86),smoothstep(0.0,.75,temperature));
+        c+=color*(.18+pow(hash(cell+3.1),3.4)*4.8)*core*fade*flux;
+    }
+    return c;
+}
+fn view_ray(screen:vec2f)->vec3f {
+    let uv=(screen-.5)*vec2f(u.screen.x/u.screen.y,1)*2.0;
+    return normalize(vec3f(uv.x,-uv.y,-FOCAL));
+}
+fn screen_of(direction:vec3f)->vec2f {
+    let uv=vec2f(direction.x,-direction.y)*FOCAL/max(-direction.z,1e-4);
+    return uv/(vec2f(u.screen.x/u.screen.y,1)*2.0)+.5;
+}
+fn scene_light(r:vec3f,blur:f32)->vec3f {
+    let sky=space_light(r,blur);
+    if r.z>-.02 {return sky;}
+    let uv=screen_of(r);
+    let border=min(min(uv.x,1.0-uv.x),min(uv.y,1.0-uv.y));
+    if border<=0.0 {return sky;}
+    var seen=textureSampleLevel(backdrop,linear,uv,0).rgb;
+    if blur>0.0 {
+        // A rotated four-tap footprint about `blur` wide, so single-pixel
+        // stars don't alias into sparkle when bent through the glass.
+        let px=.5*blur*u.screen.y*FOCAL*.5/u.screen.xy;
+        seen=.25*(textureSampleLevel(backdrop,linear,uv+px*vec2f(1,.33),0).rgb
+                 +textureSampleLevel(backdrop,linear,uv+px*vec2f(-.33,1),0).rgb
+                 +textureSampleLevel(backdrop,linear,uv+px*vec2f(-1,-.33),0).rgb
+                 +textureSampleLevel(backdrop,linear,uv+px*vec2f(.33,-1),0).rgb);
+    }
+    return mix(sky,seen,smoothstep(0.0,.03,border)*smoothstep(-.02,-.12,r.z));
+}
+// `mirror` is the reflection without the cast-metal ripple: stars and
+// streaks are so fine that the ripple would break them into glitter.
+fn environment(p:vec3f,r:vec3f,mirror:vec3f)->vec3f {
+    let lights=studio(p,r);
+    if !in_space() {return lights;}
+    // The studio panels stay behind the camera, dimmed so the warp shows
+    // in the plate; ahead lies open space.
+    return lights*mix(.2,.55,smoothstep(-.3,.3,r.z))+scene_light(mirror,.0012);
+}
+// Glass needs crisp lines of light rather than the broad panels that suit
+// the metal: a dim sheen and thin strips behind the camera, by direction, so
+// bevels catch them as continuous highlights. Authored lighting.
+fn strips(r:vec3f)->vec3f {
+    let line=r.xy/max(r.z,.2);
+    // A broad soft panel above gives the faces a sheen that slides as the
+    // letters cross the screen.
+    var c=mix(vec3f(.004,.006,.010),vec3f(.035,.045,.065),smoothstep(-.4,.9,r.y));
+    c+=vec3f(.9,1.05,1.3)*smoothstep(-.05,.35,line.y)*(1.0-smoothstep(.6,1.4,abs(line.x)));
+    c+=vec3f(7.0,7.6,8.4)*(1.0-smoothstep(.02,.05,abs(line.y-.62)))*(1.0-smoothstep(.8,1.0,abs(line.x+.1)));
+    c+=vec3f(2.4,3.4,5.2)*(1.0-smoothstep(.015,.04,abs(line.x+.75)))*(1.0-smoothstep(.6,.8,abs(line.y)));
+    c+=vec3f(6.0,4.6,2.8)*(1.0-smoothstep(.015,.04,abs(line.x-.8)))*(1.0-smoothstep(.5,.7,abs(line.y-.1)));
+    return c*smoothstep(-.2,.4,r.z);
+}
+fn glass_environment(r:vec3f,blur:f32)->vec3f {return strips(r)+scene_light(r,blur);}
 fn direct_light(p:vec3f,n:vec3f,v:vec3f,position:vec3f,radiance:vec3f,f0:vec3f)->vec3f {
+    return direct_light_rough(p,n,v,position,radiance,f0,.22);
+}
+fn direct_light_rough(p:vec3f,n:vec3f,v:vec3f,position:vec3f,radiance:vec3f,f0:vec3f,roughness:f32)->vec3f {
     let l=normalize(position-p);let h=normalize(l+v);
     let nl=max(dot(n,l),0.0);let nv=max(dot(n,v),.001);let nh=max(dot(n,h),0.0);let vh=max(dot(v,h),0.0);
-    let roughness=.22;let a=roughness*roughness;let a2=a*a;
+    let a=roughness*roughness;let a2=a*a;
     let d=a2/(3.141593*pow(nh*nh*(a2-1.0)+1.0,2.0));
     let k=pow(roughness+1.0,2.0)/8.0;
     let geometry=nv/(nv*(1.0-k)+k)*nl/(nl*(1.0-k)+k);
@@ -208,7 +339,7 @@ fn shade(p:vec3f,geometric_normal:vec3f,ray:vec3f,id:u32)->vec3f {
     let wp=world(p,id);let wn=normalize(world(n,id));let view=normalize(-world(ray,id));
     let reflection=reflect(-view,wn);
     let fresnel=f0+(1.0-f0)*pow(1.0-max(dot(wn,view),0.0),5.0);
-    var c=environment(wp,reflection)*fresnel;
+    var c=environment(wp,reflection,reflect(-view,normalize(world(geometric_normal,id))))*fresnel;
     c+=direct_light(wp,wn,view,vec3f(-2.0,3.0,3.0),vec3f(2.0,2.4,3.0),f0);
     c+=direct_light(wp,wn,view,vec3f(3.0,-1.0,1.5),vec3f(1.0,.65,.25),f0);
     c*=ambient_occlusion(p,n,id);
@@ -324,70 +455,321 @@ struct StarVertex {
     return vec4f(v.color*(core+halo+trail)*v.power*visibility,1);
 }
 
+fn object_extent(id:u32)->vec3f {
+    if id==10u {return vec3f(1.49,.42,.15);}
+    if id==11u {return vec3f(1.48,.50,.11);}
+    return vec3f(.81,.52,.27);
+}
 fn trace(origin:vec3f,ray:vec3f,id:u32)->vec4f {
-    var extent=vec3f(.81,.52,.27);
-    if id==10u {extent=vec3f(1.49,.42,.15);}
-    if id==11u {extent=vec3f(1.48,.50,.11);}
+    let extent=object_extent(id);
     let inv=1.0/ray;let slab0=(-extent-origin)*inv;let slab1=(extent-origin)*inv;
     let entry=min(slab0,slab1);let leave=max(slab0,slab1);
     let near=max(max(entry.x,entry.y),entry.z);let far=min(min(leave.x,leave.y),leave.z);
     if near>far || far<0.0 {return vec4f(0,0,0,-1);}
     var travel=max(near,0.0);var p=origin+ray*travel;
     let epsilon=max(.00006,travel/(u.screen.y*3.8)*.25);
+    // Beside a wall the 3D distance stays tiny while the ray runs parallel
+    // to it. Within the slab, the outline distance over the ray's sideways
+    // speed is still a safe step, so silhouettes no longer cost every step.
+    let sideways=max(length(ray.xy),1e-3);
     for(var i=0;i<100;i++) {
         p=origin+ray*travel;
-        let distance=shape(p,id);
+        let outline=profile(p.xy,id);
+        let distance=extrude(outline,p.z);
         if distance<epsilon {return vec4f(p,travel);}
-        travel+=distance*.8;
+        var step=distance*.8;
+        if outline.x>0.0 && abs(p.z)<outline.y-outline.z {step=max(step,outline.x/sideways*.9);}
+        travel+=step;
         if travel>far {break;}
     }
     return vec4f(0,0,0,-1);
 }
-@fragment fn model(v:Vertex)->@location(0) vec4f {
-    if u.state.x<1.0 || u.state.x==2.0 {discard;}
-    let uv=(v.uv-.5)*vec2f(u.screen.x/u.screen.y,1)*2.0;
-    let camera=vec3f(0,0,4.2);
-    let direction=normalize(vec3f(uv.x,-uv.y,-3.8));
-    var first=0u;var last=10u;
-    if u.state.x>=4.0 {first=10u;last=11u;}
-    if u.state.x==3.0 {first=11u;last=12u;}
-    // Sort actual ray hits, so stars and more distant letters remain visible
-    // through the translucent blocks even when their projections overlap.
+fn hit_object(id:u32,direction:vec3f)->vec4f {
+    return trace(local(CAMERA,id),normalize(local_direction(direction,id)),id);
+}
+fn object_range()->vec2u {
+    if u.state.x>=4.0 {return vec2u(10,11);}
+    if u.state.x==3.0 {return vec2u(11,12);}
+    if u.state.x<1.0 || u.state.x==2.0 {return vec2u(0,0);}
+    return vec2u(0,10);
+}
+fn letter_present(id:u32)->bool {return id>=10u || exposure_frame()<u.flights[id].x;}
+fn letter_fade()->f32 {return smoothstep(0.0,30.0,u.state.y);}
+
+// Path from a point on or inside a letter to where it leaves the block, as
+// the outward normal there and the distance travelled.
+const LETTER_DEPTH=.24;
+fn cross_letter(start:vec3f,direction:vec3f,id:u32)->vec4f {
+    var slab=1e6;
+    if abs(direction.z)>1e-5 {slab=max((sign(direction.z)*LETTER_DEPTH-start.z)/direction.z,0.0);}
+    let speed=length(direction.xy);
+    if speed<1e-4 {return vec4f(0,0,sign(direction.z),slab);}
+    var t=0.0;
+    var entered=false;
+    for(var i=0;i<64;i++) {
+        let o=letter_outline(start.xy+direction.xy*t,id);
+        if o< -.0004 {entered=true;}
+        if (entered && o>=0.0) || t>=slab {
+            if t<slab {t=max(t-o/speed,0.0);}
+            break;
+        }
+        t+=max(abs(o),.0015)/speed;
+    }
+    if t>=slab {return vec4f(0,0,sign(direction.z),slab);}
+    let p=start.xy+direction.xy*t;
+    let e=vec2f(.0005,0);
+    let gradient=vec2f(letter_outline(p+e.xy,id)-letter_outline(p-e.xy,id),letter_outline(p+e.yx,id)-letter_outline(p-e.yx,id));
+    return vec4f(normalize(vec3f(gradient,0)+vec3f(0,0,1e-6)),t);
+}
+
+// Authored glass for the FUTURE CREW letters. Light refracts in, crosses the
+// block (with up to two internal reflections), and refracts out with a little
+// dispersion; the body absorbs red first, giving a cool tint that deepens
+// along longer paths.
+const GLASS_IOR=vec3f(1.498,1.505,1.512);
+const GLASS_ABSORPTION=vec3f(1.9,.75,.3);
+fn glass(p:vec3f,ray:vec3f,id:u32,behind:vec3f,layered:bool)->vec3f {
+    let geometric=normal(p,id);
+    // Cast-glass ripples bend the light without moving the outline.
+    let e=vec2f(.0008,0);
+    let bump=vec2f(cast_surface(p.xy+e.xy)-cast_surface(p.xy-e.xy),cast_surface(p.xy+e.yx)-cast_surface(p.xy-e.yx))/(2.0*e.x);
+    let n=normalize(geometric-vec3f(bump,0)*abs(geometric.z)*.5);
+    // Refraction gets only a trace of the ripple: stronger bending scatters
+    // the sparse stars into sparkle.
+    let inward=normalize(geometric-vec3f(bump,0)*abs(geometric.z)*.12);
+    let wp=world(p,id);let wn=normalize(world(n,id));let wray=normalize(world(ray,id));
+    let cosine=max(dot(n,-ray),0.0);
+    let f0=.04;
+    let fresnel=f0+(1.0-f0)*pow(1.0-cosine,5.0);
+    var color=glass_environment(reflect(wray,wn),0.0)*fresnel;
+    color+=direct_light_rough(wp,wn,-wray,vec3f(-2.0,3.0,3.0),vec3f(2.0,2.4,3.0),vec3f(f0),.07);
+    color+=direct_light_rough(wp,wn,-wray,vec3f(3.0,-1.0,1.5),vec3f(1.0,.65,.25),vec3f(f0),.07);
+    // The letters are straight extrusions, so the back face is a plane and
+    // only the 2D outline needs marching (bevels are ignored inside).
+    var direction=refract(ray,inward,1.0/GLASS_IOR.y);
+    var q=p;
+    var travelled=0.0;
+    var exit_normal=geometric;
+    var out=direction;
+    for(var bounce=0;bounce<3;bounce++) {
+        let leg=cross_letter(q,direction,id);
+        q+=direction*leg.w;
+        travelled+=leg.w;
+        exit_normal=leg.xyz;
+        out=refract(direction,-exit_normal,GLASS_IOR.y);
+        if dot(out,out)>.0001 {break;}
+        // Total internal reflection: another leg inside the block.
+        direction=reflect(direction,exit_normal);
+        out=direction;
+    }
+    let tint=exp(-GLASS_ABSORPTION*travelled);
+    var transmitted=behind;
+    if !layered {
+        // Light crossing the block softens with distance travelled, which
+        // also keeps the sparse stars from aliasing.
+        let blur=(1.0+2.5*travelled)/(u.screen.y*FOCAL*.5);
+        for(var c=0;c<3;c++) {
+            var bent=refract(direction,-exit_normal,GLASS_IOR[c]);
+            if dot(bent,bent)<.0001 {bent=out;}
+            transmitted[c]=glass_environment(normalize(world(bent,id)),blur)[c];
+        }
+    }
+    // Light trapped by internal reflection leaks out near the edges and
+    // bevels, so the blocks read against black space; brighter towards the
+    // top strip. A little scattering lets thick paths glow faintly.
+    let e2=vec2f(.0015,0);
+    let rim_normal=normalize(vec2f(letter_outline(p.xy+e2.xy,id)-letter_outline(p.xy-e2.xy,id),letter_outline(p.xy+e2.yx,id)-letter_outline(p.xy-e2.yx,id))+1e-6);
+    // Distance to the nearest edge line: on a face one coordinate is zero.
+    let edge=length(vec2f(max(-letter_outline(p.xy,id),0.0),max(LETTER_DEPTH-abs(p.z),0.0)));
+    let rim=exp(-edge/.016)*(.25+.75*smoothstep(-.2,1.0,dot(rim_normal,vec2f(-.35,.94))));
+    let scatter=(1.0-exp(-1.4*travelled))*vec3f(.006,.016,.03);
+    return color+(transmitted*tint+scatter+rim*vec3f(.20,.42,.75))*(1.0-fresnel);
+}
+
+fn render(screen:vec2f)->vec3f {
+    let direction=view_ray(screen);
+    let background=textureSampleLevel(backdrop,linear,screen,0).rgb;
+    let range=object_range();
+    // Sort the actual ray hits, then composite from the back, so distant
+    // letters and stars stay visible through the nearer glass.
     var distances:array<f32,10>;
-    var surfaces:array<vec4f,10>;
+    var hits:array<vec4f,10>;
+    var ids:array<u32,10>;
     var count=0u;
-    for(var id=first;id<last;id++) {
-        if id<10u && u.state.y>=u.flights[id].x {continue;}
-        let origin=local(camera,id);
-        let ray=normalize(local_direction(direction,id));
-        let hit=trace(origin,ray,id);
+    for(var id=range.x;id<range.y;id++) {
+        if !letter_present(id) {continue;}
+        let hit=hit_object(id,direction);
         if hit.w<0.0 {continue;}
-        let n=normal(hit.xyz,id);
-        let color=shade(hit.xyz,n,ray,id);
-        if id==10u {return vec4f(color,1);}
-        if id==11u {return vec4f(color,smoothstep(0.0,30.0,u.state.y));}
-        let rim=pow(1.0-max(dot(n,-ray),0.0),3.0);
-        let opacity=(.78+.16*rim)*smoothstep(0.0,30.0,u.state.y);
-        let distance=hit.w*pose(id).w;
         var slot=count;
         loop {
             if slot==0u {break;}
-            if distances[slot-1u]<=distance {break;}
+            if distances[slot-1u]<=hit.w {break;}
             distances[slot]=distances[slot-1u];
-            surfaces[slot]=surfaces[slot-1u];
+            hits[slot]=hits[slot-1u];
+            ids[slot]=ids[slot-1u];
             slot-=1u;
         }
-        distances[slot]=distance;
-        surfaces[slot]=vec4f(color,opacity);
+        distances[slot]=hit.w;hits[slot]=hit;ids[slot]=id;
         count+=1u;
     }
-    var color=vec3f(0);var alpha=0.0;
-    for(var i=0u;i<count;i++) {
-        let layer=surfaces[i];
-        let coverage=(1.0-alpha)*layer.a;
-        color+=layer.rgb*coverage;
-        alpha+=coverage;
+    var color=background;
+    for(var i=i32(count)-1;i>=0;i--) {
+        let id=ids[i];
+        let ray=normalize(local_direction(direction,id));
+        let p=hits[i].xyz;
+        if id==10u {return shade(p,normal(p,id),ray,id);}
+        if id==11u {return mix(background,shade(p,normal(p,id),ray,id),smoothstep(0.0,30.0,u.state.y));}
+        let layer=glass(p,ray,id,color,u32(i)+1u<count);
+        color=mix(color,layer,letter_fade());
     }
-    if alpha<.0001 {discard;}
-    return vec4f(color/alpha,alpha);
+    return color;
+}
+
+// Pixel-space bounds of an object's box at the current shutter position.
+// Boxes reaching the camera plane cover everything.
+fn screen_box(id:u32)->vec4f {
+    let e=object_extent(id);
+    let c=center(id);
+    var low=vec2f(1e9);var high=vec2f(-1e9);
+    for(var k=0u;k<8u;k++) {
+        let corner=vec3f(select(-e.x,e.x,(k&1u)!=0u),select(-e.y,e.y,(k&2u)!=0u),select(-e.z,e.z,(k&4u)!=0u));
+        let q=world(corner,id)+c-CAMERA;
+        if -q.z<.05 {return vec4f(-1e9,-1e9,1e9,1e9);}
+        let pixel=vec2f(q.x,-q.y)*FOCAL/(-q.z)*u.screen.y*.5+u.screen.xy*.5;
+        low=min(low,pixel);high=max(high,pixel);
+    }
+    return vec4f(low,high);
+}
+const MOTION_SAMPLES=16u;
+const EDGE_SAMPLES=6u;
+const TILE=8.0;
+// Per 8 × 8 tile: visibility samples needed for the motion of every object
+// whose swept box reaches it (about one per 2 pixels of travel), or zero
+// when none can. Doing this per tile keeps the box maths out of each pixel.
+@fragment fn tiles(v:Vertex)->@location(0) vec4f {
+    let low_corner=floor(v.position.xy)*TILE-2.0;
+    let high_corner=low_corner+TILE+4.0;
+    let range=object_range();
+    var count=0u;
+    for(var id=range.x;id<range.y;id++) {
+        shutter=0.0;
+        let present_open=letter_present(id);
+        let a=screen_box(id);
+        shutter=1.0;
+        let present_close=letter_present(id);
+        let b=screen_box(id);
+        if !present_open && !present_close {continue;}
+        let low=min(a.xy,b.xy);let high=max(a.zw,b.zw);
+        if any(high<low_corner) || any(low>high_corner) {continue;}
+        if a.x<-1e8 || b.x<-1e8 {count=MOTION_SAMPLES;continue;}
+        let travel=max(length(b.xy-a.xy),length(b.zw-a.zw));
+        count=max(count,clamp(u32(ceil(travel/2.0)),1u,MOTION_SAMPLES));
+    }
+    shutter=1.0;
+    return vec4f(f32(count),0,0,0);
+}
+fn motion_samples(pixel:vec2f)->u32 {
+    return u32(textureLoad(tile_map,vec2i(pixel/TILE),0).x);
+}
+const NOTHING=255u;
+fn nearest_object(screen:vec2f)->vec2f {
+    let direction=view_ray(screen);
+    let range=object_range();
+    var nearest=vec2f(f32(NOTHING),1e6);
+    for(var id=range.x;id<range.y;id++) {
+        if !letter_present(id) {continue;}
+        let hit=hit_object(id,direction);
+        if hit.w>=0.0 && hit.w<nearest.y {nearest=vec2f(f32(id),hit.w);}
+    }
+    return nearest;
+}
+
+// Centre-ray coverage: object id + 1 (0 for none) and hit distance.
+@fragment fn probe(v:Vertex)->@location(0) vec4f {
+    if motion_samples(v.position.xy)==0u {return vec4f(0);}
+    let nearest=nearest_object(v.uv);
+    if u32(nearest.x)==NOTHING {return vec4f(0);}
+    return vec4f(nearest.x+1.0,nearest.y,0,0);
+}
+
+@fragment fn model(v:Vertex)->@location(0) vec4f {
+    let background=textureSampleLevel(backdrop,linear,v.uv,0).rgb;
+    let range=object_range();
+    if range.x==range.y {return vec4f(background,1);}
+    let moving=motion_samples(v.position.xy);
+    if moving==0u {return vec4f(background,1);}
+    let pixel=vec2i(v.position.xy);
+    let limit=vec2i(textureDimensions(probe_map))-1;
+    var probe:array<vec4f,9>;
+    for(var i=0;i<9;i++) {
+        probe[i]=textureLoad(probe_map,clamp(pixel+vec2i(i%3-1,i/3-1),vec2i(0),limit),0);
+    }
+    let centre=probe[4];
+    var edge=false;
+    var samples=EDGE_SAMPLES;
+    for(var i=0;i<9;i++) {
+        if abs(probe[i].x-centre.x)>.5 || abs(probe[i].y-centre.y)>.02*centre.y {edge=true;}
+    }
+    // Bevels show as curvature in depth; their thin highlights alias too.
+    if centre.x>.5 && !edge {
+        let footprint=centre.y*2.0/(u.screen.y*FOCAL);
+        let curvature=max(abs(probe[3].y+probe[5].y-2.0*centre.y),abs(probe[1].y+probe[7].y-2.0*centre.y));
+        edge=curvature>.05*footprint;
+        samples=4u;
+    }
+    // Interleaved gradient noise decorrelates neighbouring pixels' patterns.
+    let jitter=fract(52.9829189*fract(dot(v.position.xy,vec2f(.06711056,.00583715))));
+    // Shading jobs: screen position, shutter position and weight. One call
+    // site keeps the shader small.
+    var jobs:array<vec4f,6>;
+    var job_count=1u;
+    var sum=vec3f(0);
+    jobs[0]=vec4f(v.uv,1,1);
+    if moving<=1u && edge {
+        // Static silhouettes and folds: full shading at each sample.
+        job_count=samples;
+        for(var i=0u;i<samples;i++) {
+            let r2=fract(vec2f(.7548776662,.5698402910)*f32(i+1u)+jitter);
+            jobs[i]=vec4f((v.position.xy+(r2-.5)*1.2)/u.screen.xy,1,1.0/f32(samples));
+        }
+    } else if moving>1u {
+        // Moving objects: many cheap visibility samples through the exposure,
+        // then one full shade per object seen, at the mean of its samples and
+        // weighted by its coverage. Colour changes far less within 1/100 s
+        // than coverage does, and the mean keeps neighbouring pixels steady.
+        var objects=array<u32,3>(NOTHING,NOTHING,NOTHING);
+        var hits=array<u32,3>(0u,0u,0u);
+        var mean:array<vec3f,3>;
+        for(var i=0u;i<moving;i++) {
+            let r2=fract(vec2f(.7548776662,.5698402910)*f32(i+1u)+jitter);
+            shutter=(f32(i)+fract(jitter*7.31+f32(i)*.6180339887))/f32(moving);
+            let screen=(v.position.xy+(r2-.5)*1.2)/u.screen.xy;
+            let id=u32(nearest_object(screen).x);
+            if id==NOTHING {sum+=textureSampleLevel(backdrop,linear,screen,0).rgb;continue;}
+            var slot=2u;
+            for(var k=0u;k<3u;k++) {
+                if objects[k]==id || objects[k]==NOTHING {slot=k;break;}
+            }
+            if objects[slot]==NOTHING {objects[slot]=id;mean[slot]=vec3f(0);}
+            mean[slot]+=vec3f(screen,shutter);
+            hits[slot]+=1u;
+        }
+        sum/=f32(moving);
+        job_count=0u;
+        for(var k=0u;k<3u;k++) {
+            if hits[k]==0u {continue;}
+            // Fully covered: shade the pixel centre at mid-exposure, so fast
+            // reflections stay steady rather than following each pixel's jitter.
+            var at=mean[k]/f32(hits[k]);
+            if hits[k]==moving {at=vec3f(v.uv,.5);}
+            jobs[job_count]=vec4f(at,f32(hits[k])/f32(moving));
+            job_count++;
+        }
+    }
+    for(var j=0u;j<job_count;j++) {
+        shutter=jobs[j].z;
+        sum+=render(jobs[j].xy)*jobs[j].w;
+    }
+    shutter=1.0;
+    return vec4f(sum,1);
 }
