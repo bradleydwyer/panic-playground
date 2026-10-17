@@ -90,7 +90,16 @@ block forms. The plate also fades in, then uses a continuous quaternion tumble
 and forward motion, following the recorded sequence's two turns and approach. This is an authored
 approximation: the original Rust decoder plays stored animation frames, not 3D
 rotation equations. These are reconstructed forms, not recovered original models.
-The closing panels follow the Rust door timing directly.
+The closing panels follow the Rust door timing directly, interpolated between
+70 Hz ticks. Their geometry follows the palette maths of `Intro::doors`: the
+open rows end at door/2 and the brighter rim row sits at door×8/14. The modern
+renderer reads that dark strip as each door's inner face seen in perspective
+and the rim as its front lip; this is an interpretation. The lip stops where
+the original's rim ends, about 0.22 of the height from the centre, and becomes
+the logo screen's blue rail. The bevelled lip, contact shadow, cool light
+spilling from the warp through the narrowing gap, the bloom pulse as the doors
+settle, and the quick fade of the stars into the recessed logo panel are all
+authored.
 The soundtrack, cues and scene boundaries use the existing port unchanged.
 The logo appears at about 14.57 seconds; the preview holds there and ends its
 audio after another 4.91 seconds. The logo material keeps animating after the

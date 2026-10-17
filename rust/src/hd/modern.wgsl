@@ -239,15 +239,124 @@ fn shade(p:vec3f,geometric_normal:vec3f,ray:vec3f,id:u32)->vec3f {
     }
     return c;
 }
+// Door travel comes from the Rust timeline: Intro::step lowers `door` (passed
+// as state.z) by 2 rows on every 70 Hz tick from sequence frame 108, so between
+// ticks it is interpolated towards the next value with the tick phase, which is
+// the fractional part of the half-frame sequence clock. On the logo it rests at
+// the final value. Never infer coverage from a scanout pixel: stars can cross it.
+fn door_amount()->f32 {
+    if u.state.x<4.0 && u.state.y>=108.0 {return u.state.z-2.0*fract(u.state.y*2.0);}
+    return u.state.z;
+}
+// Distances from the centre, as fractions of the height, of the back edge of
+// the door's inner face (x) and of its lip (y). These follow the palette maths
+// of Intro::doors: rows within door/2 stay open and the rim row sits at
+// door*8/14. Reading the dark strip between them as the inner face seen in
+// perspective, with the rim as the front lip, is an interpretation. The rim's
+// end position (row 43, ~0.22) is where the original's logo screen and the
+// faithful renderer draw the blue rail, so the modern rail is moved to the lip
+// rather than stretching the door travel: the original framing of the logo is
+// kept and the doors simply become the logo screen's frame without a jump.
+fn door_edges()->vec2f {
+    let amount=door_amount();
+    return vec2f(amount/400.0,(amount*8.0/14.0+.5)/200.0);
+}
+// Authored: the stars and the open centre fade into the logo screen over a few
+// tenths of a second from the logo cue instead of cutting.
+fn logo_fade()->f32 {
+    if u.state.x<4.0 {return 0.0;}
+    return smoothstep(0.0,.32,u.screen.z-u.misc.z);
+}
 fn panel_mask(uv:vec2f)->f32 {
-    if u.state.x>=4.0 {return 1.0;}
     if u.state.x<3.0 {return 0.0;}
-    // Intro::step closes the doors by 2 rows per 70 Hz tick from frame 108.
-    // Never infer panel coverage from a scanout pixel: stars can cross it.
-    let amount=clamp(200.0-4.0*max(u.state.y-108.0,0.0),0.0,200.0);
-    let edge=amount/400.0;
-    let aa=1.0/u.screen.y;
-    return smoothstep(edge-aa,edge+aa,abs(uv.y-.5));
+    let aa=.75/u.screen.y;
+    let doors=smoothstep(door_edges().x-aa,door_edges().x+aa,abs(uv.y-.5));
+    return max(doors,logo_fade());
+}
+// Authored light leaking through the gap from the warp-speed starfield.
+fn door_spill(x:f32,gap:f32)->vec3f {
+    let warp=smoothstep(12.0,14.2,u.screen.z);
+    let narrow=clamp((.5-gap)/.31,0.0,1.0);
+    let flicker=.7+.6*noise(vec2f(x*6.0,u.screen.z*9.0));
+    return vec3f(.30,.52,1.0)*warp*(.30+.70*narrow*narrow)*flicker*(1.0-logo_fade());
+}
+// Authored bloom pulse when the doors reach their stop, with a faint contact
+// ripple running outwards along the lip.
+fn settle_pulse(x:f32)->f32 {
+    let t=u.screen.z-u.misc.z;
+    let decay=exp(-max(t,0.0)/.12)*smoothstep(-.05,0.0,t);
+    let ripple=exp(-pow((abs(x)-max(t,0.0)*5.0)/.14,2.0));
+    return decay*(.55+.9*ripple);
+}
+fn front_face(band:f32,uv:vec2f,lip:f32)->vec3f {
+    var c=vec3f(.055,.061,.070)*(1.0-.45*smoothstep(.12,.5,band));
+    // The brushed grain belongs to the moving door, not to the screen.
+    c*=.99+.01*noise(vec2f(uv.x*70.0,(band-lip)*3000.0));
+    return c;
+}
+// Authored door shading across the inner face, a rounded bead on the leading
+// edge and a crease into the front face. Normals live in the (outwards, towards
+// the camera) plane; `up` flips the key light between top and bottom doors.
+fn door_panel(uv:vec2f,x:f32)->vec3f {
+    let band=abs(uv.y-.5);
+    let up=select(-1.0,1.0,uv.y<.5);
+    let edges=door_edges();
+    let px=1.0/u.screen.y;
+    let bead=max(.006,3.0*px);
+    let spill=door_spill(x,edges.x);
+    let fade=logo_fade();
+    let key=normalize(vec2f(.55*up,.8));
+    let light=normalize(vec2f(-1.0,-.35));
+    let s=(band-edges.y)/bead;
+    var c=front_face(band,uv,edges.y);
+    if s<1.0 {
+        var n=vec2f(-1,0);
+        if s>-1.0 {n=vec2f(s,sqrt(max(1.0-s*s,0.0)));}
+        let h=normalize(key+vec2f(0,1));let hs=normalize(light+vec2f(0,1));
+        // Ambient plus, on the logo screen, light bounced off the recess and
+        // the hot end of the title.
+        let warm=exp(-pow((x-.62)*1.6,2.0));
+        var lit=vec3f(.010,.011,.014)+fade*(vec3f(.020,.022,.026)+vec3f(.030,.009,.002)*warm);
+        lit+=vec3f(.075,.080,.088)*max(dot(n,key),0.0);
+        lit+=vec3f(.50,.55,.62)*pow(max(dot(n,h),0.0),60.0)*step(-1.0,s);
+        lit+=spill*(.10*max(dot(n,light),0.0)+.75*pow(max(dot(n,hs),0.0),30.0)*step(-1.0,s));
+        if s<-1.0 {
+            // Inner face: deeper parts see more of the gap and less of the key.
+            // Passing streaks sweep outwards across it as moving bands of light.
+            let depth=clamp((edges.y-bead-band)/max(edges.y-bead-edges.x,px),0.0,1.0);
+            lit*=1.0-.35*depth*step(0.0,-dot(n,key));
+            let streaks=.45+1.1*noise(vec2f(abs(x)*26.0-u.screen.z*22.0,depth*2.5+up*7.0));
+            lit+=spill*.10*depth*depth*streaks;
+            lit*=.88+.12*noise(vec2f(x*40.0,depth*6.0));
+        }
+        c=lit;
+    }
+    // Contact shadow in the crease between the bead and the front face, and
+    // the rail's blue light along the bead, fed by the spill and the pulse.
+    let crease=band-(edges.y+bead);
+    let aa=px*.75;
+    c*=1.0-.8*exp(-max(crease,0.0)/max(.005,3.0*px))*smoothstep(-aa,aa,crease);
+    let rail=exp(-abs(band-(edges.y-.35*bead))/max(.0013,1.0*px));
+    c+=(vec3f(.05,.16,.30)+spill*.35)*rail;
+    let pulse=settle_pulse(x);
+    let glow=sqrt(max(1.0-s*s,0.0))+rail;
+    c+=vec3f(.55,.85,1.5)*2.4*pulse*glow;
+    return c;
+}
+// The logo screen's recessed centre, behind the doors' inner faces.
+fn recess_panel(uv:vec2f)->vec3f {
+    let band=abs(uv.y-.5);
+    var c=vec3f(.050,.055,.064)*(1.0-.45*smoothstep(.12,.5,band));
+    c+=vec3f(.016)*exp(-pow((uv.y-.36)*5.0,2.0));
+    c*=.99+.01*noise(vec2f(uv.x*70.0,uv.y*3000.0));
+    // Contact shadow where the doors' inner faces meet the recess.
+    c*=1.0-.55*exp(-max(door_edges().x-band,0.0)/.014);
+    // A soft mounting shadow below the 3D title on the recessed panel.
+    let p=(uv-.5)*vec2f(u.screen.x/u.screen.y,1.0)*2.0;
+    let q=vec2f(p.x,-p.y)*1.10-vec2f(.025,-.04);
+    c*=1.0-.65*exp(-max(panic_outline(q),0.0)*28.0);
+    c+=vec3f(.055,.012,.001)*exp(-dot((p-vec2f(.70,0))*vec2f(1.1,2.0),(p-vec2f(.70,0))*vec2f(1.1,2.0)));
+    return c;
 }
 @fragment fn background(v:Vertex)->@location(0) vec4f {
     let xy=(v.uv-.5)*vec2f(u.screen.x/u.screen.y,1);
@@ -255,22 +364,14 @@ fn panel_mask(uv:vec2f)->f32 {
     let cloud=pow(max(0.0,1.0-abs(xy.y+xy.x*.28)*2.0),4.0)*haze;
     var space=vec3f(.0015,.003,.006)+vec3f(.004,.009,.018)*cloud;
     space*=smoothstep(0.0,1.5,u.screen.z);
-    let band=abs(v.uv.y-.5);
-    var panel=vec3f(.055,.061,.070)*(1.0-.45*smoothstep(.12,.5,band));
-    panel+=vec3f(.018)*exp(-pow((v.uv.y-.36)*5.0,2.0));
-    panel*=.99+.01*noise(vec2f(v.uv.x*70.0,v.uv.y*3000.0));
-    let rail=abs(band-.245);
-    panel=mix(panel,vec3f(.006,.008,.012),1.0-smoothstep(.001,.003,rail));
-    panel+=vec3f(.06,.18,.32)*exp(-rail*1700.0);
-    // A soft mounting shadow below the 3D title on the recessed panel.
-    if u.state.x>=4.0 {
-        let uv=(v.uv-.5)*vec2f(u.screen.x/u.screen.y,1.0)*2.0;
-        let q=vec2f(uv.x, -uv.y)*1.10-vec2f(.025,-.04);
-        let distance=panic_outline(q);
-        panel*=1.0-.65*exp(-max(distance,0.0)*28.0);
-        panel+=vec3f(.055,.012,.001)*exp(-dot((uv-vec2f(.70,0))*vec2f(1.1,2.0),(uv-vec2f(.70,0))*vec2f(1.1,2.0)));
-    }
-    return vec4f(mix(space,panel,panel_mask(v.uv)),1);
+    if u.state.x<3.0 {return vec4f(space,1);}
+    let aa=.75/u.screen.y;
+    let doors=smoothstep(door_edges().x-aa,door_edges().x+aa,abs(v.uv.y-.5));
+    var centre=space;
+    let fade=logo_fade();
+    if fade>0.0 {centre=mix(space,recess_panel(v.uv),fade);}
+    if doors<=0.0 {return vec4f(centre,1);}
+    return vec4f(mix(centre,door_panel(v.uv,xy.x),doors),1);
 }
 
 // Integrate the speed ramp instead of multiplying time by a changing speed:
@@ -323,8 +424,8 @@ struct StarVertex {
     return StarVertex(vec4f(screen,0,1),pixel,color,power*fade,vec2f(screen.x*.5+.5,.5-screen.y*.5),vec3f(sigma,tail,warp));
 }
 @fragment fn star_fragment(v:StarVertex)->@location(0) vec4f {
-    if u.state.x>=4.0 {discard;}
     let visibility=1.0-panel_mask(v.uv);
+    if visibility<=0.0 {discard;}
     let sigma=v.shape.x;let tail=v.shape.y;let warp=v.shape.z;
     // Evaluate the head in pixel space so stretching a streak never stretches
     // the round core into the old thick oval. The trail has its own thin profile.
