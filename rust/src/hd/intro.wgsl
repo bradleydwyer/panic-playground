@@ -103,7 +103,7 @@ struct StarVertex {
     let p=art_uv(v.uv);
     let inside=all(p>=vec2f(0)) && all(p<=vec2f(1));
     let compare=u.screen.w>0.5 && (u.screen.w<1.5 || v.uv.x<0.5);
-    if compare {
+    if compare || u.state.x>=6.0 {
         if !inside {return vec4f(0,0,0,1);}
         let ip=clamp(vec2i(p*vec2f(320,200)),vec2i(0),vec2i(319,199));
         return vec4f(output(textureLoad(reference,ip,0).rgb),1);

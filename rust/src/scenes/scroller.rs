@@ -35,6 +35,21 @@ pub struct Scroller {
 }
 
 impl Scroller {
+    /// Read-only timeline and locally loaded tile schedule for the HD preview.
+    #[cfg(feature = "hires")]
+    pub fn presentation(&self) -> (u8, usize) {
+        (self.phase, self.tick)
+    }
+
+    #[cfg(feature = "hires")]
+    pub fn transition_order(&self) -> [u16; 160] {
+        let mut order = [0; 160];
+        for (rank, &(source, _)) in self.tiles.iter().enumerate() {
+            order[(source / 3200) * 16 + (source % 3200) / 5] = rank as u16;
+        }
+        order
+    }
+
     pub fn new(data: &Data, vga: &mut Vga) -> Result<Self, String> {
         let memory = data.memory(2)?;
         let text: Vec<u8> = memory[0x4c5f2..0x4c9f2]

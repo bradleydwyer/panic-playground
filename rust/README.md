@@ -97,6 +97,47 @@ audio after another 4.91 seconds. The logo material keeps animating after the
 audio ends; Space pauses it too. End then Space lets you watch the logo directly.
 Later demo scenes are outside this preview.
 
+Add `--transition` to continue through the square wipe into part 2. It reads
+the 16 by 10 activation order from your local data and follows `Scroller`'s
+200-tick hold and 169-tick wipe at 70 Hz. That places the wipe at about
+18.34–20.76 seconds, with uninterrupted original music. The preview then holds
+for one second, ending before the scrolling text begins.
+
+The modern cut effect uses tessellated 3D sheets with asymmetric curls, narrow
+cut walls and depth testing. A ragged incandescent edge burns towards each
+square's centre, leaving a scorched band, embers and wisps of smoke. Moving
+reflections pick out the curved surfaces; nearby cuts illuminate the exposed
+brushed metal underneath. The logo's surface keeps moving during the wipe.
+
+Use `--tear` for an alternative that peels the squares loose and drops them
+under gravity. They curl like thin paper, flutter slightly and burn inward
+while falling. Each square burns away in about 0.51 seconds, compared with
+0.14 seconds in the reference wipe. The activation order and music stay the
+same; the last pieces disappear around 21.13 seconds, within the final hold.
+`--tear` selects modern mode automatically and also works with `--split`.
+
+Use `--laser` for an intact-plate alternative. Cutting points trace each tile's
+perimeter over 0.21 seconds, leaving a narrow tab on the top edge. The plate
+tips slightly around that attachment until it releases at 0.32 seconds, then
+accelerates directly away from the camera, like a floor giving way beneath an
+overhead view. Its centre has no lateral drift after release. Perspective makes
+the intact pieces shrink; depth haze blends them into the backdrop before they
+are removed at 1.10 seconds. Glowing edges, sparks and illuminated smoke shift
+from cool blue on the left to hot orange on the right. Sparks come from the
+moving cutting point and final severing flash; smoke rises towards the camera.
+Attachment positions vary deterministically between tiles. The pieces keep
+their physical size and vanish during the existing final hold. Several cuts overlap to
+retain the original activation cadence. `--laser` also selects modern mode
+and supports `--split`; `--seek 17.8` starts just before the transition.
+
+The geometry, gravity, laser and burn treatments, and particle motion are authored effects.
+The lighting uses analytic approximations; this isn't a cloth or combustion
+simulation. The original destination is a plain light screen at this point;
+the modern view gives it a dark brushed-metal finish.
+The next scene's patterned palette and scrolling text have not been remade.
+Original/comparison mode shows the actual reference wipe, and faithful HD
+uses the original pixels during this transition.
+
 | Key | Action |
 | --- | --- |
 | Space | Pause or resume |
@@ -129,14 +170,16 @@ still requires a GPU and the `hires` build dependencies. `--data` and `PANIC_DAT
 override the preview's default `artifacts/local-data` path. All original data and
 generated images stay local, outside Git.
 
-The default HD tests use synthetic data. A separate ignored test checks the
-intro's complete reference pixels and PCM against the existing engine, plus
-sampled fly-by projection heights:
+The default HD tests use synthetic data. Separate ignored tests check the
+intro's reference pixels and PCM against the existing engine, sampled fly-by
+projection heights, and the transition's complete reference frames, audio and
+tile schedule:
 
 ```sh
 cargo test --release --locked --features hires
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked \
   --features hires reference_timing_audio_and_flyby_projections -- --ignored
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires transition_matches_engine_frames_audio_and_schedule -- --ignored
 ```
 
 The fitted trajectories approximate the reference projection; they do not prove

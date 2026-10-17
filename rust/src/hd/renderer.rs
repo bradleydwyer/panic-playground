@@ -13,6 +13,9 @@ struct Uniforms {
     flights: [[f32; 4]; 10],
     plate_center: [f32; 4],
     plate_rotation: [f32; 4],
+    transition: [f32; 4],
+    tile_order: [[f32; 4]; 40],
+    next_palette: [[f32; 4]; 64],
 }
 
 #[derive(Clone, Copy)]
@@ -39,6 +42,7 @@ pub struct Renderer {
     srgb: bool,
     modern_renderer: Modern,
     modern_view: bool,
+    tile_transition: bool,
 }
 
 impl Renderer {
@@ -224,6 +228,7 @@ impl Renderer {
                 srgb: format.is_srgb(),
                 modern_renderer,
                 modern_view: false,
+                tile_transition: false,
             },
             format,
         ))
@@ -237,6 +242,10 @@ impl Renderer {
             modern,
         } = view;
         self.modern_view = modern;
+        self.tile_transition = clip
+            .transition
+            .as_ref()
+            .is_some_and(|cut| time * 70.0 >= cut.start_tick as f64);
         if modern {
             self.modern_renderer
                 .resize(&self.device, &self.uniform, &self.reference, size);
@@ -257,7 +266,7 @@ impl Renderer {
         }
         for (slot, i) in [index, next].into_iter().enumerate() {
             let source = &clip.frames[i];
-            if self.field_keys[slot] != Some(source.shape_key()) {
+            if source.state.phase < 6 && self.field_keys[slot] != Some(source.shape_key()) {
                 let field = source.field();
                 self.queue.write_texture(
                     self.fields[slot].as_image_copy(),
@@ -302,6 +311,21 @@ impl Renderer {
             + frame.state.tick as f32 * 0.5
             + (time * 70.0).fract() as f32 * 0.5;
         let (plate_center, plate_rotation) = plate_transform(sequence_frame);
+        let mut transition = [0.0; 4];
+        let mut tile_order = [[0.0; 4]; 40];
+        let mut next_palette = [[0.0; 4]; 64];
+        if let Some(cut) = &clip.transition {
+            transition = [
+                (time * 70.0 - cut.start_tick as f64) as f32,
+                1.0,
+                (cut.end_tick - cut.start_tick) as f32,
+                cut.style as u32 as f32,
+            ];
+            for (i, &rank) in cut.order.iter().enumerate() {
+                tile_order[i / 4][i % 4] = rank as f32;
+            }
+            next_palette = cut.palette;
+        }
         let u = Uniforms {
             screen: [size.0 as f32, size.1 as f32, time as f32, comparison as f32],
             state: [
@@ -319,6 +343,9 @@ impl Renderer {
             flights: clip.flights,
             plate_center,
             plate_rotation,
+            transition,
+            tile_order,
+            next_palette,
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
@@ -326,7 +353,8 @@ impl Renderer {
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         if self.modern_view {
-            self.modern_renderer.draw(encoder, view, &self.bind_group);
+            self.modern_renderer
+                .draw(encoder, view, &self.bind_group, self.tile_transition);
             return;
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

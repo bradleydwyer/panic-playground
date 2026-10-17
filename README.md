@@ -47,6 +47,38 @@ For a split comparison, with the original on the left:
 cargo run --release --locked --features hires --bin panic-hd -- --modern --split
 ```
 
+To try the next transition, where squares eat away the logo screen:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --modern --transition
+```
+
+The squares curl as their edges burn inward, with moving reflections, embers
+and wisps of smoke. They use the original activation order and wipe timing.
+
+To try the falling version:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --tear
+```
+
+Here the squares peel loose like thin sheets, fall under gravity and rapidly
+burn towards their centres. Each piece lasts about half a second, with the
+original activation sequence and uninterrupted music. Both versions stop on
+the next backdrop; the following scroller hasn't had the modern treatment yet.
+
+There's also a laser-cut trial. Bright cutting points trace each square, leave
+a small attachment at the top, then sever it. The intact pieces drop directly
+away from the camera, as though we're looking down through a floor. Smoke,
+sparks and glowing cuts shift from cool blue on the left to orange on the right:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --laser --seek 17.8
+```
+
+Omit `--seek 17.8` to watch the whole intro. Add `--split` to compare with the
+original. `--laser` and `--tear` both select modern mode automatically.
+
 | Key | Action |
 | --- | --- |
 | Space | Pause or resume |
