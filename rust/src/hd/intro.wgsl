@@ -14,6 +14,12 @@ struct Controls {
 @group(0) @binding(2) var following: texture_2d<f32>;
 @group(0) @binding(3) var reference: texture_2d<f32>;
 @group(0) @binding(4) var linear: sampler;
+// The scroller's fields for this moment, rendered by scroller.wgsl's
+// glyph_field(): letters (source rows, positive inside), unused, the letters'
+// original grey, and the overlay dots.
+@group(0) @binding(7) var glyph_fields: texture_2d<f32>;
+const FIELD_EXTENT=vec2f(2.2,1.15); // scroller.wgsl
+const ROW=0.0086;                   // scroller.wgsl: world units per source row
 
 struct Vertex { @builtin(position) position: vec4f, @location(0) uv: vec2f }
 @vertex fn fullscreen(@builtin(vertex_index) index:u32)->Vertex {
@@ -104,12 +110,29 @@ struct StarVertex {
     return vec4f(output(vec3f(0.56,0.65,1.0)),alpha);
 }
 
+// Faithful HD scroller: the original backdrop (the frame without letters or
+// overlay dots, in `current`) under the original letters and dots, drawn at
+// display resolution and moving continuously. Shapes, greys and positions
+// come from the original font and tables; only the smoothing is new.
+fn scroller(p:vec2f)->vec3f {
+    let ip=clamp(vec2i(p*vec2f(320,200)),vec2i(0),vec2i(319,199));
+    var c=textureLoad(current,ip,0).rgb;
+    let s=p*vec2f(320,200);
+    let world=vec2f((s.x-160.0)*ROW*5.0/6.0,(100.0-s.y)*ROW);
+    let f=textureSampleLevel(glyph_fields,linear,world/FIELD_EXTENT*vec2f(0.5,-0.5)+0.5,0);
+    let aa=max(fwidth(f.r)*0.75,0.02);
+    c=mix(c,vec3f(f.b),smoothstep(-aa,aa,f.r));
+    let dot_aa=max(fwidth(f.a)*0.75,0.02);
+    return mix(c,vec3f(1),smoothstep(-dot_aa,dot_aa,f.a));
+}
+
 @fragment fn foreground(v:Vertex)->@location(0) vec4f {
     let p=art_uv(v.uv);
     let inside=all(p>=vec2f(0)) && all(p<=vec2f(1));
     let compare=u.screen.w>0.5 && (u.screen.w<1.5 || v.uv.x<0.5);
     if compare || u.state.x>=6.0 {
         if !inside {return vec4f(0,0,0,1);}
+        if !compare && u.state.x>=8.0 {return vec4f(output(scroller(p)),1);}
         let ip=clamp(vec2i(p*vec2f(320,200)),vec2i(0),vec2i(319,199));
         return vec4f(output(textureLoad(reference,ip,0).rgb),1);
     }

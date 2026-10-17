@@ -82,20 +82,32 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 | `--scroller` or `--scroller glass` | Selected curved glass treatment with reflective edges |
 | `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights |
 | `--scroller-lighting studio` | Steady lighting, selected by default |
+| `--scroller-layout ring` | Experimental: one tilted ring of letters instead of two rows |
+| `--faithful` | Faithful HD: the original look, with smooth letters and dots |
 
 The scroller modes include the laser transition and continue to the end of
 part 2, around 42 seconds. Omit `--seek` for the complete intro; use `--seek 18`
 to watch the tiles reveal the new scene. Add `--split` for the original on the
-left. In the app, **1 / 2 / 3** switch presets and **L** switches lighting without
-restarting the music.
+left. In the app, **1 / 2 / 3** switch presets, **L** switches lighting and
+**G** switches between rows and the ring without restarting the music.
 
-The vertical sine scroller passes in front of the lower horizontal row and
-behind the upper row, where it remains visible through the glass.
+The letters are drawn from the original font, text and sine tables, read from
+your local data when the preview starts, at the proportions of the original
+4:3 display. Both rows and the sine text move continuously at the original's
+speeds and stay in step with its timeline. On a wide screen the rows carry on
+past the edges of the 4:3 picture and curve away into the chamber. The vertical
+sine scroller passes in front of the lower row and behind the upper row, where
+it remains visible through the glass.
 
-The large lettering and sine overlay use smoothed contours from locally
-rendered reference frames. Depth, ribbon bending, materials and lighting are
-authored experiments. Glass transmission, reflections, haze and contact shadows
-are analytic approximations, not a full optical simulation.
+Depth, extrusion, the curve, materials and lighting are authored experiments.
+Glass transmission, reflections, haze and contact shadows are analytic
+approximations, not a full optical simulation.
+
+The ring is an experiment. Its front matches the upper row exactly; the same
+letters then travel round behind it and back across the far side, seen from
+behind. The original's lower row shows something a ring can't: the second copy
+of the text, read normally, revealed from its end. So the ring drops that copy,
+and the two rows remain the default.
 
 | Key | Action |
 | --- | --- |

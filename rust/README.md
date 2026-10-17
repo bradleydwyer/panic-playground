@@ -172,6 +172,8 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 cargo run --release --locked --features hires --bin panic-hd -- --scroller ribbons --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller sculpted --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller glass --seek 27
+cargo run --release --locked --features hires --bin panic-hd -- --scroller --scroller-layout ring --seek 27
+cargo run --release --locked --features hires --bin panic-hd -- --scroller --faithful --seek 27
 ```
 
 `ribbons` bends the ends of coated titanium lettering into depth. `sculpted`
@@ -179,8 +181,8 @@ keeps the same material on straight extrusions. `glass` uses the ribbon shape
 with approximate tinted transmission and reflective edges. The vertical sine
 overlay passes in front of the lower row and behind the upper row. It follows
 the ribbon curvature, with its depth crossover in the gap between rows, above
-a rippling dark chamber. The three modes share the reference frames, music
-and scene boundaries. The existing laser
+a rippling dark chamber. The three modes share the letters, music and scene
+boundaries. The existing laser
 transition reveals the chamber; the preview ends after part 2's fade.
 
 `--scroller-lighting musical` uses relative loudness and bass/treble
@@ -188,21 +190,68 @@ onsets from the original PCM. Bass pulses the blue/orange lights, their metal
 reflections and the small lettering; treble adds short white highlights.
 These are authored audio cues, not recovered tracker events. The levels adapt
 to loud passages so the response retains contrast. `--scroller-lighting studio` (default)
-holds the lights steady for material comparisons. Press **1 / 2 / 3** to change the preset and
-**L** to toggle lighting while playing or paused. `--split` compares the
+holds the lights steady for material comparisons. Press **1 / 2 / 3** to change the preset,
+**L** to toggle lighting and **G** to switch layout while playing or paused. `--split` compares the
 modern view with the locally rendered original. Omit `--seek` for the full
 intro, or use `--seek 18` to start at the transition.
 
-The GPU extrudes signed distance fields derived from the original indexed
-frames: low seven bits distinguish the large font from the background; bit 7
-contains the sine overlay. Its sparse VGA samples are joined into strokes.
-When a sine row crosses the reconstructed raster split, the modern contour
-reads that row directly from the video planes before the lower-half offset.
-This removes a periodic horizontal tear while preserving actual glyph gaps;
-the faithful scanout and original comparison remain unchanged.
-Contour smoothing deliberately rounds raster steps for the authored bevels;
-it does not recover vector artwork. Adjacent fields are interpolated at display
-time. The modern background filters the reconstruction's rapid palette cycling
+The letter shapes come from the original data, not from screen frames. When
+the clip loads, `Scroller::hd_font` reads the text, the large font (each
+character's 26 four-pixel columns through the descriptor table, exactly as
+`font()` blits them), the sine overlay's x table and its row codes. Each
+character's letter pixels become a distance field at four samples per source
+pixel, in an atlas built in memory. A small blur before the outline is traced
+rounds single-pixel stair steps; this is an interpretation of the raster, not
+recovered vector artwork. Distances are measured on the original 4:3 display,
+where a source pixel is 5/6 as wide as it is tall, so the letters keep their
+original proportions: the O is as tall as it is wide.
+
+Positions are read from the scroll counters, not the pixels
+(`Scroller::hd_scroll`). Both rows keep a strip of text columns at fixed VGA
+addresses and move the display window across it, four pixels per 70 Hz frame:
+the upper row shows the text from its start moving left, and the lower row the
+same text from its end moving right. The text holds the phrase twice, and
+part 2 ends when the upper row reaches the middle of the text (or at a music
+position), so each row shows one copy; both read normally. The lower row is the upper row run
+backwards in time, not a mirror image. The sine text is a column of 12-dot
+rows, one every four lines, moving up a line per frame; each row's x position
+comes from the table, which `overlay()` only ever reads at even words. The
+preview interpolates these positions between frames, so each frame's position
+is shown exactly when that frame appears and the text glides in between. An
+ignored test rebuilds every pixel of both rows and every overlay dot of every
+part-2 frame from these tables and positions and compares them with the
+reference. It skips two one-frame artefacts of the original's raster tricks
+that the preview doesn't reproduce: the overlay row drawn at the raster split
+with the wrong offset, and one column at the lower row's right edge when the
+window wraps.
+
+Beyond the 4:3 picture the rows continue with the text that's about to enter
+or has just left, then curve away into the chamber and fade. The overlay's
+dots are joined into blocky strokes, and its displacement follows a smooth
+curve through the table with the rounding to whole pixels smoothed out. Both
+are authored. Each frame, the GPU renders both distance fields once into a
+world-space texture; the marched letters then sample it.
+
+`--scroller-layout ring` (or **G**) is an authored experiment: one tilted ring
+of letters. Its front, at the upper row's height, shows exactly what the upper
+row shows at the centre of the picture. Going round, the same letters pass
+behind and travel right along the far side, at the lower row's height, seen
+from behind and so mirrored. They're replaced out of sight just behind the
+right-hand side, where they sink into the ring. The sine text stands inside
+the ring, so the layering matches the original: in front of the far side,
+behind the front. But a rigid ring can't show what the original lower row
+shows, the text's second copy revealed from its end and read normally. The
+far side instead repeats the first copy about three and a half seconds later.
+The two rows stay the default.
+
+`--faithful` (or **M**) shows faithful HD: the original backdrop, with the
+original letters and overlay dots drawn over it at display resolution and
+moving continuously. The letters keep the original greys from the font
+pixels, interpolated between them. The backdrop is the original picture with
+its letters replaced by the tile pattern eight pixels away, and its dots
+removed. Only the smoothing is new.
+
+The modern background filters the reconstruction's rapid palette cycling
 into a slow colour drift, then interpolates at display time. The original view
 keeps the unfiltered palette. This ambient filtering is independent of the
 musical accents and is precomputed so seeking and exports remain deterministic.
@@ -219,6 +268,9 @@ optical simulation. All fields are generated locally in memory.
 | M | Switch modern 3D / faithful HD |
 | Tab | Toggle the original rendering |
 | C | Compare original on the left with the selected HD mode on the right |
+| 1 / 2 / 3 | Scroller preset: ribbons, sculpted or glass |
+| L | Scroller lighting: studio or musical |
+| G | Scroller layout: rows or ring |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
@@ -232,7 +284,8 @@ actually be drawn. Captures never include the counter.
 
 Without `--modern`, the faithful HD mode retains the original painted artwork,
 using interpolated contours and shading. Its detail is limited by the source
-raster; it is not a replacement 3D model. `--original` displays the reference
+raster; it is not a replacement 3D model. `--faithful` selects it even with
+`--scroller` or `--transition`. `--original` displays the reference
 pixels, including the original starfield. All modes share the same timeline.
 
 The desktop renderer uses the window's native drawable resolution, including
@@ -251,14 +304,16 @@ generated images stay local, outside Git.
 
 The default HD tests use synthetic data. Separate ignored tests check the
 intro's reference pixels and PCM against the existing engine, sampled fly-by
-projection heights, and the transition's complete reference frames, audio and
-tile schedule:
+projection heights, the transition's complete reference frames, audio and
+tile schedule, and the scroller's letters and positions against every part-2
+frame:
 
 ```sh
 cargo test --release --locked --features hires
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked \
   --features hires reference_timing_audio_and_flyby_projections -- --ignored
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires transition_matches_engine_frames_audio_and_schedule -- --ignored
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires scroller_glyphs_and_positions_rebuild_every_reference_frame -- --ignored
 ```
 
 The fitted trajectories approximate the reference projection; they do not prove
