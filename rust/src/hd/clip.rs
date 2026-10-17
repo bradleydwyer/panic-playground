@@ -13,7 +13,7 @@ pub const HEIGHT: usize = 200;
 
 pub struct Frame {
     /// Intro presentation state; preview phases 6 and 7 represent the following
-    /// square wipe and backdrop hold, not additional phases inside Intro.
+    /// square wipe and backdrop hold; 8/9 are the scroller and its exit fade.
     pub state: Presentation,
     pub indices: Vec<u8>,
     pub palette: Vec<u8>,
@@ -21,6 +21,9 @@ pub struct Frame {
 
 impl Frame {
     pub fn shape_key(&self) -> (u8, usize) {
+        if self.state.phase >= 8 {
+            return (self.state.phase, self.state.frame);
+        }
         (
             self.state.phase.min(4),
             if self.state.phase >= 4 {
@@ -49,6 +52,39 @@ impl Frame {
     /// The contour is limited by the original raster; shading is newly generated
     /// at display resolution. Nothing here restores absent source artwork.
     pub fn field(&self) -> Vec<f16> {
+        if self.state.phase >= 8 {
+            // The original uses bits 0..6 for the large font/background and
+            // bit 7 for the overlaid sine text. Contours stay locally derived;
+            // extrusion, coatings and ribbon deformation are authored.
+            let large: Vec<bool> = self.indices.iter().map(|i| i & 127 < 64).collect();
+            let mut small = vec![false; WIDTH * HEIGHT];
+            // The sine overlay writes one VGA plane every four pixels/rows.
+            // Join those logical samples into continuous strokes for this
+            // authored treatment; the comparison retains the original dots.
+            for (at, &index) in self.indices.iter().enumerate() {
+                if index & 128 == 0 {
+                    continue;
+                }
+                for dy in -1..=2 {
+                    for dx in -1..=2 {
+                        let x = (at % WIDTH) as i32 + dx;
+                        let y = (at / WIDTH) as i32 + dy;
+                        if x >= 0 && x < WIDTH as i32 && y >= 0 && y < HEIGHT as i32 {
+                            small[y as usize * WIDTH + x as usize] = true;
+                        }
+                    }
+                }
+            }
+            return smooth_contour(&signed_distance(&large, WIDTH, HEIGHT), WIDTH, HEIGHT)
+                .iter()
+                .zip(smooth_contour(
+                    &signed_distance(&small, WIDTH, HEIGHT),
+                    WIDTH,
+                    HEIGHT,
+                ))
+                .flat_map(|(&a, b)| [f16::from_f32(a), f16::from_f32(b), f16::ZERO, f16::ONE])
+                .collect();
+        }
         let logo = self.state.phase >= 4;
         let mask: Vec<bool> = self
             .indices
@@ -105,6 +141,7 @@ pub struct Clip {
     pub logo_at: f64,
     pub logo_ready_at: f64,
     pub transition: Option<TileTransition>,
+    pub scroller: Option<ScrollerPreview>,
     /// Pinhole motion fitted from the locally decoded reference silhouettes:
     /// camera crossing frame, depth per frame, world x and world y.
     pub flights: [[f32; 4]; 10],
@@ -119,6 +156,52 @@ pub enum TransitionStyle {
     Laser = 2,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ScrollerStyle {
+    Ribbons = 0,
+    Sculpted = 1,
+    Glass = 2,
+}
+
+impl std::str::FromStr for ScrollerStyle {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, String> {
+        match value {
+            "ribbons" => Ok(Self::Ribbons),
+            "sculpted" => Ok(Self::Sculpted),
+            "glass" => Ok(Self::Glass),
+            _ => Err("Use --scroller ribbons, sculpted or glass".into()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollerLighting {
+    Musical,
+    Studio,
+}
+
+impl std::str::FromStr for ScrollerLighting {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, String> {
+        match value {
+            "musical" => Ok(Self::Musical),
+            "studio" => Ok(Self::Studio),
+            _ => Err("Use --scroller-lighting musical or studio".into()),
+        }
+    }
+}
+
+pub struct ScrollerPreview {
+    pub start_tick: usize,
+    pub end_tick: usize,
+    pub style: ScrollerStyle,
+    pub lighting: ScrollerLighting,
+    /// Deterministic attack/release envelope derived from the original PCM.
+    pub energy: Vec<f32>,
+}
+
 /// Schedule and destination colours read from the local Rust reconstruction.
 /// The GPU's curling surfaces, burn edges and falling motion are authored effects.
 pub struct TileTransition {
@@ -131,11 +214,11 @@ pub struct TileTransition {
 
 impl Clip {
     pub fn load(data: &Data) -> Result<Self, String> {
-        Self::load_mode(data, false)
+        Self::load_mode(data, false, false)
     }
 
     pub fn load_transition(data: &Data) -> Result<Self, String> {
-        Self::load_mode(data, true)
+        Self::load_mode(data, true, false)
     }
 
     /// Alternate material animation over exactly the same reference and audio.
@@ -152,7 +235,20 @@ impl Clip {
         Ok(clip)
     }
 
-    fn load_mode(data: &Data, extend: bool) -> Result<Self, String> {
+    pub fn load_scroller(
+        data: &Data,
+        style: ScrollerStyle,
+        lighting: ScrollerLighting,
+    ) -> Result<Self, String> {
+        let mut clip = Self::load_mode(data, true, true)?;
+        let preview = clip.scroller.as_mut().unwrap();
+        preview.style = style;
+        preview.lighting = lighting;
+        clip.transition.as_mut().unwrap().style = TransitionStyle::Laser;
+        Ok(clip)
+    }
+
+    fn load_mode(data: &Data, extend: bool, play_scroller: bool) -> Result<Self, String> {
         let mut vga = Vga::new();
         let mut intro = Intro::new(data, &mut vga)?;
         let mut music = Music::new(data)?;
@@ -186,11 +282,14 @@ impl Clip {
         }
         let logo_ready_at = (frames.len() - 1) as f64 / FRAME_RATE as f64;
         let flights = fit_flights(&frames)?;
+        let mut scroller_preview = None;
         let transition = if extend {
             // The last intro snapshot is also the first frame of part 2. Replace
             // it, rather than adding an extra frame or restarting the music.
             let logo_state = frames.pop().unwrap().state;
             let mut scroller = Scroller::new(data, &mut vga)?;
+            let mut scroll_start = 0;
+            let mut scroll_end = 0;
             let mut transition = TileTransition {
                 start_tick: 0,
                 end_tick: 0,
@@ -201,6 +300,15 @@ impl Clip {
             loop {
                 let n = frames.len();
                 let (phase, tick) = scroller.presentation();
+                if phase == 6 {
+                    break;
+                }
+                if phase == 4 && scroll_start == 0 {
+                    scroll_start = n;
+                }
+                if phase == 5 && scroll_end == 0 {
+                    scroll_end = n;
+                }
                 if phase == 1 && tick == 0 {
                     transition.start_tick = n;
                 }
@@ -227,28 +335,42 @@ impl Clip {
                             5
                         } else if phase < 3 {
                             6
-                        } else {
+                        } else if phase < 4 {
                             7
+                        } else if phase == 4 {
+                            8
+                        } else {
+                            9
                         },
+                        frame: if phase >= 4 { n } else { logo_state.frame },
                         tick,
                         ..logo_state
                     },
                     indices: vga.indices.clone(),
                     palette: vga.palette.clone(),
                 });
-                // Show the revealed backdrop for a second, before the text
-                // begins. The next scene's scrolling section is not remade yet.
-                if phase == 3 && tick == FRAME_RATE as usize {
+                // The transition-only experiment stops on the backdrop. The
+                // scroller experiment continues to the original part-2 boundary.
+                if !play_scroller && phase == 3 && tick == FRAME_RATE as usize {
                     break;
                 }
-                if n as u64 > FRAME_RATE * 60 {
-                    return Err("Tile transition exceeded its import limit".into());
+                if n as u64 > FRAME_RATE * 120 {
+                    return Err("Scroller exceeded its two-minute import limit".into());
                 }
                 scroller.step(&mut vga, music.position());
                 let n = n as u64;
                 let samples =
                     ((n + 1) * SAMPLE_RATE / FRAME_RATE - n * SAMPLE_RATE / FRAME_RATE) as usize;
                 pcm.extend(music.render(samples));
+            }
+            if play_scroller {
+                scroller_preview = Some(ScrollerPreview {
+                    start_tick: scroll_start,
+                    end_tick: scroll_end,
+                    style: ScrollerStyle::Ribbons,
+                    lighting: ScrollerLighting::Musical,
+                    energy: audio_envelope(&pcm, frames.len()),
+                });
             }
             Some(transition)
         } else {
@@ -262,6 +384,7 @@ impl Clip {
             logo_at: logo_at.ok_or("Intro never reached the logo")?,
             logo_ready_at,
             transition,
+            scroller: scroller_preview,
             flights,
         })
     }
@@ -280,9 +403,72 @@ impl Clip {
             3 => "Doors",
             6 => "Metal tile transition",
             7 => "Scroller backdrop",
+            8 => "Double scroller",
+            9 => "Scroller fade",
             _ => "Panic logo",
         }
     }
+}
+
+fn audio_envelope(pcm: &[i16], frames: usize) -> Vec<f32> {
+    let mut value = 0.0_f32;
+    (0..frames)
+        .map(|n| {
+            let a = n * SAMPLE_RATE as usize / FRAME_RATE as usize * 2;
+            let b = ((n + 1) * SAMPLE_RATE as usize / FRAME_RATE as usize * 2).min(pcm.len());
+            let samples = &pcm[a.min(b)..b];
+            let rms = (samples
+                .iter()
+                .map(|&s| (s as f32 / 32768.0).powi(2))
+                .sum::<f32>()
+                / samples.len().max(1) as f32)
+                .sqrt();
+            let target = (rms * 5.0).clamp(0.0, 1.0);
+            value += (target - value) * if target > value { 0.45 } else { 0.065 };
+            value
+        })
+        .collect()
+}
+
+/// Low-pass the locally derived contour to remove one-pixel stair steps from
+/// the new bevels. This deliberately rounds the raster; it is not a recovered
+/// vector outline. Kept separate from the faithful comparison and intro.
+fn smooth_contour(input: &[f32], width: usize, height: usize) -> Vec<f32> {
+    let weights = [1.0, 4.0, 6.0, 4.0, 1.0];
+    let mut a = input.to_vec();
+    let mut b = vec![0.0; input.len()];
+    for _ in 0..2 {
+        for y in 0..height {
+            for x in 0..width {
+                b[y * width + x] = weights
+                    .iter()
+                    .enumerate()
+                    .map(|(i, w)| {
+                        a[y * width
+                            + (x as isize + i as isize - 2).clamp(0, width as isize - 1) as usize]
+                            * w
+                            / 16.0
+                    })
+                    .sum();
+            }
+        }
+        for y in 0..height {
+            for x in 0..width {
+                a[y * width + x] = weights
+                    .iter()
+                    .enumerate()
+                    .map(|(i, w)| {
+                        b[(y as isize + i as isize - 2).clamp(0, height as isize - 1) as usize
+                            * width
+                            + x]
+                            * w
+                            / 16.0
+                    })
+                    .sum();
+            }
+        }
+    }
+    a
 }
 
 /// Fit the original FUTURE CREW fly-bys, not a replacement animation. The
@@ -439,6 +625,69 @@ pub fn signed_distance(mask: &[bool], w: usize, h: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scroller_fields_separate_font_overlay_and_background() {
+        let mut frame = Frame {
+            state: Presentation {
+                phase: 8,
+                frame: 1700,
+                tick: 0,
+                door: 76,
+            },
+            indices: vec![80; WIDTH * HEIGHT],
+            palette: vec![0; 768],
+        };
+        for y in 40..70 {
+            for x in 50..80 {
+                frame.indices[y * WIDTH + x] = 20;
+            }
+        }
+        for y in (100..124).step_by(4) {
+            for x in (120..144).step_by(4) {
+                frame.indices[y * WIDTH + x] |= 128;
+            }
+        }
+        let f = frame.field();
+        let sample = |x: usize, y: usize, channel: usize| f[(y * WIDTH + x) * 4 + channel].to_f32();
+        assert!(sample(65, 55, 0) > 0.0 && sample(65, 55, 1) < 0.0);
+        assert!(sample(130, 110, 0) < 0.0 && sample(130, 110, 1) > 0.0);
+        assert!(sample(200, 150, 0) < 0.0 && sample(200, 150, 1) < 0.0);
+        assert_eq!(frame.shape_key(), (8, 1700));
+    }
+
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
+    fn scroller_matches_complete_engine_reference_and_pcm() {
+        let data = crate::test_support::data();
+        let clip =
+            Clip::load_scroller(&data, ScrollerStyle::Ribbons, ScrollerLighting::Musical).unwrap();
+        let mut engine = crate::engine::Engine::new(data, false).unwrap();
+        let mut pcm = Vec::new();
+        for (i, frame) in clip.frames.iter().enumerate() {
+            assert_eq!(engine.video.indices, frame.indices, "pixels at {i}");
+            assert_eq!(engine.video.palette, frame.palette, "palette at {i}");
+            pcm.extend(engine.step().unwrap());
+        }
+        assert_eq!(pcm, clip.pcm);
+        assert_eq!(engine.part(), 6, "Stop exactly at the next scene boundary");
+        let scroll = clip.scroller.as_ref().unwrap();
+        assert_eq!(scroll.energy.len(), clip.frames.len());
+        assert!(
+            scroll
+                .energy
+                .iter()
+                .all(|e| e.is_finite() && (0.0..=1.0).contains(e))
+        );
+        assert_eq!(clip.frames[scroll.start_tick].state.phase, 8);
+        assert_eq!(clip.frames[scroll.end_tick].state.phase, 9);
+        println!(
+            "Scroller {:.3}–{:.3}s; {} frames and full PCM match",
+            scroll.start_tick as f64 / 70.0,
+            clip.duration(),
+            clip.frames.len()
+        );
+    }
+
     #[test]
     fn plate_tumble_is_continuous_and_lands_face_on() {
         let mut previous = plate_transform(0.0);

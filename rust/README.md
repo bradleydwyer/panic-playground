@@ -66,7 +66,7 @@ for a `data/` directory in the current directory or next to the executable.
 The output of `panic_resources.py extract` isn't enough to run the player; use
 the full importer.
 
-## Experimental HD intro
+## Experimental HD intro and scroller
 
 The `panic-hd` preview covers the opening through the PANIC logo. Build and run
 it from the repository root after importing your data:
@@ -134,9 +134,41 @@ The geometry, gravity, laser and burn treatments, and particle motion are author
 The lighting uses analytic approximations; this isn't a cloth or combustion
 simulation. The original destination is a plain light screen at this point;
 the modern view gives it a dark brushed-metal finish.
-The next scene's patterned palette and scrolling text have not been remade.
+Use `--scroller ribbons` to continue into the experimental modern scroller.
 Original/comparison mode shows the actual reference wipe, and faithful HD
 uses the original pixels during this transition.
+
+### Scroller experiments
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --scroller ribbons --seek 27
+cargo run --release --locked --features hires --bin panic-hd -- --scroller sculpted --seek 27
+cargo run --release --locked --features hires --bin panic-hd -- --scroller glass --seek 27
+```
+
+`ribbons` bends the ends of coated titanium lettering into depth. `sculpted`
+keeps the same material on straight extrusions. `glass` uses the ribbon shape
+with approximate tinted transmission and reflective edges. The sine overlay
+weaves through their depth above a rippling dark chamber. The three modes
+share the reference frames, music and scene boundaries. The existing laser
+transition reveals the chamber; the preview ends after part 2's fade.
+
+`--scroller-lighting musical` (default) drives light intensity with a smoothed
+envelope of the original PCM. `--scroller-lighting studio` holds the lights
+steady for material comparisons. Press **1 / 2 / 3** to change the preset and
+**L** to toggle lighting while playing or paused. `--split` compares the
+modern view with the locally rendered original. Omit `--seek` for the full
+intro, or use `--seek 18` to start at the transition.
+
+The GPU extrudes signed distance fields derived from the original indexed
+frames: low seven bits distinguish the large font from the background; bit 7
+contains the sine overlay. Its sparse VGA samples are joined into strokes.
+Contour smoothing deliberately rounds raster steps for the authored bevels;
+it does not recover vector artwork. Adjacent fields are interpolated at display
+time. The background colours follow the reconstruction's palette oscillator.
+Materials, ribbon bending, depth and light placement are authored. Contact
+shadows and reflections are approximations; glass is not a full multi-bounce
+optical simulation. All fields are generated locally in memory.
 
 | Key | Action |
 | --- | --- |

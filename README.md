@@ -6,14 +6,14 @@ Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
 [▶ Watch the intro on YouTube](https://youtu.be/kydoV3qX6J4)
 
-So far this covers the opening through the PANIC logo: the FUTURE CREW letters
-flying past, the tumbling block and the logo reveal. The idea is to keep the
+So far this covers the opening through the PANIC logo, the square transition,
+and experiments with the following double scroller. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky 3D
 letters, metal reflections, a starfield that ramps into warp, and a heated
 metal logo with slowly moving surface reflections.
 
 This builds on the [Rust port of Panic](https://github.com/bradleydwyer/panic).
-It's a work in progress, and only the intro has the new rendering. The original
+It's a work in progress, with modern treatments for the intro and scroller. The original
 player is included as a reference. The new letterforms and block motion are
 authored approximations, not recovered original 3D models.
 
@@ -65,7 +65,7 @@ cargo run --release --locked --features hires --bin panic-hd -- --tear
 Here the squares peel loose like thin sheets, fall under gravity and rapidly
 burn towards their centres. Each piece lasts about half a second, with the
 original activation sequence and uninterrupted music. Both versions stop on
-the next backdrop; the following scroller hasn't had the modern treatment yet.
+the next backdrop unless a scroller experiment is selected.
 
 There's also a laser-cut trial. Bright cutting points trace each square, leave
 a small attachment at the top, then sever it. The intact pieces drop directly
@@ -78,6 +78,32 @@ cargo run --release --locked --features hires --bin panic-hd -- --laser --seek 1
 
 Omit `--seek 17.8` to watch the whole intro. Add `--split` to compare with the
 original. `--laser` and `--tear` both select modern mode automatically.
+
+To continue into the scroller experiments:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --scroller ribbons --seek 27
+```
+
+| Flag | Experiment |
+| --- | --- |
+| `--scroller ribbons` | Coated titanium lettering with ends curving into depth |
+| `--scroller sculpted` | Straight extruded lettering for comparison |
+| `--scroller glass` | Curved tinted-glass treatment with reflective edges |
+| `--scroller-lighting musical` | Light intensity follows an envelope of the original audio (default) |
+| `--scroller-lighting studio` | Steady lights for inspecting shape and material |
+
+The scroller modes include the laser transition and continue to the end of
+part 2, around 42 seconds. Omit `--seek` for the complete intro; use `--seek 18`
+to watch the tiles reveal the new scene. Add `--split` for the original on the
+left. In the app, **1 / 2 / 3** switch presets and **L** switches lighting without
+restarting the music. Existing `--transition` and `--tear` can also be combined
+with `--scroller` to compare the earlier transitions.
+
+The large lettering and sine overlay use smoothed contours from locally
+rendered reference frames. Depth, ribbon bending, materials and lighting are
+authored experiments. Glass transmission, reflections, haze and contact shadows
+are analytic approximations, not a full optical simulation.
 
 | Key | Action |
 | --- | --- |

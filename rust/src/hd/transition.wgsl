@@ -4,9 +4,11 @@ struct Controls {
     screen:vec4f, state:vec4f, misc:vec4f,
     flights:array<vec4f,10>, plate_center:vec4f, plate_rotation:vec4f,
     transition:vec4f, tile_order:array<vec4f,40>, next_palette:array<vec4f,64>,
+    scroller:vec4f, scroll_light:vec4f,
 }
 @group(0) @binding(0) var<uniform> u:Controls;
 @group(0) @binding(1) var scene:texture_2d<f32>;
+@group(0) @binding(2) var next_scene:texture_2d<f32>;
 @group(0) @binding(4) var linear:sampler;
 const GRID=vec2f(16,10);
 const PI=3.14159265;
@@ -146,6 +148,7 @@ fn emission(q:vec2f,cell:vec2f,birth:f32)->vec3f {
 }
 struct Vertex { @builtin(position) position:vec4f, @location(0) uv:vec2f }
 fn base_backdrop(uv:vec2f)->vec3f {
+    if u.scroller.x>.5 {return textureSampleLevel(next_scene,linear,uv,0).rgb;}
     let xy=(uv-.5)*vec2f(u.screen.x/u.screen.y,1);
     let brush=noise(uv*vec2f(28,2800))*.65+noise(uv*vec2f(150,11000))*.35;
     var color=vec3f(.012,.020,.030)*(1.0+.12*brush);

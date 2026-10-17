@@ -2,7 +2,7 @@ use panic_demo::{
     data::Data,
     engine::SAMPLE_RATE,
     hd::{
-        clip::Clip,
+        clip::{Clip, ScrollerLighting, ScrollerStyle, TransitionStyle},
         renderer::{Renderer, View},
     },
 };
@@ -31,6 +31,8 @@ struct Options {
     transition: bool,
     tear: bool,
     laser: bool,
+    scroller: Option<ScrollerStyle>,
+    scroller_lighting: ScrollerLighting,
     seconds: Option<f64>,
 }
 impl Options {
@@ -51,6 +53,8 @@ impl Options {
             transition: false,
             tear: false,
             laser: false,
+            scroller: None,
+            scroller_lighting: ScrollerLighting::Musical,
             seconds: None,
         };
         let mut args = std::env::args().skip(1);
@@ -97,13 +101,29 @@ impl Options {
                     o.laser = true;
                     o.modern = true;
                 }
+                "--scroller" => {
+                    o.scroller = Some(
+                        args.next()
+                            .ok_or("--scroller needs ribbons, sculpted or glass")?
+                            .parse()?,
+                    );
+                    o.modern = true;
+                }
+                "--scroller-lighting" => {
+                    o.scroller_lighting = args
+                        .next()
+                        .ok_or("--scroller-lighting needs musical or studio")?
+                        .parse()?;
+                    o.scroller.get_or_insert(ScrollerStyle::Ribbons);
+                    o.modern = true;
+                }
                 "--logo" => {
                     o.seek = f64::MAX;
                     o.paused = true;
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — opening through the logo\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         3D letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the curling square burn\n  --tear           Curl, burn inward and drop squares under gravity (modern)\n  --laser          Cut, sag and release intact metal squares (modern)\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG · Esc: quit\nThe preview holds on the logo. --transition continues to the next backdrop; its scroller is not played."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         3D letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the curling square burn\n  --tear           Curl, burn inward and drop squares under gravity (modern)\n  --laser          Cut, sag and release intact metal squares (modern)\n  --scroller MODE  Continue into ribbons, sculpted or glass lettering\n  --scroller-lighting MODE  Musical (default) or studio lighting\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG · 1/2/3: scroller preset · L: lighting · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2, with the laser transition by default."
                     );
                     std::process::exit(0);
                 }
@@ -155,7 +175,9 @@ fn run() -> Result<(), String> {
     let mut o = Options::parse()?;
     let started = Instant::now();
     let data = Data::new(&o.data)?;
-    let clip = if o.laser {
+    let mut clip = if let Some(style) = o.scroller {
+        Clip::load_scroller(&data, style, o.scroller_lighting)?
+    } else if o.laser {
         Clip::load_laser(&data)?
     } else if o.tear {
         Clip::load_tear(&data)?
@@ -164,6 +186,17 @@ fn run() -> Result<(), String> {
     } else {
         Clip::load(&data)?
     };
+    if o.scroller.is_some() {
+        if o.tear {
+            clip.transition.as_mut().unwrap().style = TransitionStyle::Falling;
+        }
+        if o.transition {
+            clip.transition.as_mut().unwrap().style = TransitionStyle::Burn;
+        }
+        if o.laser {
+            clip.transition.as_mut().unwrap().style = TransitionStyle::Laser;
+        }
+    }
     o.seek = if o.seek == f64::MAX {
         clip.logo_ready_at // --logo: finished reveal, paused.
     } else {
@@ -229,7 +262,7 @@ fn run() -> Result<(), String> {
     let (mut renderer, format) = pollster::block_on(Renderer::new(&instance, Some(&surface)))?;
     println!("GPU: {}", renderer.adapter_name);
     println!(
-        "Space pause · arrows seek · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture"
+        "Space pause · arrows seek · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · 1/2/3 scroller · L lighting"
     );
     let (width, height) = window.drawable_size();
     let mut config = wgpu::SurfaceConfiguration {
@@ -320,6 +353,23 @@ fn run() -> Result<(), String> {
                     Keycode::Tab => o.comparison = if o.comparison == 1 { 0 } else { 1 },
                     Keycode::C => o.comparison = if o.comparison == 2 { 0 } else { 2 },
                     Keycode::M => o.modern = !o.modern,
+                    Keycode::Num1 | Keycode::Num2 | Keycode::Num3 => {
+                        if let Some(scroll) = &mut clip.scroller {
+                            scroll.style = match key {
+                                Keycode::Num2 => ScrollerStyle::Sculpted,
+                                Keycode::Num3 => ScrollerStyle::Glass,
+                                _ => ScrollerStyle::Ribbons,
+                            };
+                        }
+                    }
+                    Keycode::L => {
+                        if let Some(scroll) = &mut clip.scroller {
+                            scroll.lighting = match scroll.lighting {
+                                ScrollerLighting::Musical => ScrollerLighting::Studio,
+                                ScrollerLighting::Studio => ScrollerLighting::Musical,
+                            };
+                        }
+                    }
                     Keycode::S => capture = true,
                     Keycode::F => {
                         o.fullscreen = !o.fullscreen;
@@ -384,9 +434,14 @@ fn run() -> Result<(), String> {
                     }
                 }
             };
+            let preset = clip
+                .scroller
+                .as_ref()
+                .map(|s| format!(" · {:?} · {:?}", s.style, s.lighting))
+                .unwrap_or_default();
             window
                 .set_title(&format!(
-                    "Panic · {} · {time:.1}s · {w}×{h} · {mode}{}",
+                    "Panic · {}{preset} · {time:.1}s · {w}×{h} · {mode}{}",
                     clip.label(time),
                     if paused { " · Paused" } else { "" }
                 ))

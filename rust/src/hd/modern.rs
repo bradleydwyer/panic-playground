@@ -5,6 +5,7 @@ struct Targets {
     size: (u32, u32),
     scene: TextureView,
     cut_scene: TextureView,
+    scroll_scene: TextureView,
     cut_depth: TextureView,
     glow: [TextureView; 2],
     bindings: [BindGroup; 4],
@@ -14,6 +15,7 @@ pub struct Modern {
     background: RenderPipeline,
     stars: RenderPipeline,
     model: RenderPipeline,
+    scroller: RenderPipeline,
     tile_cut: RenderPipeline,
     tile_surface: RenderPipeline,
     vapor: RenderPipeline,
@@ -45,6 +47,10 @@ impl Modern {
         let cut = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("Curled metal tiles, vapor and molten sparks"),
             source: ShaderSource::Wgsl(include_str!("transition.wgsl").into()),
+        });
+        let scroll_shader = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("Experimental sculpted scroller"),
+            source: ShaderSource::Wgsl(include_str!("scroller.wgsl").into()),
         });
         let texture = |binding| BindGroupLayoutEntry {
             binding,
@@ -125,6 +131,15 @@ impl Modern {
             })
         };
         let hdr = TextureFormat::Rgba16Float;
+        let scroller = pipeline(
+            &scroll_shader,
+            scene_layout,
+            "fullscreen",
+            "scroller",
+            hdr,
+            None,
+            None,
+        );
         let additive = BlendState {
             color: BlendComponent {
                 src_factor: BlendFactor::One,
@@ -214,6 +229,7 @@ impl Modern {
         });
         let targets = Self::targets(device, &post_layout, &sampler, uniform, reference, (1, 1));
         Self {
+            scroller,
             background,
             stars,
             model,
@@ -258,6 +274,7 @@ impl Modern {
         };
         let scene = texture("HDR scene", size.0, size.1);
         let cut_scene = texture("Heated tile transition", size.0, size.1);
+        let scroll_scene = texture("Scroller beneath the tiles", size.0, size.1);
         let cut_depth = device
             .create_texture(&TextureDescriptor {
                 label: Some("Curled tile depth"),
@@ -309,7 +326,7 @@ impl Modern {
         };
         // Do not bind a render target as an input to its own pass.
         let bindings = [
-            binding(&scene, &scene),
+            binding(&scene, &scroll_scene),
             binding(&cut_scene, &cut_scene),
             binding(&glow[0], &glow[0]),
             binding(&cut_scene, &glow[1]),
@@ -318,6 +335,7 @@ impl Modern {
             size,
             scene,
             cut_scene,
+            scroll_scene,
             cut_depth,
             glow,
             bindings,
@@ -349,7 +367,26 @@ impl Modern {
         output: &TextureView,
         scene_inputs: &BindGroup,
         transition: bool,
+        scroller: bool,
     ) {
+        if scroller {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("Sculpted typography chamber"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &self.targets.scroll_scene,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::BLACK),
+                        store: StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.scroller);
+            pass.set_bind_group(0, scene_inputs, &[]);
+            pass.draw(0..3, 0..1);
+        }
         {
             let attachments = [Some(RenderPassColorAttachment {
                 view: &self.targets.scene,
