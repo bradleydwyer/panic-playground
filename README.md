@@ -122,7 +122,10 @@ has them.
 The tile wall behind the letters moves as in the original, which slides it on
 a slow looping path by changing the palette. Its position comes from the
 original's oscillator, interpolated between frames, so it glides smoothly at
-any display rate. The chrome bumps, their lighting and their reflections of
+any display rate. The wall already sways when the laser cut reveals it,
+before the original's oscillator starts: an authored lead-in that runs the
+oscillator backwards and joins the original's motion seamlessly when the
+text begins. The chrome bumps, their lighting and their reflections of
 the letters are authored. They are drawn as a dim, slightly out-of-focus
 background, blurred along the wall's motion, so the fast sway doesn't strobe.
 

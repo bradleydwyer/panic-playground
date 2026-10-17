@@ -3,7 +3,7 @@ use crate::{
     engine::{FRAME_RATE, SAMPLE_RATE},
     music::Music,
     scenes::intro::{Intro, Presentation},
-    scenes::scroller::{HdFont, HdScroll, Scroller},
+    scenes::scroller::{HdFont, HdScroll, Scroller, oscillator_unstep},
     vga::Vga,
 };
 use half::f16;
@@ -236,11 +236,13 @@ pub struct ScrollerPreview {
     /// The 8x8 background image behind palette entries 64..=127 at each frame,
     /// linear RGB, unfiltered: the image `palette()` read for that frame.
     /// Before the first call the original still shows the intro's flat grey
-    /// in those entries; the HD wall instead shows the scrolling image at
-    /// rest, so the laser reveals the same wall that then starts to move.
+    /// in those entries; the HD wall instead shows the scrolling image, so
+    /// the laser reveals the same wall, already moving (see `oscillator`).
     pub backdrop: Vec<[[f32; 4]; 64]>,
     /// The oscillator (`xx`, `yy`) of each frame's palette, in source pixels
     /// (divided by 128, the step `palette()` quantises to). See [`wall_pattern`].
+    /// Frames before the first `palette()` call hold the authored lead-in from
+    /// [`oscillator_lead_in`], not the original's (unmoving) values.
     pub oscillator: Vec<[f32; 2]>,
 }
 
@@ -339,10 +341,10 @@ impl Clip {
                 order: scroller.transition_order(),
                 palette: [[0.0; 4]; 64],
             };
-            // Intro frames come first; they never show the scroller backdrop.
-            let initial = scroller.hd_backdrop();
-            let initial = [initial.0 as f32 / 128.0, initial.1 as f32 / 128.0];
-            let mut walls = vec![(initial, None); frames.len()];
+            // The oscillator's starting state, before any palette() call. Intro
+            // frames come first; their positions come from the lead-in below.
+            let oscillator_start = scroller.hd_oscillator();
+            let mut walls = vec![([0.0; 2], None); frames.len()];
             loop {
                 let n = frames.len();
                 let (phase, tick) = scroller.presentation();
@@ -412,6 +414,14 @@ impl Clip {
                 pcm.extend(music.render(samples));
             }
             if play_scroller {
+                // Every frame before the first palette() call takes the
+                // authored lead-in, which arrives at the starting state.
+                let first = walls.iter().position(|(_, image)| image.is_some());
+                let first = first.ok_or("The scroller never set its background")?;
+                let lead_in = oscillator_lead_in(oscillator_start, first);
+                for (wall, state) in walls.iter_mut().zip(lead_in) {
+                    wall.0 = state.map(|[position, _]| position as f32 / 128.0);
+                }
                 let rest = scroller.hd_tile_image(0);
                 scroller_preview = Some(ScrollerPreview {
                     start_tick: scroll_start,
@@ -496,6 +506,25 @@ impl Clip {
             _ => "Panic logo",
         }
     }
+}
+
+/// Authored lead-in for the HD wall; not original behaviour. The original
+/// starts its background oscillator with part 2's first `palette()` call, when
+/// the text scroll begins, about 3.6 s after the laser cut starts; before
+/// that the HD wall would stand still. Instead, the `frames` frames before
+/// that call take the oscillator run backwards from its starting state
+/// (`[[xx, sx], [yy, sy]]`), one exact inverse of the original's update per
+/// frame. Element `frames - 1` is one step before the start, so the motion
+/// arrives continuously at the original's first value, with its speed, and
+/// the original's own values follow.
+pub fn oscillator_lead_in(start: [[i16; 2]; 2], frames: usize) -> Vec<[[i16; 2]; 2]> {
+    let mut state = start;
+    let mut lead_in = vec![start; frames];
+    for slot in lead_in.iter_mut().rev() {
+        state = state.map(oscillator_unstep);
+        *slot = state;
+    }
+    lead_in
 }
 
 /// 6-bit VGA DAC value to linear light, as the reference scanout expands it.
@@ -1172,6 +1201,30 @@ mod tests {
     }
 
     #[test]
+    fn oscillator_lead_in_runs_forward_into_the_starting_state() {
+        use crate::scenes::scroller::oscillator_step;
+        let start = [[0, 384], [12800, 0]];
+        let lead_in = oscillator_lead_in(start, 300);
+        assert_eq!(lead_in.len(), 300);
+        // Stepping forward through the lead-in reaches the start exactly.
+        for pair in lead_in.windows(2) {
+            assert_eq!(pair[0].map(oscillator_step), pair[1]);
+        }
+        assert_eq!(lead_in[299].map(oscillator_step), start);
+        // It keeps moving (each axis rests only where its speed passes
+        // zero), within the original's range of motion.
+        let still = lead_in.windows(2).filter(|p| p[0][0][0] == p[1][0][0]);
+        assert!(still.count() < 3);
+        assert!(
+            lead_in
+                .iter()
+                .flatten()
+                .all(|[p, _]| p.unsigned_abs() < 20_000)
+        );
+        assert!(oscillator_lead_in(start, 0).is_empty());
+    }
+
+    #[test]
     fn scroller_backdrop_options_cycle() {
         let mut backdrop: ScrollerBackdrop = "chamber".parse().unwrap();
         for expected in [
@@ -1258,6 +1311,36 @@ mod tests {
         assert_eq!(clip.audio.len(), clip.frames.len());
         assert_eq!(scroll.backdrop.len(), clip.frames.len());
         assert_eq!(scroll.oscillator.len(), clip.frames.len());
+        // The original's first palette() call is shown one frame into the
+        // scroll, at the starting state (xx 0, yy 12800). Before it, the
+        // authored lead-in runs the oscillator backwards; from it on, the
+        // values are the original's (the pixel check below). Each axis moves
+        // by its speed and the speed changes by exactly 4/128 every frame, so
+        // there is no jump or kink anywhere, including across the start.
+        let first = scroll.start_tick + 1;
+        assert_eq!(scroll.oscillator[first], [0.0, 100.0]);
+        let back = oscillator_lead_in([[0, 384], [12800, 0]], first);
+        for (i, state) in back.iter().enumerate() {
+            let position = state.map(|[p, _]| p as f32 / 128.0);
+            assert_eq!(scroll.oscillator[i], position, "lead-in at {i}");
+        }
+        for (i, w) in scroll.oscillator.windows(3).enumerate() {
+            for ((a, b), c) in w[0].iter().zip(w[1]).zip(w[2]) {
+                let accel = (c - 2.0 * b + a) * 128.0;
+                assert_eq!(accel.abs(), 4.0, "frame {}", i + 1);
+            }
+        }
+        for i in first - 3..first + 3 {
+            let [a, b] = [scroll.oscillator[i], scroll.oscillator[i + 1]];
+            println!(
+                "frame {i} ({:.3} s): x {:8.3} y {:8.3} px; speed x {:+.3} y {:+.3} px/frame",
+                i as f64 / 70.0,
+                a[0],
+                a[1],
+                b[0] - a[0],
+                b[1] - a[1]
+            );
+        }
         // The HD wall replaces the palette window with an image and an
         // oscillator position; check that they reproduce every background
         // pixel the engine displays while the wall image is shown.

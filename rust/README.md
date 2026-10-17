@@ -196,9 +196,17 @@ the hardware scroll, so the wall doesn't travel with the text. The preview
 records the oscillator and image for each frame and interpolates the position
 at display time, so the wall moves in fractions of a pixel. An ignored test
 checks that they reproduce every background pixel of the original's scroll
-frames. Until the first `palette()` call the original still shows the intro's
-flat grey there; the HD view shows the tile wall at rest instead, so the laser
-reveals the same wall that then begins to move. `chamber` shows the moving
+frames. Until the first `palette()` call, when the text scroll begins at about
+22.2 seconds, the original still shows the intro's flat grey there and its
+oscillator stands still. The HD view shows the tile wall instead, already
+moving: an authored lead-in, not original behaviour. For every frame before
+that call, the original oscillator is run backwards from its starting state
+(`xx` 0, `yy` 12800, speeds 384 and 0), one exact inverse of its update per
+frame. The laser cut, from about 18.3 seconds, reveals a wall that is already
+swaying, and the motion arrives at the original's first position with its
+speed, then continues with the original's own values: no jump or kink. The
+ignored test checks that every frame's acceleration is the oscillator's 4/128
+pixel per frame, across the start too. `chamber` shows the moving
 tiles dimly inside a dark, rippling chamber.
 
 `chrome` and `wall` are authored treatments: chrome bumps on the original tile

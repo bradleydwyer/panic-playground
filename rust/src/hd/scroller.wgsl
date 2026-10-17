@@ -301,6 +301,8 @@ fn normal(p:vec3f,material:f32)->vec3f {
 // the wall does not follow the text. Here the position is continuous: xx/128
 // and yy/128 interpolated between ticks, less half a pixel to centre the
 // original's whole-pixel steps. The image's dark seam is column 7 and row 0.
+// Before part 2's scroll starts the oscillator, the position is an authored
+// lead-in, the oscillator run backwards (clip::oscillator_lead_in).
 const WALL_Z=-.9; // The chamber plane, 6.4 from the eye.
 fn wall_scale()->f32 {return (5.5-WALL_Z)/5.5;}
 // Source-pixel image coordinate of a wall point. The 4:3 frame spans

@@ -148,10 +148,18 @@ impl Scroller {
             return (self.xx, self.yy, None);
         }
         (
-            undo_oscillator(self.xx, self.sx),
-            undo_oscillator(self.yy, self.sy),
+            oscillator_unstep([self.xx, self.sx])[0],
+            oscillator_unstep([self.yy, self.sy])[0],
             anim,
         )
+    }
+
+    /// Read-only HD view of the background oscillator's raw state,
+    /// `[[xx, sx], [yy, sy]]`: position and speed per axis. Before part 2's
+    /// first `palette()` call this is the original's starting state.
+    #[cfg(feature = "hires")]
+    pub fn hd_oscillator(&self) -> [[i16; 2]; 2] {
+        [[self.xx, self.sx], [self.yy, self.sy]]
     }
 
     /// One of the 8x8-colour background images read by `palette()` (6-bit VGA
@@ -442,12 +450,25 @@ impl Scroller {
     }
 }
 
-/// The oscillator position before one `palette()` update, from the state
-/// after it: the speed changed by 4 towards zero position after the move.
+/// One axis of `palette()`'s oscillator update, `[position, speed]`, as read
+/// from the code: the position moves by the speed (16-bit, wrapping), then the
+/// speed changes by 4 towards zero position. `palette()` itself is unchanged;
+/// the tests check this against the same update.
 #[cfg(feature = "hires")]
-fn undo_oscillator(position: i16, speed: i16) -> i16 {
+pub fn oscillator_step([position, speed]: [i16; 2]) -> [i16; 2] {
+    let position = position.wrapping_add(speed);
+    [
+        position,
+        speed.wrapping_add(if position <= 0 { 4 } else { -4 }),
+    ]
+}
+
+/// The exact inverse of [`oscillator_step`]: the speed change depends only on
+/// the new position, so it is undone first, then the move.
+#[cfg(feature = "hires")]
+pub fn oscillator_unstep([position, speed]: [i16; 2]) -> [i16; 2] {
     let speed = speed.wrapping_sub(if position <= 0 { 4 } else { -4 });
-    position.wrapping_sub(speed)
+    [position.wrapping_sub(speed), speed]
 }
 
 fn column(vga: &mut Vga, source: usize, destination: usize) {
@@ -507,14 +528,17 @@ mod tests {
     use sha2::{Digest, Sha256};
     #[cfg(feature = "hires")]
     #[test]
-    fn hd_backdrop_undoes_one_oscillator_step() {
-        // Same update as palette(), from the original starting states.
-        for (mut position, mut speed) in [(0_i16, 384_i16), (12800, 0)] {
-            for _ in 0..2000 {
-                let before = position;
+    fn oscillator_steps_match_palette_and_invert_exactly() {
+        // The same update as palette(), from the original starting states and
+        // from extremes where the 16-bit values wrap.
+        for (mut position, mut speed) in [(0_i16, 384_i16), (12800, 0), (32767, 32767), (-32768, 4)]
+        {
+            for _ in 0..4000 {
+                let before = [position, speed];
                 position = position.wrapping_add(speed);
                 speed = speed.wrapping_add(if position <= 0 { 4 } else { -4 });
-                assert_eq!(undo_oscillator(position, speed), before);
+                assert_eq!(oscillator_step(before), [position, speed]);
+                assert_eq!(oscillator_unstep([position, speed]), before);
             }
         }
     }

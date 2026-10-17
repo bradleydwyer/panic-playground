@@ -551,8 +551,9 @@ impl Renderer {
                 }
                 color[3] = 1.0;
             }
-            // The oscillator is constant outside the scroll, so blending with
-            // the following tick is always safe.
+            // The oscillator, including its authored lead-in before the
+            // scroll, moves by one update per tick, so blending with the
+            // following tick is always safe and keeps the motion blur.
             let oscillator_at = |t: f64| {
                 let i = clip.frame_index(t);
                 let [a, b] = [
