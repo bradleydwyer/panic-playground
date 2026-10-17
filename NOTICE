@@ -1,0 +1,20 @@
+Panic is a demo by Future Crew (1992). This repository is an unofficial Rust
+port, experimental modern intro and set of resource tools, and is not
+affiliated with Future Crew.
+
+The MIT License in LICENSE applies only to the standalone resource tools, their
+synthetic tests and the documentation. It does not cover rust/,
+tools/import_panic.py, tools/unpack_panic.py or the port they support; their
+rights status is still under review (see rust/NOTICE). It also does not license
+any Future Crew material: the executable, artwork, music, text, fonts or
+anything else you supply or extract.
+
+The original release credits Wildfire, Psi and Trug for code, Purple Motion
+for music, Pixel for bitmap graphics and Abyss for object design. These are
+credits, not a statement of who owns the rights today.
+
+The original PANIC.NFO allows copying the complete, unchanged release, but not
+modifying it or using its contents in other programs. See the notice that came
+with your copy. Extracting files locally doesn't give you any further rights.
+No original demo files, screenshots or recordings are included in this
+repository.

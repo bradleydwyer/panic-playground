@@ -1,0 +1,6 @@
+//! Experimental native-resolution intro. The reference timeline is retained.
+//! Modern mode uses procedural 3D geometry and HDR lighting; faithful mode
+//! interpolates the original raster contours. Neither recovers original models.
+pub mod clip;
+mod modern;
+pub mod renderer;

@@ -1,0 +1,178 @@
+# Rust player
+
+The port implements all eight scenes, played in the original order (parts 1, 2,
+6, 5, 3, 4, 7, 8), plus the STMIK sequencer and stereo sample mixer. It reads
+the original assets and the unpacked programs' data tables but never executes
+DOS code. You generate that data yourself from your own `PANIC.EXE`; none of it
+is included here.
+
+This directory is not covered by the repository's MIT License. See
+[NOTICE](NOTICE).
+
+## Setup
+
+You need Rust 1.88 or newer. The desktop build compiles SDL2 0.38.0 from
+bundled source, so it also needs CMake and a C/C++ compiler. On Linux, install
+the development packages SDL needs for your display and audio system. The
+headless build is pure Rust and needs neither SDL nor CMake.
+
+The importer needs Python, Unicorn 2.1.4, Capstone 5.0.7 and Deark. It was
+tested with Deark 1.7.3-1, revision
+`8997059c4f32af79978fb6c83be7c1c26c259afa`. To build that revision and import
+your data, run this from the repository root (you'll need Git, make and a C
+compiler):
+
+```sh
+git clone https://github.com/jsummers/deark.git artifacts/tools/deark
+git -C artifacts/tools/deark checkout 8997059c4f32af79978fb6c83be7c1c26c259afa
+make -C artifacts/tools/deark
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-import.txt
+.venv/bin/python tools/import_panic.py /path/to/PANIC.EXE \
+  --deark artifacts/tools/deark/deark --out artifacts/local-data
+```
+
+On Windows, use `.venv/Scripts/python.exe` and a Windows build of Deark.
+Everything under `artifacts/` is ignored by Git.
+
+Your `PANIC.EXE` must have SHA-256
+`a7ceeae290a7132880cd6ba616c2b0bb4001b2f7c83694f04052314fa26df6e7`.
+The importer checks the hash of every file it produces before finishing, and
+copies the demo's own notice to `files/README.TXT`. The output includes
+original program code, so keep it out of Git. Importing it doesn't give you any
+extra rights to use or share it.
+
+## Run
+
+```sh
+cargo run --release --locked -- --data artifacts/local-data
+cargo run --release --locked --no-default-features -- \
+  --headless --data artifacts/local-data
+```
+
+Escape quits, Space pauses and F toggles fullscreen. Useful options:
+
+- `--seek 180` fast-forwards to the three-minute mark before playing.
+- `--mute` silences the audio but keeps the music driving scene timing.
+- `--fallback` uses the original no-music scene schedules.
+- `--seconds 10` stops after ten seconds.
+- `--out artifacts/export` saves output there. In headless mode that's a WAV,
+  a snapshot every ten seconds and a timeline CSV; the desktop player saves a
+  screenshot of each scene and a run summary.
+- `--fullscreen` starts in fullscreen.
+
+Instead of `--data` you can set `PANIC_DATA`. With neither, the player looks
+for a `data/` directory in the current directory or next to the executable.
+The output of `panic_resources.py extract` isn't enough to run the player; use
+the full importer.
+
+## Experimental HD intro
+
+The `panic-hd` preview covers the opening through the PANIC logo. Build and run
+it from the repository root after importing your data:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --modern
+```
+
+The modern mode renders extruded geometric letters in perspective, with bevels,
+metal reflections, surface texture, ambient occlusion, HDR lighting and bloom.
+The logo moves from cool metal to incandescent metal on the right. Slow surface
+ripples and flowing texture shift its reflections like semi-liquid metal, with
+more movement at the hot end. Its starfield has 3,200 fine, round stars with
+depth, colour and luminosity variation. From 12 seconds, an authored warp ramp
+accelerates them into long, narrow radial streaks as the music builds.
+
+The opening still spells FUTURE CREW as individual letters fly past the camera.
+Their perspective motion is fitted locally to the reference frames, with a
+farther starting position, gradual fade-in and slightly translucent, thicker
+block forms. The plate also fades in, then uses a continuous quaternion tumble
+and forward motion, following the recorded sequence's two turns and approach. This is an authored
+approximation: the original Rust decoder plays stored animation frames, not 3D
+rotation equations. These are reconstructed forms, not recovered original models.
+The closing panels follow the Rust door timing directly.
+The soundtrack, cues and scene boundaries use the existing port unchanged.
+The logo appears at about 14.57 seconds; the preview holds there and ends its
+audio after another 4.91 seconds. The logo material keeps animating after the
+audio ends; Space pauses it too. End then Space lets you watch the logo directly.
+Later demo scenes are outside this preview.
+
+| Key | Action |
+| --- | --- |
+| Space | Pause or resume |
+| Left / Right | Seek one second |
+| Home / R | Replay from the start |
+| End | Pause on the finished logo |
+| M | Switch modern 3D / faithful HD |
+| Tab | Toggle the original rendering |
+| C | Compare original on the left with the selected HD mode on the right |
+| F | Toggle fullscreen |
+| S | Save a PNG to `--out`; existing files are preserved |
+| Escape | Quit |
+
+Without `--modern`, the faithful HD mode retains the original painted artwork,
+using interpolated contours and shading. Its detail is limited by the source
+raster; it is not a replacement 3D model. `--original` displays the reference
+pixels, including the original starfield. All modes share the same timeline.
+
+The desktop renderer uses the window's native drawable resolution, including
+Retina scaling. `--size` sets PNG resolution and the starting window's aspect;
+the initial window is bounded to fit a 1280 by 720 logical area. For a 4K image:
+
+```sh
+./target/release/panic-hd --modern --headless --logo --size 3840x2160 \
+  --out artifacts/intro-logo-4k.png
+```
+
+Use `--seek 5.2` instead of `--logo` to capture a fly-by. Headless HD rendering
+still requires a GPU and the `hires` build dependencies. `--data` and `PANIC_DATA`
+override the preview's default `artifacts/local-data` path. All original data and
+generated images stay local, outside Git.
+
+The default HD tests use synthetic data. A separate ignored test checks the
+intro's complete reference pixels and PCM against the existing engine, plus
+sampled fly-by projection heights:
+
+```sh
+cargo test --release --locked --features hires
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked \
+  --features hires reference_timing_audio_and_flyby_projections -- --ignored
+```
+
+The fitted trajectories approximate the reference projection; they do not prove
+the original camera or model parameters. No claim of complete reconstruction is
+made. This preview has been exercised on Apple Silicon with Metal; other GPU
+backends remain unverified.
+
+## Tests
+
+The normal suite needs no original files:
+
+```sh
+cargo test --release --locked --no-default-features
+```
+
+Tests that compare against original data or recorded reference output are
+marked `#[ignore]`. They read their inputs at run time rather than embedding
+them. To run them, point `PANIC_DATA` at your imported data and
+`PANIC_FIXTURES` at a directory containing `tests/fixtures/` and
+`testdata/567/` reference files:
+
+```sh
+PANIC_DATA=/path/to/imported-data PANIC_FIXTURES=/path/to/reference-rust \
+  cargo test --release --locked --no-default-features -- --ignored
+```
+
+The importer doesn't create those reference files, and they aren't distributed
+here. Don't commit any binary fixtures, including audio.
+
+## Timing and platform notes
+
+The player runs on a fixed 70 Hz scene timer with 16 kHz stereo audio mixed in
+512-byte blocks. Scene arithmetic and sequencing follow the original, but real
+VGA and PIT timing isn't emulated, so frame timing won't match every DOS
+machine exactly. A full headless run takes 17,442 timer steps (249.171429
+seconds).
+
+It's been tested on Apple Silicon Macs. It should build elsewhere, but display
+and audio on other platforms haven't been checked yet.

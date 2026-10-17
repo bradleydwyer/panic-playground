@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "source": {
+    "bytes": 1693874,
+    "sha256": "a7ceeae290a7132880cd6ba616c2b0bb4001b2f7c83694f04052314fa26df6e7"
+  },
+  "directory": {
+    "offset": 1693114,
+    "bytes": 756,
+    "marker": 13119424,
+    "first_resource_offset": 28562
+  },
+  "entries": [
+    {
+      "index": 0,
+      "name": "6.EXE",
+      "offset": 28562,
+      "bytes": 5317,
+      "sha256": "d6d708a9284dfab3608f2ff3bea169570ea34509a81ac496f8ffe2da40cbdaf0"
+    },
+    {
+      "index": 1,
+      "name": "README.TXT",
+      "offset": 33879,
+      "bytes": 21197,
+      "sha256": "cbaa0ae4d4e5e46298c48ee47a12c31fa899d4571198a408b78910f957b8bd42"
+    },
+    {
+      "index": 2,
+      "name": "P.P",
+      "offset": 55076,
+      "bytes": 593106,
+      "sha256": "5e0fc5b58683d98a401d2a76e8c203a4a6e516841b9eb6704932f52e384ac61b"
+    },
+    {
+      "index": 3,
+      "name": "7.EXE",
+      "offset": 648182,
+      "bytes": 30544,
+      "sha256": "6fa7f2932a3eeab29c882486ec58e0a7fa920a87fcb97b4531997dbaef66326c"
+    },
+    {
+      "index": 4,
+      "name": "MAP.U",
+      "offset": 678726,
+      "bytes": 64000,
+      "sha256": "8ce740dbec09200195db49020900b837e6c194a26699f33bd9e6928461411a76"
+    },
+    {
+      "index": 5,
+      "name": "5.EXE",
+      "offset": 742726,
+      "bytes": 11687,
+      "sha256": "ce60da79acdb68772d911d029968b2dbc421ab1802f3c10cf1829660790218a3"
+    },
+    {
+      "index": 6,
+      "name": "WINDOW.PAL",
+      "offset": 754413,
+      "bytes": 768,
+      "sha256": "e2c0c1550517de64e0e68b104266115dc52a78b30a302656cb3bd59c1a02b7c5"
+    },
+    {
+      "index": 7,
+      "name": "WINDOW.U",
+      "offset": 755181,
+      "bytes": 64000,
+      "sha256": "d2c34801466e9adb3596be83ca75bc18f10cdb5d7c45272383d5b396c2ba36d7"
+    },
+    {
+      "index": 8,
+      "name": "WELLPAL.PAL",
+      "offset": 819181,
+      "bytes": 768,
+      "sha256": "c84e06bca2c95c22dc94971b91846e5cffb5f62fe08f1d363e4a2ab35bbaf97c"
+    },
+    {
+      "index": 9,
+      "name": "DEP.U",
+      "offset": 819949,
+      "bytes": 64000,
+      "sha256": "818edbd1b09e5c528cff69564f8b39c737599a5b10bc60eabb374d3c32caa756"
+    },
+    {
+      "index": 10,
+      "name": "PAL.PAL",
+      "offset": 883949,
+      "bytes": 768,
+      "sha256": "1aaf31142f13445fe3256ab4181c871edbce0555cd3b763cb5d88b095e1a28bd"
+    },
+    {
+      "index": 11,
+      "name": "MAP.PAL",
+      "offset": 884717,
+      "bytes": 768,
+      "sha256": "a9031dbd91652240602be7142bf01989841fc882d07287e4d748157d134a97c0"
+    },
+    {
+      "index": 12,
+      "name": "3.EXE",
+      "offset": 885485,
+      "bytes": 36077,
+      "sha256": "4abf603e32be58511718594a1a7ea50a151967bea5692b7073da0ec7731ed341"
+    },
+    {
+      "index": 13,
+      "name": "M.SIN",
+      "offset": 921562,
+      "bytes": 512,
+      "sha256": "2265737ddfc9757160447e3375b5ff167ef580a80ca3f5d34e9c9d30aff933bc"
+    },
+    {
+      "index": 14,
+      "name": "M.SUM",
+      "offset": 922074,
+      "bytes": 32604,
+      "sha256": "a9631553834ff0e7850e4666780bdd3e9fe3702fa828295ab96cc3cbdf160e79"
+    },
+    {
+      "index": 15,
+      "name": "M.DAT",
+      "offset": 954678,
+      "bytes": 65000,
+      "sha256": "0decb8adb9244a77a28e04a98a4256979ad1a5afdecd77f99a34778c7e59db7f"
+    },
+    {
+      "index": 16,
+      "name": "8.EXE",
+      "offset": 1019678,
+      "bytes": 26366,
+      "sha256": "fa2b2c50c81a005d329aa239882ca62bdca343c9017f6f6464f379ddaa28a192"
+    },
+    {
+      "index": 17,
+      "name": "SINI2.DAT",
+      "offset": 1046044,
+      "bytes": 4096,
+      "sha256": "e32f08e3e7725fdab48f3318632192464f35bfe02beb5fe33603e87657d59ca4"
+    },
+    {
+      "index": 18,
+      "name": "2.EXE",
+      "offset": 1050140,
+      "bytes": 40713,
+      "sha256": "19e9963c7ea5b96af321db587b0b1aa8624605f57488881f518e0b20c8fcb698"
+    },
+    {
+      "index": 19,
+      "name": "PSTART.U",
+      "offset": 1090853,
+      "bytes": 64000,
+      "sha256": "877cfa9174d4aec857a290cddf237f92356031a03aa5c3b7715ce6981928cfdd"
+    },
+    {
+      "index": 20,
+      "name": "PSTART.PAL",
+      "offset": 1154853,
+      "bytes": 768,
+      "sha256": "28de1c2c2d26fbbbe734de926b195de63aabcab0fbfadbe70b3591ebf7026cbe"
+    },
+    {
+      "index": 21,
+      "name": "PBUF1.PRE",
+      "offset": 1155621,
+      "bytes": 55000,
+      "sha256": "5e2132b3b22f66773ab5527f51ba14b46b182011372929444c672cf4d7c65cb8"
+    },
+    {
+      "index": 22,
+      "name": "PBUF2.PRE",
+      "offset": 1210621,
+      "bytes": 55000,
+      "sha256": "09be89a3ffaf400a7838906d39440d1386f115748a687c9b015838b1c177393a"
+    },
+    {
+      "index": 23,
+      "name": "TRUG_0.MAP",
+      "offset": 1265621,
+      "bytes": 64000,
+      "sha256": "03c9fad9e107eb3b23666f4063c983987092439f942fc9cb43aa31adb4dd65d0"
+    },
+    {
+      "index": 24,
+      "name": "TRUG_1.MAP",
+      "offset": 1329621,
+      "bytes": 64000,
+      "sha256": "748081315ed0faf262e97c34937b8084914761fe08cfe341c34abfff32c4bfe2"
+    },
+    {
+      "index": 25,
+      "name": "TRUG_2.MAP",
+      "offset": 1393621,
+      "bytes": 64000,
+      "sha256": "d6d6192bc7466abe2332fa43d8e608cb750777924f67bbdc6e6a0a340dfd927f"
+    },
+    {
+      "index": 26,
+      "name": "TRUG_3.MAP",
+      "offset": 1457621,
+      "bytes": 64000,
+      "sha256": "67e1059bd567ae7958d03cf4576058dfbbd7ecbe792d9eb46c56c470390893e9"
+    },
+    {
+      "index": 27,
+      "name": "MONSTER.U",
+      "offset": 1521621,
+      "bytes": 64000,
+      "sha256": "47ea1ec93a1e78fc0b36aae1ea6180cdcbd2564cb37f685ff1898bcf0c3304d6"
+    },
+    {
+      "index": 28,
+      "name": "MONSTER.PAL",
+      "offset": 1585621,
+      "bytes": 768,
+      "sha256": "78ee356861fc8f97c3aff43cbd96286e5c3dcc12d18dd024fb9a1b8c0edb3fac"
+    },
+    {
+      "index": 29,
+      "name": "1.EXE",
+      "offset": 1586389,
+      "bytes": 79982,
+      "sha256": "4bf13b9e31588a04e89a99d8af9957fb899ca2dc85b7e7cc64bf63f455cd4795"
+    },
+    {
+      "index": 30,
+      "name": "4.EXE",
+      "offset": 1666371,
+      "bytes": 26743,
+      "sha256": "7fa4c16258000be55bb2e4ea0d0c6c0ea97112fc45d9e07e3ebebe7ae0cc25a3"
+    }
+  ],
+  "release_archive": {
+    "name": "panic.zip",
+    "bytes": 907563,
+    "sha256": "0399c0e923691621e81c99f1a70a8339b4288652290682bef2c191482fb3e75b",
+    "source_url": "https://archive.scene.org/pub/parties/1992/theparty92/demo/panic.zip"
+  },
+  "release_notice": {
+    "name": "PANIC.NFO",
+    "bytes": 21248,
+    "sha256": "85907b4cf03db433ea8693aea9fee11284bd6c30a6a12a7defa8ce99b75407e0"
+  },
+  "evidence_basis": "Observed byte ranges and hashes of the unchanged public-release carrier. No payload bytes are included. Marker semantics and full resource formats remain outside this inventory."
+}

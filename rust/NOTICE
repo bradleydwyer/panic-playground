@@ -1,0 +1,13 @@
+This directory contains a Rust port of Future Crew's Panic, written by reverse
+engineering the original and testing against its machine code. It is not a
+clean-room implementation and has not been cleared for public release.
+
+The repository's MIT License does not apply to this directory or to the import
+and unpacking scripts tools/import_panic.py and tools/unpack_panic.py. No
+licence over Future Crew material is granted. Whether the port can be freely
+redistributed is still under review.
+
+Original assets, unpacked executables and binary test fixtures are not included.
+You must supply or generate them locally, under the terms of the original
+release. Dependencies are fetched by Cargo, not bundled here, and remain under
+their own licences.
