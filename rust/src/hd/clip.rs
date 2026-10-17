@@ -198,17 +198,60 @@ impl std::str::FromStr for ScrollerLighting {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ScrollerBackdrop {
+    /// The dark chamber, with the original tile wall faintly visible in it.
+    Chamber = 0,
+    /// Authored chrome bumps on the original tile grid, tinted by the tile image.
+    Wall = 1,
+    /// The same bumps as plain chrome.
+    Chrome = 2,
+}
+
+impl ScrollerBackdrop {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Chamber => Self::Wall,
+            Self::Wall => Self::Chrome,
+            Self::Chrome => Self::Chamber,
+        }
+    }
+}
+
+impl std::str::FromStr for ScrollerBackdrop {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, String> {
+        match value {
+            "chamber" => Ok(Self::Chamber),
+            "wall" => Ok(Self::Wall),
+            "chrome" => Ok(Self::Chrome),
+            _ => Err("Use --scroller-backdrop chamber, wall or chrome".into()),
+        }
+    }
+}
+
 pub struct ScrollerPreview {
     pub start_tick: usize,
     pub end_tick: usize,
     pub style: ScrollerStyle,
     pub lighting: ScrollerLighting,
+    pub backdrop_style: ScrollerBackdrop,
+    /// Authored bump profile for the wall backdrops: 0 is a low rounded
+    /// square close to the original tile, 1 a hemisphere.
+    pub wall_shape: f32,
     /// Authored lighting controls from PCM: relative level, bass and treble onsets.
     /// Precomputed on the audio timeline so seeking and exports agree.
     pub audio: Vec<[f32; 3]>,
-    /// Modern ambient palette with the rapid original cycling filtered out.
-    /// Reference frames retain the original palette, including its alternating phase.
+    /// The 8x8 background image behind palette entries 64..=127 at each frame,
+    /// linear RGB, unfiltered: the image `palette()` read for that frame.
+    /// Before the first call the original still shows the intro's flat grey
+    /// in those entries; the HD wall instead shows the scrolling image at
+    /// rest, so the laser reveals the same wall that then starts to move.
     pub backdrop: Vec<[[f32; 4]; 64]>,
+    /// The oscillator (`xx`, `yy`) of each frame's palette, in source pixels
+    /// (divided by 128, the step `palette()` quantises to). See [`wall_pattern`].
+    pub oscillator: Vec<[f32; 2]>,
 }
 
 /// Schedule and destination colours read from the local Rust reconstruction.
@@ -292,6 +335,10 @@ impl Clip {
                 order: scroller.transition_order(),
                 palette: [[0.0; 4]; 64],
             };
+            // Intro frames come first; they never show the scroller backdrop.
+            let initial = scroller.hd_backdrop();
+            let initial = [initial.0 as f32 / 128.0, initial.1 as f32 / 128.0];
+            let mut walls = vec![(initial, None); frames.len()];
             loop {
                 let n = frames.len();
                 let (phase, tick) = scroller.presentation();
@@ -313,13 +360,7 @@ impl Clip {
                 if phase == 3 && tick == 0 {
                     for (i, color) in transition.palette.iter_mut().enumerate() {
                         for (channel, c) in color[..3].iter_mut().enumerate() {
-                            let v = vga.palette[(64 + i) * 3 + channel] & 63;
-                            let srgb = ((v << 2) | (v >> 4)) as f32 / 255.0;
-                            *c = if srgb <= 0.04045 {
-                                srgb / 12.92
-                            } else {
-                                ((srgb + 0.055) / 1.055).powf(2.4)
-                            };
+                            *c = vga_linear(vga.palette[(64 + i) * 3 + channel]);
                         }
                         color[3] = 1.0;
                     }
@@ -345,6 +386,13 @@ impl Clip {
                     palette: vga.palette.clone(),
                     scroller_seam: scroller.hd_overlay_seam(&vga),
                 });
+                if play_scroller {
+                    let (xx, yy, anim) = scroller.hd_backdrop();
+                    walls.push((
+                        [xx as f32 / 128.0, yy as f32 / 128.0],
+                        anim.map(|anim| scroller.hd_tile_image(anim)),
+                    ));
+                }
                 // The transition-only experiment stops on the backdrop. The
                 // scroller experiment continues to the original part-2 boundary.
                 if !play_scroller && phase == 3 && tick == FRAME_RATE as usize {
@@ -360,13 +408,24 @@ impl Clip {
                 pcm.extend(music.render(samples));
             }
             if play_scroller {
+                let rest = scroller.hd_tile_image(0);
                 scroller_preview = Some(ScrollerPreview {
                     start_tick: scroll_start,
                     end_tick: scroll_end,
                     style: ScrollerStyle::Glass,
                     lighting: ScrollerLighting::Studio,
+                    backdrop_style: ScrollerBackdrop::Chamber,
+                    wall_shape: 0.5,
                     audio: audio_lighting(&pcm, frames.len()),
-                    backdrop: backdrop_palettes(&frames, scroll_start, transition.palette),
+                    backdrop: walls
+                        .iter()
+                        .map(|(_, image)| {
+                            image
+                                .unwrap_or(rest)
+                                .map(|[r, g, b]| [vga_linear(r), vga_linear(g), vga_linear(b), 1.0])
+                        })
+                        .collect(),
+                    oscillator: walls.iter().map(|&(position, _)| position).collect(),
                 });
             }
             Some(transition)
@@ -429,40 +488,30 @@ impl Clip {
     }
 }
 
-fn backdrop_palettes(
-    frames: &[Frame],
-    start: usize,
-    initial: [[f32; 4]; 64],
-) -> Vec<[[f32; 4]; 64]> {
-    // The reconstructed palette changes phase on alternating ticks. Feeding
-    // those values straight to an HD backdrop aliases against the display rate.
-    // Two 120 ms low-pass stages retain its slow colour drift without shimmer.
-    // Filtering is on the source timeline, never on wall time or GPU history.
-    let alpha = 1.0 - (-1.0 / (FRAME_RATE as f32 * 0.12)).exp();
-    let mut first = initial;
-    let mut second = initial;
-    frames
-        .iter()
-        .enumerate()
-        .map(|(n, frame)| {
-            if n >= start {
-                for i in 0..64 {
-                    for channel in 0..3 {
-                        let v = frame.palette[(64 + i) * 3 + channel] & 63;
-                        let srgb = ((v << 2) | (v >> 4)) as f32 / 255.0;
-                        let linear = if srgb <= 0.04045 {
-                            srgb / 12.92
-                        } else {
-                            ((srgb + 0.055) / 1.055).powf(2.4)
-                        };
-                        first[i][channel] += (linear - first[i][channel]) * alpha;
-                        second[i][channel] += (first[i][channel] - second[i][channel]) * alpha;
-                    }
-                }
-            }
-            second
-        })
-        .collect()
+/// 6-bit VGA DAC value to linear light, as the reference scanout expands it.
+fn vga_linear(v: u8) -> f32 {
+    let v = v & 63;
+    let srgb = ((v << 2) | (v >> 4)) as f32 / 255.0;
+    if srgb <= 0.04045 {
+        srgb / 12.92
+    } else {
+        ((srgb + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Image coordinate of a background pixel. Read from the code: the page is
+/// filled with index `64 + 8 * ((row + 6) & 7) + (x & 7)`, displayed one row
+/// down, and `palette()` loads entry `64 + 8 * r + c` from image cell
+/// `(y + r, x' + c)`, with `x = (xx >> 7) & 7`, `y = (yy >> 7) & 7` and
+/// `x' = x + 4 * parity`. The parity term cancels the half tile that the
+/// 4-pixel hardware scroll moves the page on alternate frames, and the lower
+/// band's split offset is always a whole tile, so every screen pixel
+/// `(sx, sy)` shows image cell `((sy + 7 + y) & 7, (sx + 4 + x) & 7)` in both
+/// bands. The ignored engine test checks this against every scroll frame.
+pub fn wall_pattern(sx: usize, sy: usize, oscillator: [f32; 2]) -> usize {
+    let x = (oscillator[0] * 128.0) as i32 >> 7;
+    let y = (oscillator[1] * 128.0) as i32 >> 7;
+    (((sy as i32 + 7 + y) & 7) * 8 + ((sx as i32 + 4 + x) & 7)) as usize
 }
 
 fn audio_lighting(pcm: &[i16], frames: usize) -> Vec<[f32; 3]> {
@@ -830,32 +879,35 @@ mod tests {
     }
 
     #[test]
-    fn backdrop_filters_alternating_palette_but_tracks_a_sustained_change() {
-        let frames: Vec<_> = (0..210)
-            .map(|n| Frame {
-                state: Presentation {
-                    phase: 8,
-                    frame: n,
-                    tick: 0,
-                    door: 76,
-                },
-                indices: vec![],
-                palette: vec![if n < 140 && n % 2 == 0 { 0 } else { 63 }; 768],
-                scroller_seam: None,
-            })
-            .collect();
-        let filtered = backdrop_palettes(&frames, 0, [[0.0, 0.0, 0.0, 1.0]; 64]);
-        assert!((filtered[138][0][0] - filtered[139][0][0]).abs() < 0.005);
-        assert!((filtered[139][0][0] - 0.5).abs() < 0.01);
-        assert!(
-            filtered[209][0][0] > 0.995,
-            "Sustained colours must come through"
-        );
+    fn wall_pattern_follows_whole_oscillator_pixels() {
+        // Pixel (0, 0) shows image cell (7, 4) at rest.
+        assert_eq!(wall_pattern(0, 0, [0.0, 0.0]), 7 * 8 + 4);
+        // Fractions of a pixel don't move the original; whole ones do.
+        assert_eq!(wall_pattern(0, 0, [0.99, 0.5]), 7 * 8 + 4);
+        assert_eq!(wall_pattern(0, 0, [1.0, 1.0]), 5);
+        // Negative positions round down, as the arithmetic shift does.
+        assert_eq!(wall_pattern(0, 0, [-0.5, -1.0 / 128.0]), 6 * 8 + 3);
+        // The image repeats every 8 pixels in both directions.
         assert_eq!(
-            frames[138].palette[192], 0,
-            "Reference palette remains unfiltered"
+            wall_pattern(13, 21, [-37.25, 99.0]),
+            wall_pattern(13 + 8, 21 + 16, [-37.25, 99.0])
         );
-        assert_eq!(filtered[209][0][3], 1.0);
+    }
+
+    #[test]
+    fn scroller_backdrop_options_cycle() {
+        let mut backdrop: ScrollerBackdrop = "chamber".parse().unwrap();
+        for expected in [
+            ScrollerBackdrop::Wall,
+            ScrollerBackdrop::Chrome,
+            ScrollerBackdrop::Chamber,
+        ] {
+            backdrop = backdrop.next();
+            assert_eq!(backdrop, expected);
+        }
+        assert_eq!("wall".parse(), Ok(ScrollerBackdrop::Wall));
+        assert_eq!("chrome".parse(), Ok(ScrollerBackdrop::Chrome));
+        assert!("balls".parse::<ScrollerBackdrop>().is_err());
     }
 
     #[test]
@@ -960,6 +1012,41 @@ mod tests {
         let scroll = clip.scroller.as_ref().unwrap();
         assert_eq!(scroll.audio.len(), clip.frames.len());
         assert_eq!(scroll.backdrop.len(), clip.frames.len());
+        assert_eq!(scroll.oscillator.len(), clip.frames.len());
+        // The HD wall replaces the palette window with an image and an
+        // oscillator position; check that they reproduce every background
+        // pixel the engine displays while the wall image is shown.
+        let (mut checked, mut seam) = (0, 0);
+        for (i, frame) in clip.frames.iter().enumerate() {
+            // The first scroll frame still shows the intro's grey entries.
+            if frame.state.phase < 8 || i == scroll.start_tick {
+                continue;
+            }
+            for (at, &index) in frame.indices.iter().enumerate() {
+                if !(64..128).contains(&index) {
+                    continue;
+                }
+                let (x, y) = (at % WIDTH, at / WIDTH);
+                let cell = wall_pattern(x, y, scroll.oscillator[i]);
+                let same = (0..3).all(|channel| {
+                    vga_linear(frame.palette[index as usize * 3 + channel])
+                        == scroll.backdrop[i][cell][channel]
+                });
+                // Once per 80 frames the split carries the lower band's last
+                // byte column into the next page row: a one-frame, 4-pixel
+                // seam at the right edge that the HD wall does not reproduce.
+                if !same {
+                    assert!(
+                        x >= 316 && y >= 100,
+                        "background pixel {x},{y} at frame {i}"
+                    );
+                    seam += 1;
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 10_000_000, "checked {checked} pixels");
+        assert!(seam < checked / 10_000, "{seam} right-edge seam pixels");
         assert!(
             scroll
                 .audio

@@ -57,6 +57,45 @@ impl Scroller {
         }))
     }
 
+    /// Read-only HD view of the background oscillator. Returns the `xx`, `yy`
+    /// values that the most recent `palette()` call used, which is what the
+    /// current palette shows, and that call's image index (0 while scrolling,
+    /// 1..=6 during the exit fade). Before the first call the values are the
+    /// ones the first call will use and the image index is `None`: the
+    /// displayed entries 64..=127 are then still the earlier palette.
+    ///
+    /// `palette()` advances the oscillator after reading it, so the values are
+    /// recovered by undoing that one update. Nothing here changes state.
+    #[cfg(feature = "hires")]
+    pub fn hd_backdrop(&self) -> (i16, i16, Option<usize>) {
+        let anim = match self.phase {
+            4 if self.forward > 1 => Some(0),
+            5 | 6 => Some(self.tick.saturating_sub(1) / 2 + 1),
+            _ => None,
+        };
+        if anim.is_none() {
+            return (self.xx, self.yy, None);
+        }
+        (
+            undo_oscillator(self.xx, self.sx),
+            undo_oscillator(self.yy, self.sy),
+            anim,
+        )
+    }
+
+    /// One of the 8x8-colour background images read by `palette()` (6-bit VGA
+    /// RGB). In the local data each 16x16 source image repeats this 8x8 block,
+    /// so the 8x8 palette window equals this image rotated by the window
+    /// position; see `hd::clip` for the screen mapping that follows.
+    #[cfg(feature = "hires")]
+    pub fn hd_tile_image(&self, anim: usize) -> [[u8; 3]; 64] {
+        let offset = word(&self.memory, 0x4c9f2 + 2 * anim) as usize * 768;
+        std::array::from_fn(|i| {
+            let at = offset + 48 * (i / 8) + 3 * (i % 8);
+            std::array::from_fn(|k| self.memory[0x14130 + ((at + k) & 65535)])
+        })
+    }
+
     #[cfg(feature = "hires")]
     pub fn transition_order(&self) -> [u16; 160] {
         let mut order = [0; 160];
@@ -332,6 +371,14 @@ impl Scroller {
     }
 }
 
+/// The oscillator position before one `palette()` update, from the state
+/// after it: the speed changed by 4 towards zero position after the move.
+#[cfg(feature = "hires")]
+fn undo_oscillator(position: i16, speed: i16) -> i16 {
+    let speed = speed.wrapping_sub(if position <= 0 { 4 } else { -4 });
+    position.wrapping_sub(speed)
+}
+
 fn column(vga: &mut Vga, source: usize, destination: usize) {
     for row in 0..80 {
         for plane in &mut vga.planes {
@@ -387,6 +434,20 @@ fn glyph(code: u8, x: usize) -> bool {
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+    #[cfg(feature = "hires")]
+    #[test]
+    fn hd_backdrop_undoes_one_oscillator_step() {
+        // Same update as palette(), from the original starting states.
+        for (mut position, mut speed) in [(0_i16, 384_i16), (12800, 0)] {
+            for _ in 0..2000 {
+                let before = position;
+                position = position.wrapping_add(speed);
+                speed = speed.wrapping_add(if position <= 0 { 4 } else { -4 });
+                assert_eq!(undo_oscillator(position, speed), before);
+            }
+        }
+    }
+
     #[test]
     #[ignore = "requires locally supplied PANIC_DATA and PANIC_FIXTURES; run with --ignored"]
     fn every_plane_matches_original_transition_and_1520_frames() {

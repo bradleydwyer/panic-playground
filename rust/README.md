@@ -183,6 +183,33 @@ a rippling dark chamber. The three modes share the reference frames, music
 and scene boundaries. The existing laser
 transition reveals the chamber; the preview ends after part 2's fade.
 
+`--scroller-backdrop` selects the background: `chamber` (default), `wall` or
+`chrome`. Press **B** to cycle them while playing. The original's background
+is one 8 by 8 pixel tile repeated across the screen. Every tile uses the same
+64 palette entries, and each frame `palette()` loads them from an 8 by 8 window
+of a tile image, so the whole wall slides as the window moves. Two oscillators
+(`xx`, `yy`) move the window about ±144 pixels across every 5.5 seconds and
+±100 pixels down every 4.6 seconds. Alternate frames add half a tile to cancel
+the hardware scroll, so the wall doesn't travel with the text. The preview
+records the oscillator and image for each frame and interpolates the position
+at display time, so the wall moves in fractions of a pixel. An ignored test
+checks that they reproduce every background pixel of the original's scroll
+frames. Until the first `palette()` call the original still shows the intro's
+flat grey there; the HD view shows the tile wall at rest instead, so the laser
+reveals the same wall that then begins to move. `chamber` shows the moving
+tiles dimly inside the dark chamber.
+
+`wall` and `chrome` are trial treatments: chrome bumps on the original tile
+grid, 40 by 25 tiles in the 4:3 frame, continued across the wide screen.
+`wall` tints them with the tile image; `chrome` leaves them plain. `--wall-shape`
+(0 to 1, default 0.5; **[** and **]** in steps of 0.1) runs from a low cushion
+that fills the tile, like the original's shaded square, to a round hemisphere.
+Each pixel intersects the bumps it can reach analytically, with four samples
+per pixel. The bumps reflect a studio surround, the letters' lamps, the letters
+themselves (by a short march through their distance field) and one bounce off
+neighbouring bumps. The glass letters show the wall behind them. All of this
+is authored, not recovered from the original.
+
 `--scroller-lighting musical` uses relative loudness and bass/treble
 onsets from the original PCM. Bass pulses the blue/orange lights, their metal
 reflections and the small lettering; treble adds short white highlights.
@@ -202,10 +229,8 @@ This removes a periodic horizontal tear while preserving actual glyph gaps;
 the faithful scanout and original comparison remain unchanged.
 Contour smoothing deliberately rounds raster steps for the authored bevels;
 it does not recover vector artwork. Adjacent fields are interpolated at display
-time. The modern background filters the reconstruction's rapid palette cycling
-into a slow colour drift, then interpolates at display time. The original view
-keeps the unfiltered palette. This ambient filtering is independent of the
-musical accents and is precomputed so seeking and exports remain deterministic.
+time. The tile wall's oscillator and image are precomputed per frame, so
+seeking and exports remain deterministic.
 Materials, ribbon bending, depth and light placement are authored. Contact
 shadows and reflections are approximations; glass is not a full multi-bounce
 optical simulation. All fields are generated locally in memory.
@@ -221,6 +246,10 @@ optical simulation. All fields are generated locally in memory.
 | C | Compare original on the left with the selected HD mode on the right |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
+| 1 / 2 / 3 | Scroller preset: ribbons, sculpted, glass |
+| L | Toggle scroller lighting |
+| B | Cycle the scroller backdrop |
+| [ / ] | Bump shape for the wall backdrops |
 | P | Show or hide the frame-rate counter |
 | V | Toggle vsync |
 | Escape | Quit |

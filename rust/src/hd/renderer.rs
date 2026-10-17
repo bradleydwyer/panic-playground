@@ -27,6 +27,10 @@ struct Uniforms {
     plate_open_rotation: [f32; 4],
     /// On-screen counter: shown, frames per second, milliseconds per frame.
     hud: [f32; 4],
+    /// Scroller background: oscillator `xx / 128` and `yy / 128` interpolated
+    /// between ticks, backdrop style (0 chamber, 1 wall, 2 chrome) and the
+    /// authored bump shape.
+    backdrop: [f32; 4],
 }
 
 /// Authored exposure for the modern renderer's motion blur, in sequence
@@ -270,7 +274,12 @@ impl Renderer {
         } = view;
         self.hud_visible = hud.is_some();
         self.modern_view = modern;
-        self.scroller = clip.scroller.is_some();
+        // The scroller scene is first seen through the laser cut.
+        self.scroller = clip.scroller.is_some()
+            && clip
+                .transition
+                .as_ref()
+                .is_some_and(|cut| time * 70.0 >= cut.start_tick as f64);
         self.tile_transition = clip.transition.as_ref().is_some_and(|cut| {
             time * 70.0 >= cut.start_tick as f64 && time * 70.0 < cut.end_tick as f64 + 78.0
         });
@@ -367,6 +376,7 @@ impl Renderer {
         }
         let mut scroller = [0.0; 4];
         let mut scroll_light = [0.0; 4];
+        let mut backdrop = [0.0; 4];
         if let Some(scroll) = &clip.scroller {
             scroller = [
                 1.0,
@@ -388,15 +398,22 @@ impl Renderer {
                 audio[1],
                 audio[2],
             ];
-            if frame.state.phase >= 8 {
-                for (i, color) in next_palette.iter_mut().enumerate() {
-                    for (channel, c) in color[..3].iter_mut().enumerate() {
-                        *c = scroll.backdrop[index][i][channel] * (1.0 - mix)
-                            + scroll.backdrop[next][i][channel] * mix;
-                    }
-                    color[3] = 1.0;
+            // The scroller replaces the transition's palette with its
+            // background image; mix only blends during the exit fade.
+            for (i, color) in next_palette.iter_mut().enumerate() {
+                for (channel, c) in color[..3].iter_mut().enumerate() {
+                    *c = scroll.backdrop[index][i][channel] * (1.0 - mix)
+                        + scroll.backdrop[next][i][channel] * mix;
                 }
+                color[3] = 1.0;
             }
+            let [a, b] = [scroll.oscillator[index], scroll.oscillator[next]];
+            backdrop = [
+                a[0] + (b[0] - a[0]) * mix,
+                a[1] + (b[1] - a[1]) * mix,
+                scroll.backdrop_style as u32 as f32,
+                scroll.wall_shape,
+            ];
         }
         let u = Uniforms {
             screen: [size.0 as f32, size.1 as f32, time as f32, comparison as f32],
@@ -424,6 +441,7 @@ impl Renderer {
             plate_open_center,
             plate_open_rotation,
             hud: hud.map_or([0.0; 4], |[fps, ms]| [1.0, fps, ms, 0.0]),
+            backdrop,
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
