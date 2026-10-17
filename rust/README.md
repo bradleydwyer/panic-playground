@@ -204,11 +204,18 @@ grid, 40 by 25 tiles in the 4:3 frame, continued across the wide screen.
 `wall` tints them with the tile image; `chrome` leaves them plain. `--wall-shape`
 (0 to 1, default 0.5; **[** and **]** in steps of 0.1) runs from a low cushion
 that fills the tile, like the original's shaded square, to a round hemisphere.
-Each pixel intersects the bumps it can reach analytically, with four samples
-per pixel. The bumps reflect a studio surround, the letters' lamps, the letters
-themselves (by a short march through their distance field) and one bounce off
-neighbouring bumps. The glass letters show the wall behind them. All of this
-is authored, not recovered from the original.
+Each sample intersects the bumps it can reach analytically. A dense, bright
+grid moving this fast reads as op art, so the wall is treated as a defocused
+background: eight samples per pixel spread over a small disc and over a
+1/100 s exposure blur it along the oscillator's own motion. The metal is rough,
+with broad, dim reflections of a studio surround and the letters' lamps, and
+its relief is pulled towards a flat tile's level. A vignette and darker bands
+behind the two text rows keep the letters the brightest thing on screen.
+Softened reflections of the letters themselves come from a short march through
+their distance field, once per pixel. The glass letters show only the wall's
+average colour, so they don't look textured. `--wall-strength` (0 to 1,
+default 0.4; **-** and **=** in steps of 0.1) sets how present the wall is.
+All of this is authored, not recovered from the original.
 
 `--scroller-lighting musical` uses relative loudness and bass/treble
 onsets from the original PCM. Bass pulses the blue/orange lights, their metal
@@ -250,6 +257,7 @@ optical simulation. All fields are generated locally in memory.
 | L | Toggle scroller lighting |
 | B | Cycle the scroller backdrop |
 | [ / ] | Bump shape for the wall backdrops |
+| - / = | Strength of the wall backdrops |
 | P | Show or hide the frame-rate counter |
 | V | Toggle vsync |
 | Escape | Quit |

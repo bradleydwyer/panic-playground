@@ -33,6 +33,7 @@ struct Options {
     scroller_lighting: ScrollerLighting,
     scroller_backdrop: ScrollerBackdrop,
     wall_shape: f32,
+    wall_strength: f32,
     fps: bool,
     vsync: bool,
     seconds: Option<f64>,
@@ -57,6 +58,7 @@ impl Options {
             scroller_lighting: ScrollerLighting::Studio,
             scroller_backdrop: ScrollerBackdrop::Chamber,
             wall_shape: 0.5,
+            wall_strength: 0.4,
             fps: false,
             vsync: true,
             seconds: None,
@@ -136,13 +138,22 @@ impl Options {
                         .filter(|v: &f32| (0.0..=1.0).contains(v))
                         .ok_or("Use --wall-shape with a value from 0 to 1")?;
                 }
+                "--wall-strength" => {
+                    o.wall_strength = args
+                        .next()
+                        .ok_or("--wall-strength needs a value from 0 to 1")?
+                        .parse()
+                        .ok()
+                        .filter(|v: &f32| (0.0..=1.0).contains(v))
+                        .ok_or("Use --wall-strength with a value from 0 to 1")?;
+                }
                 "--logo" => {
                     o.seek = f64::MAX;
                     o.paused = true;
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller [MODE] Continue into glass (default), ribbons or sculpted lettering\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chamber (default), wall or chrome bump wall\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\n1/2/3: scroller preset · L: scroller lighting · B: backdrop · [/]: bump shape · P: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller [MODE] Continue into glass (default), ribbons or sculpted lettering\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chamber (default), wall or chrome bump wall\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.4\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\n1/2/3: scroller preset · L: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength · P: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition."
                     );
                     std::process::exit(0);
                 }
@@ -209,6 +220,7 @@ fn run() -> Result<(), String> {
         let scroll = clip.scroller.as_mut().unwrap();
         scroll.backdrop_style = o.scroller_backdrop;
         scroll.wall_shape = o.wall_shape;
+        scroll.wall_strength = o.wall_strength;
         clip
     } else if o.transition {
         Clip::load_transition(&data)?
@@ -281,7 +293,7 @@ fn run() -> Result<(), String> {
     let (mut renderer, format) = pollster::block_on(Renderer::new(&instance, Some(&surface)))?;
     println!("GPU: {}", renderer.adapter_name);
     println!(
-        "Space pause · arrows seek · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · 1/2/3 scroller · L lighting · B backdrop · [/] bump shape"
+        "Space pause · arrows seek · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · 1/2/3 scroller · L lighting · B backdrop · [/] bump shape · -/= wall strength"
     );
     let (width, height) = window.drawable_size();
     let mut config = wgpu::SurfaceConfiguration {
@@ -410,6 +422,15 @@ fn run() -> Result<(), String> {
                             println!("Bump shape {:.1}", scroll.wall_shape);
                         }
                     }
+                    Keycode::Minus | Keycode::Equals => {
+                        if let Some(scroll) = &mut clip.scroller {
+                            let step = if key == Keycode::Minus { -0.1 } else { 0.1 };
+                            scroll.wall_strength = (((scroll.wall_strength + step) * 10.0).round()
+                                / 10.0)
+                                .clamp(0.0, 1.0);
+                            println!("Wall strength {:.1}", scroll.wall_strength);
+                        }
+                    }
                     Keycode::P => o.fps = !o.fps,
                     Keycode::V => {
                         o.vsync = !o.vsync;
@@ -486,8 +507,8 @@ fn run() -> Result<(), String> {
                 .as_ref()
                 .map(|s| {
                     format!(
-                        " · {:?} · {:?} · {:?} {:.1}",
-                        s.style, s.lighting, s.backdrop_style, s.wall_shape
+                        " · {:?} · {:?} · {:?} {:.1}/{:.1}",
+                        s.style, s.lighting, s.backdrop_style, s.wall_shape, s.wall_strength
                     )
                 })
                 .unwrap_or_default();

@@ -31,7 +31,14 @@ struct Uniforms {
     /// between ticks, backdrop style (0 chamber, 1 wall, 2 chrome) and the
     /// authored bump shape.
     backdrop: [f32; 4],
+    /// Bump wall: oscillator movement over its exposure (source pixels, from
+    /// shutter open to now) and the authored wall strength.
+    backdrop_motion: [f32; 4],
 }
+
+/// Authored exposure for the bump wall's motion blur, in 70 Hz ticks: about
+/// 1/100 s, matching the intro's shutter.
+const WALL_SHUTTER_TICKS: f64 = 0.7;
 
 /// Authored exposure for the modern renderer's motion blur, in sequence
 /// frames (35 per second): about 1/100 s, a little under a 180° shutter at
@@ -377,6 +384,7 @@ impl Renderer {
         let mut scroller = [0.0; 4];
         let mut scroll_light = [0.0; 4];
         let mut backdrop = [0.0; 4];
+        let mut backdrop_motion = [0.0; 4];
         if let Some(scroll) = &clip.scroller {
             scroller = [
                 1.0,
@@ -407,12 +415,30 @@ impl Renderer {
                 }
                 color[3] = 1.0;
             }
-            let [a, b] = [scroll.oscillator[index], scroll.oscillator[next]];
+            // The oscillator is constant outside the scroll, so blending with
+            // the following tick is always safe.
+            let oscillator_at = |t: f64| {
+                let i = clip.frame_index(t);
+                let [a, b] = [
+                    scroll.oscillator[i],
+                    scroll.oscillator[(i + 1).min(clip.frames.len() - 1)],
+                ];
+                let f = (t.max(0.0) * 70.0).fract() as f32;
+                [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]
+            };
+            let now = oscillator_at(time);
+            let open = oscillator_at(time - WALL_SHUTTER_TICKS / 70.0);
             backdrop = [
-                a[0] + (b[0] - a[0]) * mix,
-                a[1] + (b[1] - a[1]) * mix,
+                now[0],
+                now[1],
                 scroll.backdrop_style as u32 as f32,
                 scroll.wall_shape,
+            ];
+            backdrop_motion = [
+                now[0] - open[0],
+                now[1] - open[1],
+                scroll.wall_strength,
+                0.0,
             ];
         }
         let u = Uniforms {
@@ -442,6 +468,7 @@ impl Renderer {
             plate_open_rotation,
             hud: hud.map_or([0.0; 4], |[fps, ms]| [1.0, fps, ms, 0.0]),
             backdrop,
+            backdrop_motion,
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));

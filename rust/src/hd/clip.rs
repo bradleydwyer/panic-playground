@@ -240,6 +240,8 @@ pub struct ScrollerPreview {
     /// Authored bump profile for the wall backdrops: 0 is a low rounded
     /// square close to the original tile, 1 a hemisphere.
     pub wall_shape: f32,
+    /// Authored presence of the bump wall, 0 to 1: its overall brightness.
+    pub wall_strength: f32,
     /// Authored lighting controls from PCM: relative level, bass and treble onsets.
     /// Precomputed on the audio timeline so seeking and exports agree.
     pub audio: Vec<[f32; 3]>,
@@ -416,6 +418,7 @@ impl Clip {
                     lighting: ScrollerLighting::Studio,
                     backdrop_style: ScrollerBackdrop::Chamber,
                     wall_shape: 0.5,
+                    wall_strength: 0.4,
                     audio: audio_lighting(&pcm, frames.len()),
                     backdrop: walls
                         .iter()

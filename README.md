@@ -86,19 +86,21 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 | `--scroller-backdrop wall` | Trial wall of chrome bumps on the original tile grid, tinted blue steel |
 | `--scroller-backdrop chrome` | The same bumps as plain chrome |
 | `--wall-shape 0.5` | Bump shape, from 0 (a cushion like the original tile) to 1 (a hemisphere) |
+| `--wall-strength 0.4` | Presence of the bump wall, from 0 (dark) to 1 |
 
 The scroller modes include the laser transition and continue to the end of
 part 2, around 42 seconds. Omit `--seek` for the complete intro; use `--seek 18`
 to watch the tiles reveal the new scene. Add `--split` for the original on the
 left. In the app, **1 / 2 / 3** switch presets, **L** switches lighting, **B**
-cycles the backdrop and **[ / ]** change the bump shape, without restarting the
-music.
+cycles the backdrop, **[ / ]** change the bump shape and **- / =** the wall's
+strength, without restarting the music.
 
 The tile wall behind the letters moves as in the original, which slides it on
 a slow looping path by changing the palette. Its position comes from the
 original's oscillator, interpolated between frames, so it glides smoothly at
 any display rate. The chrome bumps, their lighting and their reflections of
-the letters and of neighbouring bumps are authored.
+the letters are authored. They are drawn as a dim, slightly out-of-focus
+background, blurred along the wall's motion, so the fast sway doesn't strobe.
 
 The vertical sine scroller passes in front of the lower horizontal row and
 behind the upper row, where it remains visible through the glass.

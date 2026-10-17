@@ -14,6 +14,9 @@ struct Controls {
     // ticks), backdrop (0 chamber, 1 tinted wall, 2 chrome wall) and the
     // authored bump shape (0 rounded square .. 1 hemisphere).
     backdrop:vec4f,
+    // Oscillator movement over the wall's exposure (source pixels) and the
+    // wall strength.
+    backdrop_motion:vec4f,
 }
 @group(0) @binding(0) var<uniform> u:Controls;
 @group(0) @binding(1) var current:texture_2d<f32>;
@@ -103,7 +106,7 @@ fn wall_scale()->f32 {return (5.5-WALL_Z)/5.5;}
 // down, so a tile is 1.2 times taller than wide, as on a 4:3 display.
 fn wall_source(p:vec2f)->vec2f {
     let s=p/wall_scale();
-    return vec2f(s.x*120.0+164.0,107.0-s.y*100.0)+u.backdrop.xy-.5;
+    return vec2f(s.x*120.0+164.0,107.0-s.y*100.0)+u.backdrop.xy+wall_shift-.5;
 }
 fn tile_image(at:vec2f)->vec3f {
     // Smoothed between the 8x8 image's texels (centres at +.5), wrapping.
@@ -225,16 +228,22 @@ fn wall_trace(origin:vec3f,ray:vec3f,from_wall:bool)->WallHit {
     if from_wall {return WallHit(false,false,0.0,vec3f(0,0,1),g);}
     return WallHit(true,false,t1,vec3f(0,0,1),b);
 }
-// Authored studio surround for the chrome: a broad frontal softbox, a top
-// strip and the chamber's cool and warm side strips, which follow the
-// scroller's lighting mode.
+// The bump wall is drawn as a defocused, motion-blurred background: soft,
+// dim and low in contrast, so the letters stay the brightest and sharpest
+// thing on screen and the fast original sway doesn't strobe. All authored.
+// u.backdrop_motion.xy: the oscillator's movement during the exposure (source
+// pixels); .z: wall strength, the owner's presence control.
+var<private> wall_shift:vec2f; // Per-sample offset along the exposure.
+// Authored studio surround, prefiltered for a rough metal: a broad frontal
+// softbox, a soft top light and the chamber's cool and warm side light, which
+// follow the scroller's lighting mode.
 fn studio(r:vec3f,x:f32)->vec3f {
-    var c=vec3f(.010,.014,.020)+vec3f(.05,.06,.075)*smoothstep(-.3,1.0,r.y)*smoothstep(-.5,.5,r.z);
+    var c=vec3f(.012,.016,.022)+vec3f(.04,.05,.06)*smoothstep(-.6,1.0,r.y)*smoothstep(-.6,.6,r.z);
     let soft=r.xy-vec2f(-.30,.38);
-    c+=vec3f(.42,.50,.62)*exp(-dot(soft,soft)*7.0)*smoothstep(-.2,.4,r.z);
-    c+=vec3f(.30,.34,.40)*exp(-pow((r.y-.72)*6.0,2.0));
-    let strips=exp(-pow((r.x+.62)*9.0,2.0))*.9+exp(-pow((r.x-.66)*11.0,2.0))*1.1;
-    c+=mix(heat(-.8),heat(1.0),smoothstep(-.1,.1,r.x))*strips*lighting(.88,.30+musical()*.5+bass()*1.4);
+    c+=vec3f(.24,.28,.34)*exp(-dot(soft,soft)*2.2)*smoothstep(-.4,.6,r.z);
+    c+=vec3f(.10,.11,.13)*exp(-pow((r.y-.72)*2.4,2.0));
+    let sides=exp(-pow((r.x+.62)*3.0,2.0))*.30+exp(-pow((r.x-.66)*3.5,2.0))*.36;
+    c+=mix(heat(-.8),heat(1.0),smoothstep(-.3,.3,r.x))*sides*lighting(.88,.30+musical()*.5+bass()*1.4);
     return c;
 }
 fn wall_metal(at:vec3f)->vec3f {
@@ -242,15 +251,15 @@ fn wall_metal(at:vec3f)->vec3f {
     if u.backdrop.z>1.5 {return silver;}
     // Optional base tint: the unfiltered tile image at this point, scaled so
     // its brightest texel is about 1. It keeps the original's blue steel and
-    // fades with the image during the exit.
-    // Towards the ball shape the image's own baked shading is mostly
-    // replaced by the tile's centre colour.
+    // fades with the image during the exit. Towards the ball shape the
+    // image's own baked shading is mostly replaced by the tile's centre colour.
     let image=mix(tile_image(vec2f(at.x*8.0-.5,at.y*8.0+.5)),
         tile_image(floor(at.xy)*8.0+vec2f(3.5,4.5)),clamp(u.backdrop.w,0.0,1.0)*.6)*4.6;
     return mix(silver*.25,image,.85);
 }
 fn wall_glint(p:vec3f,n:vec3f,v:vec3f,f0:vec3f)->vec3f {
-    // The letters' three lamps, reflected as small sources (no shadow rays).
+    // The letters' three lamps as broad, dim highlights on rough metal (no
+    // shadow rays): no small sparkle on every bump.
     var c=vec3f(0);
     let lamps=array<vec3f,3>(vec3f(-2.5,2.1,3.8),vec3f(2.5,-1.3,3.2),vec3f(sin(clock()*.23*u.scroll_light.y)*2.0,1.4,3.0));
     let colors=array<vec3f,3>(vec3f(.8,1.3,2.2)*lighting(1.098,.08+musical()*.12+bass()*4.0),
@@ -259,15 +268,15 @@ fn wall_glint(p:vec3f,n:vec3f,v:vec3f,f0:vec3f)->vec3f {
     for(var i=0;i<3;i++) {
         let l=normalize(lamps[i]-p);let h=normalize(l+v);
         let nh=max(dot(n,h),0.0);let nl=max(dot(n,l),0.0);
-        c+=colors[i]*f0*pow(nh,300.0)*nl*3.0;
+        c+=colors[i]*f0*pow(nh,16.0)*nl*.06;
     }
     return c;
 }
-// What a wall reflection sees, beyond the neighbouring bumps: the letters,
-// found by marching their distance field a few steps through the slab they
-// occupy, else the studio. Reflected letters are seen from behind, so they
-// are shaded simply: the travelling filament glows, the bodies are dark
-// glass or metal that hides the studio behind them.
+// What a bump reflects in a given direction: the letters, found by marching
+// their distance field a few steps through the slab they occupy, else the
+// studio. Reflected letters are seen from behind, so they are shaded simply:
+// the travelling filament glows, the bodies are dark glass or metal that
+// hides the studio behind them.
 fn reflected(p:vec3f,r:vec3f)->vec3f {
     let env=studio(r,p.x);
     if u.state.x<8.0 || r.z<.05 {return env;}
@@ -277,61 +286,80 @@ fn reflected(p:vec3f,r:vec3f)->vec3f {
         if t>end || abs(q.x)>aspect()*1.04 || abs(q.y)>.91 {break;}
         let d=scene(q);
         if d.x<.004 {
-            if d.y>.5 {return heat(q.x)*lighting(1.6,.15+musical()*.4+bass()*4.0);}
-            let glass=select(vec3f(.10,.11,.12),mix(vec3f(.10,.20,.28),vec3f(.28,.16,.08),warm(q.x)),u.scroller.z>1.5);
-            return glass+heat(q.x)*.04;
+            if d.y>.5 {return heat(q.x)*lighting(.8,.08+musical()*.2+bass()*2.0);}
+            let glass=select(vec3f(.05,.055,.06),mix(vec3f(.05,.10,.14),vec3f(.14,.08,.04),warm(q.x)),u.scroller.z>1.5);
+            return glass+heat(q.x)*.02;
         }
         t+=max(d.x,.012);
     }
     return env;
 }
+// Shading of one wall sample, without the letter reflections.
 fn wall_surface(hit:WallHit,p:vec3f,ray:vec3f)->vec3f {
     let metal=wall_metal(hit.at);
-    if !hit.bump {
-        // Backing between the bumps: dark, rough.
-        return metal*(studio(vec3f(0,0,1),p.x)*.06+vec3f(.002));
-    }
+    // The level a flat tile would have: the backing and the relief are pulled
+    // towards it, for roughly the original's subtle relief.
+    let level=metal*studio(vec3f(0,0,1),p.x);
+    if !hit.bump {return level*.45;}
     let n=hit.n;let r=reflect(ray,n);
-    let fresnel=metal+(1.0-metal)*pow(1.0-max(dot(n,-ray),0.0),5.0);
-    // One bounce: a reflected ray that meets a neighbouring bump sees that
-    // bump lit by the studio only.
-    let next=wall_trace(p+n*.002,r,true);
-    var seen=vec3f(0);
-    if next.hit {
-        let q=p+r*next.t;
-        let m=wall_metal(next.at);
-        seen=(m+(1.0-m)*pow(1.0-max(dot(next.n,-r),0.0),5.0))*studio(reflect(r,next.n),q.x);
-    } else {
-        seen=reflected(p,r)+wall_glint(p,n,-ray,vec3f(1));
-    }
-    var c=fresnel*seen;
+    let fresnel=metal+(1.0-metal)*pow(1.0-max(dot(n,-ray),0.0),5.0)*.5;
+    var c=fresnel*studio(r,p.x)+wall_glint(p,n,-ray,metal);
     // Faint occlusion where a bump meets the backing.
-    c*=mix(.35,1.0,smoothstep(.0,.5,n.z));
-    return c;
+    c*=mix(.55,1.0,smoothstep(.0,.5,n.z));
+    return mix(level,c,.6);
 }
 fn letter_shadow(p:vec3f)->f32 {
     if u.state.x<8.0 {return 0.0;}
     let shadow_uv=uv_at(p.xy+vec2f(.045,-.065));
     return smoothstep(-9.0,4.0,field(shadow_uv).x)*field_coverage(shadow_uv);
 }
-fn wall(ray:vec3f)->vec3f {
+// Overall presence: the strength control, a vignette, darker bands behind
+// the two text rows (source rows 8..88 and 112..192) and the letters' shade.
+fn wall_presence(p:vec3f)->f32 {
+    let s=p.xy/wall_scale();
+    let q=s/vec2f(4.0/3.0,1.0);
+    let vignette=mix(.30,1.0,1.0-smoothstep(.45,1.35,length(q*vec2f(.75,.9))));
+    let rows=smoothstep(.06,.18,abs(s.y))*(1.0-smoothstep(.86,.98,abs(s.y)));
+    let entrance=smoothstep(-1.7,1.2,u.scroller.y);
+    return u.backdrop_motion.z*.9*vignette*mix(1.0,.62,rows*entrance)
+        *mix(.55,1.0,entrance)*(1.0-letter_shadow(p)*.7);
+}
+fn wall_point(ray:vec3f)->vec3f {return vec3f(0,0,5.5)+ray*(6.4/-ray.z);}
+// Eight samples per pixel spread over a small defocus disc (about a tenth of
+// a tile) and over the exposure, so the wall blurs along its own motion. The
+// letter reflections are traced once per pixel and softened.
+fn wall_pixel(xy:vec2f)->vec3f {
     let eye=vec3f(0,0,5.5);
+    let defocus=.0075; // Screen units; a tile is .067 wide.
+    var c=vec3f(0);
+    for(var i=0;i<8;i++) {
+        let f=f32(i);
+        let disc=sqrt((f+.5)/8.0)*defocus*vec2f(cos(f*2.39996),sin(f*2.39996));
+        // Stratified in time, in an order that doesn't follow the disc.
+        wall_shift=-u.backdrop_motion.xy*fract((f*5.0+.5)/8.0);
+        let ray=normalize(vec3f(xy+disc,-5.5));
+        let hit=wall_trace(eye,ray,false);
+        c+=wall_surface(hit,eye+ray*hit.t,ray);
+    }
+    c*=.125;
+    let ray=normalize(vec3f(xy,-5.5));
+    wall_shift=-u.backdrop_motion.xy*.5;
     let hit=wall_trace(eye,ray,false);
     let p=eye+ray*hit.t;
-    let entrance=smoothstep(-1.7,1.2,u.scroller.y);
-    var c=wall_surface(hit,p,ray)*mix(.55,1.0,entrance);
-    // Keep the wall a little darker than the letters and let them shade it.
-    c*=.5*(1.0-letter_shadow(p)*.7);
-    return c;
+    if hit.bump && u.state.x>=8.0 {
+        let r=reflect(ray,hit.n);
+        let metal=wall_metal(hit.at);
+        c+=(reflected(p,r)-studio(r,p.x))*metal*.35;
+    }
+    wall_shift=vec2f(0);
+    return max(c,vec3f(0))*wall_presence(wall_point(ray));
 }
-// Four rotated-grid samples per pixel: the bumps' silhouettes and small
-// highlights alias and crawl as the wall moves otherwise.
-fn wall_pixel(xy:vec2f)->vec3f {
-    let px=2.0/u.screen.y;
-    let offsets=array<vec2f,4>(vec2f(.125,.375),vec2f(-.375,.125),vec2f(-.125,-.375),vec2f(.375,-.125));
-    var c=vec3f(0);
-    for(var i=0;i<4;i++) {c+=wall(normalize(vec3f(xy+offsets[i]*px,-5.5)));}
-    return c*.25;
+// The wall as seen through the glass letters: no detail at all, just its
+// average tint and level, so the glass doesn't look textured.
+fn wall_soft(ray:vec3f)->vec3f {
+    let p=wall_point(ray);
+    let metal=wall_metal(vec3f(.5,.5,0));
+    return metal*studio(reflect(ray,vec3f(0,0,1)),p.x)*.8*wall_presence(p);
 }
 fn ripple(p:vec2f)->f32 {
     let t=clock();
@@ -368,7 +396,7 @@ fn chamber(ray:vec3f)->vec3f {
     return color;
 }
 fn backdrop(ray:vec3f)->vec3f {
-    if u.backdrop.z>.5 {return wall(ray);}
+    if u.backdrop.z>.5 {return wall_soft(ray);}
     return chamber(ray);
 }
 fn shadow(p:vec3f,light:vec3f)->f32 {
