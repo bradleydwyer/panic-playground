@@ -108,6 +108,9 @@ pub struct Clip {
     /// Pinhole motion fitted from the locally decoded reference silhouettes:
     /// camera crossing frame, depth per frame, world x and world y.
     pub flights: [[f32; 4]; 10],
+    /// Lighting controls measured from `pcm`, one per 70 Hz window; see
+    /// [`audio_features`]. They only steer authored lighting.
+    pub audio: Vec<[f32; 4]>,
 }
 
 /// Schedule and destination colours read from the local Rust reconstruction.
@@ -235,6 +238,7 @@ impl Clip {
         };
         Ok(Self {
             frames,
+            audio: audio_features(&pcm),
             pcm,
             logo_at: logo_at.ok_or("Intro never reached the logo")?,
             logo_ready_at,
@@ -245,6 +249,27 @@ impl Clip {
 
     pub fn duration(&self) -> f64 {
         self.pcm.len() as f64 / (SAMPLE_RATE * 2) as f64
+    }
+    /// Audio lighting controls at a clip time. Window `i` is only known once
+    /// it has played, at `(i + 1) / 70` s, so the lights never anticipate the
+    /// music. Values interpolate between windows and fall to zero outside the
+    /// PCM. Seeking reads the same precomputed table as playback.
+    pub fn audio_at(&self, time: f64) -> [f32; 4] {
+        let position = time * FRAME_RATE as f64 - 1.0;
+        if !position.is_finite() || position <= -1.0 {
+            return [0.0; 4];
+        }
+        let base = position.floor();
+        let fraction = (position - base) as f32;
+        let at = |i: f64| {
+            if i < 0.0 {
+                [0.0; 4]
+            } else {
+                self.audio.get(i as usize).copied().unwrap_or([0.0; 4])
+            }
+        };
+        let (a, b) = (at(base), at(base + 1.0));
+        std::array::from_fn(|k| a[k] + (b[k] - a[k]) * fraction)
     }
     pub fn frame_index(&self, time: f64) -> usize {
         ((time.max(0.0) * FRAME_RATE as f64) as usize).min(self.frames.len() - 1)
@@ -260,6 +285,75 @@ impl Clip {
             _ => "Panic logo",
         }
     }
+}
+
+/// Measure authored lighting controls from the clip's interleaved stereo PCM,
+/// one value per 70 Hz window (the same sample split `Clip::load_mode` uses).
+/// This reads only the rendered audio, so the music itself is untouched. The
+/// filters are causal: a prefix of the PCM always gives a prefix of the result.
+///
+/// The components are new display controls in 0..=1, not anything recovered
+/// from the original program:
+/// - `[0]` energy: broadband RMS with fast attack and a 0.25 s release.
+/// - `[1]` onset: a rise in high-band (above about 150 Hz) energy over its
+///   recent level, gated by loudness, held and decayed with a 0.12 s constant.
+/// - `[2]` low: RMS below about 150 Hz, fast attack and a 0.18 s release.
+/// - `[3]` accent: loudness well above the last two seconds, such as a strong
+///   downbeat after a quieter passage, decayed with a 0.25 s constant.
+///
+/// The time constants and scales were tuned by eye and ear to the intro.
+pub fn audio_features(pcm: &[i16]) -> Vec<[f32; 4]> {
+    let rate = SAMPLE_RATE as usize;
+    let frames = pcm.len() / 2;
+    let windows = (frames * FRAME_RATE as usize).div_ceil(rate);
+    let release = |seconds: f64| 1.0 - (-1.0 / (seconds * FRAME_RATE as f64)).exp();
+    let decay = |seconds: f64| (-1.0 / (seconds * FRAME_RATE as f64)).exp();
+    let crossover = 1.0 - (-std::f64::consts::TAU * 150.0 / rate as f64).exp();
+    let (mut lp1, mut lp2) = (0.0_f64, 0.0_f64);
+    let (mut energy, mut low, mut onset, mut accent) = (0.0_f64, 0.0, 0.0, 0.0);
+    let (mut recent_high, mut long_power) = (0.0_f64, 0.0);
+    let mut result = Vec::with_capacity(windows);
+    for i in 0..windows {
+        let start = i * rate / FRAME_RATE as usize;
+        let end = ((i + 1) * rate / FRAME_RATE as usize).min(frames);
+        let (mut power, mut low_power, mut high_power) = (0.0, 0.0, 0.0);
+        for frame in pcm[start * 2..end * 2].chunks_exact(2) {
+            let mono = (frame[0] as f64 + frame[1] as f64) / 65536.0;
+            lp1 += crossover * (mono - lp1);
+            lp2 += crossover * (lp1 - lp2);
+            let high = mono - lp2;
+            power += mono * mono;
+            low_power += lp2 * lp2;
+            high_power += high * high;
+        }
+        let count = (end - start).max(1) as f64;
+        let (power, low_power, high_power) = (power / count, low_power / count, high_power / count);
+        let follow = |state: &mut f64, value: f64, seconds: f64| {
+            *state += (value - *state)
+                * if value > *state {
+                    0.5
+                } else {
+                    release(seconds)
+                };
+        };
+        follow(&mut energy, power.sqrt(), 0.25);
+        follow(&mut low, low_power.sqrt(), 0.18);
+        // Near-silent material cannot trigger pulses, however sudden.
+        let gate = (high_power.sqrt() / 0.1).min(1.0);
+        let flux = ((high_power + 1e-6) / (recent_high + 1e-6)).ln().max(0.0);
+        onset = ((flux / 1.2).min(1.0) * gate).max(onset * decay(0.12));
+        recent_high += (high_power - recent_high) * 0.15;
+        let rise = ((power + 1e-6) / (long_power + 1e-6)).ln() / 6.0_f64.ln();
+        accent = (((rise - 0.35) / 0.65).clamp(0.0, 1.0) * gate).max(accent * decay(0.25));
+        long_power += (power - long_power) * release(2.0);
+        result.push([
+            (1.0 - (-energy / 0.25).exp()) as f32,
+            onset as f32,
+            (1.0 - (-low / 0.12).exp()) as f32,
+            accent as f32,
+        ]);
+    }
+    result
 }
 
 /// Fit the original FUTURE CREW fly-bys, not a replacement animation. The
@@ -436,6 +530,112 @@ mod tests {
         assert!(q[..3].iter().all(|v| v.abs() > 0.5));
     }
 
+    fn stereo(mono: impl IntoIterator<Item = f64>) -> Vec<i16> {
+        mono.into_iter()
+            .flat_map(|v| {
+                let s = (v * 32767.0).round() as i16;
+                [s, s]
+            })
+            .collect()
+    }
+
+    fn window(i: usize) -> usize {
+        i * SAMPLE_RATE as usize / FRAME_RATE as usize
+    }
+
+    #[test]
+    fn silence_gives_no_audio_lighting() {
+        let features = audio_features(&vec![0; 4 * SAMPLE_RATE as usize]); // 2 s stereo
+        assert_eq!(features.len(), 2 * FRAME_RATE as usize);
+        assert!(features.iter().flatten().all(|&v| v == 0.0));
+        assert!(audio_features(&[]).is_empty());
+        // A trailing partial window still gets a value.
+        assert_eq!(audio_features(&[0; 2 * 300]).len(), 2);
+    }
+
+    #[test]
+    fn burst_pulses_then_decays_and_attack_is_faster_than_release() {
+        // Silence, 0.3 s of a loud 2 kHz square, then silence again.
+        let (on, off) = (window(35), window(56));
+        let total = window(140);
+        let pcm = stereo((0..total).map(|i| {
+            if (on..off).contains(&i) {
+                if (i / 4) % 2 == 0 { 0.6 } else { -0.6 }
+            } else {
+                0.0
+            }
+        }));
+        let f = audio_features(&pcm);
+        assert_eq!(f.len(), 140);
+        assert!(f[..35].iter().flatten().all(|&v| v == 0.0));
+        // The onset and accent fire on the first loud window.
+        assert!(f[35][1] > 0.9 && f[35][3] > 0.9, "{:?}", f[35]);
+        // A steady tone does not retrigger: the onset only decays.
+        for i in 36..140 {
+            assert!(f[i][1] <= f[i - 1][1], "onset rose at {i}");
+            assert!(f[i][3] <= f[i - 1][3], "accent rose at {i}");
+        }
+        assert!(f[55][1] < 0.25 * f[35][1]);
+        // Energy attacks within a few windows and rises monotonically...
+        assert!(f[37][0] > 0.8 * f[55][0]);
+        for i in 36..56 {
+            assert!(f[i][0] >= f[i - 1][0]);
+        }
+        // ...then releases monotonically, more slowly than it attacked.
+        for i in 57..140 {
+            assert!(f[i][0] < f[i - 1][0], "energy did not fall at {i}");
+        }
+        assert!(f[58][0] > 0.5 * f[55][0]);
+        assert!(f[139][0] < 0.05);
+        // A 2 kHz tone is not bass.
+        assert!(f[50][2] < 0.2 * f[50][0], "{:?}", f[50]);
+        assert!(f.iter().flatten().all(|v| (0.0..=1.0).contains(v)));
+    }
+
+    #[test]
+    fn bass_is_separated_and_features_are_causal() {
+        let total = window(70);
+        let tone =
+            |hz: f64| {
+                stereo((0..total).map(|i| {
+                    0.5 * (std::f64::consts::TAU * hz * i as f64 / SAMPLE_RATE as f64).sin()
+                }))
+            };
+        let bass = audio_features(&tone(60.0));
+        let treble = audio_features(&tone(3000.0));
+        assert!(bass[60][2] > 0.8 && treble[60][2] < 0.1);
+        assert!((bass[60][0] - treble[60][0]).abs() < 0.05);
+        // Truncating the PCM at a window boundary never changes earlier values,
+        // so the shorter logo-only clip agrees with the longer transition clip.
+        let pcm = tone(440.0);
+        let prefix = audio_features(&pcm[..window(41) * 2]);
+        assert_eq!(prefix, audio_features(&pcm)[..41]);
+    }
+
+    #[test]
+    fn audio_lighting_is_sampled_by_time_and_ends_with_the_pcm() {
+        let audio = vec![[0.5, 1.0, 0.25, 0.0], [1.0, 0.0, 0.75, 1.0]];
+        let clip = Clip {
+            frames: Vec::new(),
+            pcm: Vec::new(),
+            logo_at: 0.0,
+            logo_ready_at: 0.0,
+            transition: None,
+            flights: [[0.0; 4]; 10],
+            audio,
+        };
+        // Window 0 is known once it has played, at 1/70 s.
+        assert_eq!(clip.audio_at(0.0), [0.0; 4]);
+        assert_eq!(clip.audio_at(0.5 / 70.0), [0.25, 0.5, 0.125, 0.0]);
+        assert_eq!(clip.audio_at(1.0 / 70.0), [0.5, 1.0, 0.25, 0.0]);
+        assert_eq!(clip.audio_at(1.5 / 70.0), [0.75, 0.5, 0.5, 0.5]);
+        assert_eq!(clip.audio_at(2.5 / 70.0), [0.5, 0.0, 0.375, 0.5]);
+        assert_eq!(clip.audio_at(3.0 / 70.0), [0.0; 4]);
+        assert_eq!(clip.audio_at(100.0), [0.0; 4]);
+        assert_eq!(clip.audio_at(-1.0), [0.0; 4]);
+        assert_eq!(clip.audio_at(f64::NAN), [0.0; 4]);
+    }
+
     #[test]
     fn field_preserves_holes_and_signs() {
         let mut m = vec![false; 49];
@@ -495,6 +695,17 @@ mod tests {
         let intro = Clip::load(&data).unwrap();
         assert_eq!(clip.logo_ready_at, intro.logo_ready_at);
         assert_eq!(clip.pcm[..intro.pcm.len()], intro.pcm);
+        // Causal audio lighting agrees wherever both clips have whole windows.
+        let shared = intro.audio.len() - 1;
+        assert_eq!(clip.audio[..shared], intro.audio[..shared]);
+        assert_eq!(laser.audio, clip.audio);
+        assert!(
+            intro
+                .audio
+                .iter()
+                .flatten()
+                .all(|v| (0.0..=1.0).contains(v))
+        );
         let cut = clip.transition.as_ref().unwrap();
         assert_eq!(cut.end_tick - cut.start_tick, 169);
         assert_eq!(

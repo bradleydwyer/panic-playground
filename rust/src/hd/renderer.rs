@@ -16,6 +16,9 @@ struct Uniforms {
     transition: [f32; 4],
     tile_order: [[f32; 4]; 40],
     next_palette: [[f32; 4]; 64],
+    /// Authored music-reactive lighting, measured from the clip's PCM (see
+    /// `clip::audio_features`): energy, onset, low band, accent, each 0..=1.
+    audio: [f32; 4],
 }
 
 #[derive(Clone, Copy)]
@@ -347,6 +350,7 @@ impl Renderer {
             transition,
             tile_order,
             next_palette,
+            audio: clip.audio_at(time),
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));

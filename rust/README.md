@@ -83,6 +83,14 @@ more movement at the hot end. Its starfield has 3,200 fine, round stars with
 depth, colour and luminosity variation. From 12 seconds, an authored warp ramp
 accelerates them into long, narrow radial streaks as the music builds.
 
+The modern lighting also follows the soundtrack. While the clip is prepared,
+the generated PCM is measured once per 70 Hz frame: overall energy, onsets,
+bass and strong accents. The direct lights on the metal, the logo's glow and
+bloom breathe with the energy and bass and pulse on hits, and the big downbeat
+just after the logo lands re-strikes part of its white flash. This is an
+authored effect; the music, its timing and its PCM are unchanged, and seeking
+gives the same lighting as uninterrupted playback.
+
 The opening still spells FUTURE CREW as individual letters fly past the camera.
 Their perspective motion is fitted locally to the reference frames, with a
 farther starting position, gradual fade-in and slightly translucent, thicker

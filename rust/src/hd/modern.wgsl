@@ -1,7 +1,14 @@
 // New geometric models, evaluated in 3D. This shader does not sample the old
 // artwork for geometry. Letterforms and the continuous plate tumble are new;
 // flights fit the locally decoded sequence. Doors use the Rust timeline.
-struct Controls { screen:vec4f, state:vec4f, misc:vec4f, flights:array<vec4f,10>, plate_center:vec4f, plate_rotation:vec4f }
+struct Controls {
+    screen:vec4f, state:vec4f, misc:vec4f,
+    flights:array<vec4f,10>, plate_center:vec4f, plate_rotation:vec4f,
+    transition:vec4f, tile_order:array<vec4f,40>, next_palette:array<vec4f,64>,
+    // Authored music response measured from the clip PCM (clip::audio_features),
+    // each 0..1: x energy, y onset (decaying pulse), z low band, w accent.
+    audio:vec4f,
+}
 @group(0) @binding(0) var<uniform> u:Controls;
 struct Vertex { @builtin(position) position:vec4f, @location(0) uv:vec2f }
 @vertex fn fullscreen(@builtin(vertex_index) index:u32)->Vertex {
@@ -223,19 +230,25 @@ fn shade(p:vec3f,geometric_normal:vec3f,ray:vec3f,id:u32)->vec3f {
     let reflection=reflect(-view,wn);
     let fresnel=f0+(1.0-f0)*pow(1.0-max(dot(wn,view),0.0),5.0);
     var c=environment(wp,reflection)*fresnel;
-    c+=direct_light(wp,wn,view,vec3f(-2.0,3.0,3.0),vec3f(2.0,2.4,3.0),f0);
-    c+=direct_light(wp,wn,view,vec3f(3.0,-1.0,1.5),vec3f(1.0,.65,.25),f0);
+    // The key light breathes with the music's energy and lifts on hits; the
+    // warm fill follows the bass. At typical playing levels they average close
+    // to the former fixed strengths. An authored response, not original behaviour.
+    let music=u.audio;
+    c+=direct_light(wp,wn,view,vec3f(-2.0,3.0,3.0),vec3f(2.0,2.4,3.0)*(.82+.30*music.x+.25*music.y),f0);
+    c+=direct_light(wp,wn,view,vec3f(3.0,-1.0,1.5),vec3f(1.0,.65,.25)*(.72+.50*music.z+.15*music.y),f0);
     c*=ambient_occlusion(p,n,id);
     c*=.94+.06*grain;
     if id==10u {
         // Incandescence, not gold paint: warm emission also feeds the HDR bloom.
         let flow=.75+.25*noise(p.xy*vec2f(9,15)+vec2f(0,u.screen.z*.05));
         let edge=1.0-smoothstep(.0,.055,-panic_outline(p.xy));
-        let hot=heat*flow;
+        // Hits briefly push the hot end towards yellow; the glow swells with
+        // the bass. A strong downbeat re-strikes part of the arrival flash.
+        let hot=heat*flow*(.95+.06*music.x+.07*music.y);
         let incandescent=mix(vec3f(1,.075,.002),vec3f(1,.72,.26),smoothstep(.5,1.0,hot));
-        c+=incandescent*pow(hot,1.8)*(2.4+edge*2.3);
+        c+=incandescent*pow(hot,1.8)*(2.4+edge*2.3)*(.78+.25*music.z+.30*music.y);
         let flash=pow(1.0-clamp((u.screen.z-u.misc.z)/.9,0.0,1.0),3.0);
-        c+=vec3f(3.0)*flash;
+        c+=vec3f(3.0)*flash+vec3f(1.6,1.45,1.25)*pow(music.w,3.0);
     }
     return c;
 }

@@ -2,6 +2,7 @@ struct Controls {
     screen:vec4f, state:vec4f, misc:vec4f,
     flights:array<vec4f,10>, plate_center:vec4f, plate_rotation:vec4f,
     transition:vec4f, tile_order:array<vec4f,40>, next_palette:array<vec4f,64>,
+    audio:vec4f, // authored music response: energy, onset, low band, accent
 }
 @group(0) @binding(0) var<uniform> u:Controls;
 @group(0) @binding(1) var scene:texture_2d<f32>;
@@ -26,7 +27,9 @@ fn blur(uv:vec2f, direction:vec2f, threshold:bool)->vec3f {
 @fragment fn blur_x(v:Vertex)->@location(0) vec4f {return vec4f(blur(v.uv,vec2f(3.0/u.screen.x,0),true),1);}
 @fragment fn blur_y(v:Vertex)->@location(0) vec4f {return vec4f(blur(v.uv,vec2f(0,3.0/u.screen.y),false),1);}
 @fragment fn composite(v:Vertex)->@location(0) vec4f {
-    var c=textureSampleLevel(scene,linear,v.uv,0).rgb + textureSampleLevel(bloom,linear,v.uv,0).rgb*.14;
+    // Bloom breathes with the music and swells briefly on hits (authored).
+    let glow=.14*(.80+.25*u.audio.x+.40*u.audio.y);
+    var c=textureSampleLevel(scene,linear,v.uv,0).rgb + textureSampleLevel(bloom,linear,v.uv,0).rgb*glow;
     // ACES approximation: preserve bright metal highlights without clipping.
     c=clamp((c*(2.51*c+.03))/(c*(2.43*c+.59)+.14),vec3f(0),vec3f(1));
     let compare=u.screen.w>.5 && (u.screen.w<1.5 || v.uv.x<.5);
