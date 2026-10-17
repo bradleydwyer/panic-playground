@@ -2,6 +2,10 @@
 
 Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
+[![Watch the modern Panic intro on YouTube](https://img.youtube.com/vi/Is5-mirSX-I/maxresdefault.jpg)](https://youtu.be/Is5-mirSX-I)
+
+[▶ Watch the intro on YouTube](https://youtu.be/Is5-mirSX-I)
+
 So far this covers the opening through the PANIC logo: the FUTURE CREW letters
 flying past, the tumbling block and the logo reveal. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky 3D
@@ -13,7 +17,8 @@ It's a work in progress, and only the intro has the new rendering. The original
 player is included as a reference. The new letterforms and block motion are
 authored approximations, not recovered original 3D models.
 
-No original demo data, music, screenshots or videos are included. You import
+No original demo data, music, screenshots or videos are stored in this repository.
+The preview above is hosted on YouTube. You import
 the data locally from your own copy of `PANIC.EXE`.
 
 ## Run it
