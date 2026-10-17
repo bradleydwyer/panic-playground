@@ -3,7 +3,7 @@
 // data (clip::ScrollerGlyphs). The text, the glyphs, both rows' positions, the
 // overlay's sine x table and its row timing are read from the data and code;
 // see Scroller::hd_scroll. The 4:3 proportions follow the original display.
-// Depth, extrusion, the arc the rows follow, the ring, materials and lighting
+// Depth, extrusion, the arc the rows follow, the rings, materials and lighting
 // are new; none of it is a recovered 3D model.
 struct Controls {
     screen:vec4f, state:vec4f, misc:vec4f,
@@ -181,34 +181,45 @@ fn field_extent()->vec2f {
     if u.misc.w>.5 && !ring() && curved() {return vec2f(max(arc_extent(),FIELD_EXTENT.x),FIELD_EXTENT.y);}
     return FIELD_EXTENT;
 }
-// The authored ring experiment: one band of letters around a tilted axis.
-// Its front, facing the camera at the original upper row's height, shows
-// exactly what the upper row shows at the centre of the 4:3 frame, moving
-// left. Going round, the same letters pass behind and travel right along the
-// far side, seen from behind. They are replaced, out of sight, just behind
-// the right-hand side. Radius and tilt place the far side at the lower row's
-// height; the sine text stands inside the ring.
-const RING_RADIUS=2.26;
-const RING_TILT=.279;
-const RING_SEAM=1.82;
-fn ring_centre()->vec3f {
-    return vec3f(0,.447-RING_RADIUS*sin(RING_TILT),-RING_RADIUS*cos(RING_TILT));
+// The authored ring experiment: two rings of letters around vertical axes,
+// one per row, seen level from between them. Each ring's front, facing the
+// camera on its row's lines (8-88 and 112-192), shows exactly what that row
+// shows at the centre of the 4:3 frame, and turns the row's way: the upper
+// ring's front moves left, the lower's right. Going round, the letters pass
+// behind and cross the far side, seen from behind (mirrored), in the
+// background between and behind the fronts. The text is longer than a ring,
+// so it changes at a seam at the back, where letters fade out and in.
+const RING_RADIUS=2.0;
+// Angle over which letters fade either side of the seam at the back.
+const RING_FADE=1.0;
+// The front of ring i (0 upper, 1 lower) is centred on line 48 or 152.
+fn ring_centre(i:i32)->vec3f {return vec3f(0,select(.4472,-.4472,i==1),-RING_RADIUS);}
+fn ring_of(p:vec3f)->i32 {return select(0,1,p.y<0.0);}
+// Angle round ring i from its front, radial depth from its surface, glyph row.
+fn ring_local(p:vec3f,i:i32)->vec3f {
+    let q=p-ring_centre(i);
+    return vec3f(atan2(q.x,q.z),length(q.xz)-RING_RADIUS,40.0-q.y/ROW);
 }
-// The ring's arc maps to four bands of the field texture, each a quarter turn
-// wide and 96 rows (the cell plus its margins) tall, starting at the seam.
-fn ring_texel(phi:f32,gy:f32)->vec2f {
+// Letters and the sine text fade in over part 2's first 0.8 s. Both rows
+// and rings start empty, as the original's do, and the text then arrives;
+// this only stops the first sine row, already at the screen's bottom edge,
+// appearing at once. The end fades with the whole scene.
+fn arrival()->f32 {return smoothstep(0.0,.8,u.scroller.y);}
+// Letters fade out towards the seam at the back and in after it.
+fn ring_fade(phi:f32)->f32 {return smoothstep(0.0,1.0,(PI-abs(phi))/RING_FADE);}
+// Each ring's turn maps to two bands of the field texture, the front half and
+// the back half, each 112 glyph rows (the cell and its margins) tall.
+fn ring_texel(phi:f32,gy:f32,i:i32)->vec2f {
     let size=vec2f(textureDimensions(glyph_fields));
-    let turn=fract((phi-RING_SEAM)/(2.0*PI))*4.0;
-    let band=min(floor(turn),3.0);
+    let turn=fract((phi+.5*PI)/(2.0*PI))*2.0;
+    let band=min(floor(turn),1.0);
     let x=clamp((turn-band)*size.x,.5,size.x-.5);
     let y=clamp((gy+ATLAS_PAD)/(CELL.y+2.0*ATLAS_PAD)*size.y*.25,.5,size.y*.25-.5);
-    return vec2f(x,band*size.y*.25+y)/size;
+    return vec2f(x,(f32(i)*2.0+band)*size.y*.25+y)/size;
 }
-fn ring_distance(phi:f32,gy:f32)->f32 {
-    let u_px=160.0+u.glyphs.x+RING_RADIUS*phi/COLUMN;
-    // Letters vanish as they near the seam, where the text is replaced.
-    let seam=abs(fract((phi-RING_SEAM)/(2.0*PI)+.5)-.5)*2.0*PI;
-    return strip_distance(u_px,gy)-14.0*(1.0-smoothstep(.06,.42,seam));
+fn ring_distance(phi:f32,gy:f32,i:i32)->f32 {
+    let offset=select(u.glyphs.x,u.glyphs.y,i==1);
+    return strip_distance(160.0+offset+RING_RADIUS*phi/COLUMN,gy);
 }
 // Render both fields for this moment: large letters and overlay, in source
 // rows, positive inside, over the world plane the rows and overlay occupy.
@@ -218,9 +229,11 @@ fn ring_distance(phi:f32,gy:f32)->f32 {
     var letters=0.0;
     if ring() {
         let band=floor(v.uv.y*4.0);
-        let phi=RING_SEAM+(band+v.uv.x)*.5*PI-2.0*PI;
+        // The back band runs on past pi: wrap it, so the seam sits at the back.
+        var phi=(band%2.0+v.uv.x)*PI-.5*PI;
+        if phi>PI {phi-=2.0*PI;}
         let gy=fract(v.uv.y*4.0)*(CELL.y+2.0*ATLAS_PAD)-ATLAS_PAD;
-        letters=ring_distance(phi,gy);
+        letters=ring_distance(phi,gy,i32(band/2.0));
     } else if u.misc.w<.5 {
         letters=rows_distance(p);
     } else {
@@ -273,10 +286,10 @@ fn field_coverage(p:vec2f)->f32 {
     if curved() {let x=arc_extent();return 1.0-smoothstep(.8*x,x,abs(p.x));}
     return 1.0-smoothstep(1.6,2.0,abs(p.x));
 }
-// Depth of the rows' surface at world x.
+// Depth of the rows' surface (or the rings' fronts) at world x.
 fn ribbon_z(x:f32)->f32 {
-    if !curved() {return 0.0;}
-    let r=arc_radius();
+    if !curved() && !ring() {return 0.0;}
+    let r=select(arc_radius(),RING_RADIUS,ring());
     return sqrt(max(r*r-x*x,0.0))-r;
 }
 fn filament_z(p:vec2f)->f32 {
@@ -289,26 +302,16 @@ fn extrusion(d:f32,z:f32,half_depth:f32,bevel:f32)->f32 {
     let q=vec2f(d+bevel,abs(z)-half_depth+bevel);
     return min(max(q.x,q.y),0.0)+length(max(q,vec2f(0)))-bevel;
 }
-// In the ring, the sine text stands at the ring's centre depth, scaled to keep
-// its screen position and size. Returns the field position and the scale.
-fn ring_sine(p:vec2f)->vec3f {
-    let k=5.5/(5.5-ring_centre().z);
-    return vec3f(p*k,k);
-}
-fn sine_at(p:vec2f)->f32 {
-    if ring() {return fields(ring_sine(p).xy).y;}
-    return fields(p).y;
-}
+fn sine_at(p:vec2f)->f32 {return fields(p).y;}
+// Letters on the nearer ring. As they fade near the seam they also sink a
+// little into the ring.
 fn ring_letters(p:vec3f)->f32 {
-    let q=p-ring_centre();
-    let c=cos(RING_TILT);let s=sin(RING_TILT);
-    let l=vec3f(q.x,c*q.y-s*q.z,s*q.y+c*q.z);
-    let rho=length(l.xz);
-    let phi=atan2(l.x,l.z);
-    let gy=40.0-l.y/ROW;
-    var d=-max(FAR,max(-ATLAS_PAD-gy,gy-CELL.y-ATLAS_PAD));
-    if d>-FAR-.5 {d=textureSampleLevel(glyph_fields,linear,ring_texel(phi,gy),0).r;}
-    return extrusion(-d*ROW*min(rho/RING_RADIUS,1.0),rho-RING_RADIUS,.12,.018);
+    let i=ring_of(p);
+    let l=ring_local(p,i);
+    var d=-max(FAR,max(-ATLAS_PAD-l.z,l.z-CELL.y-ATLAS_PAD));
+    if d>-FAR-.5 {d=textureSampleLevel(glyph_fields,linear,ring_texel(l.x,l.z,i),0).r;}
+    let sink=(1.0-ring_fade(l.x))*.15;
+    return extrusion(-d*ROW*min(1.0+l.y/RING_RADIUS,1.0),l.y+sink,.12,.018);
 }
 // Radial depth of a point from the rows' surface, and the surface x on its
 // radius, where the rows' field channel holds the arc's letters.
@@ -325,11 +328,8 @@ fn letter_shape(p:vec3f)->f32 {
     return extrusion(-fields(vec2f(a.y,p.y)).x*ROW,a.x+.075,.12,.018);
 }
 fn filament_shape(p:vec3f)->f32 {
-    if ring() {
-        let s=ring_sine(p.xy);
-        return extrusion(-(fields(s.xy).y+.20)*ROW/s.z,p.z-ring_centre().z,.018/s.z,.009);
-    }
-    // Authored depth fixes the overlay's layering relative to the rows.
+    // Authored depth fixes the overlay's layering relative to the rows: in
+    // the ring layout it stands inside the upper ring and before the lower.
     return extrusion(-(fields(p.xy).y+.20)*ROW,p.z-filament_z(p.xy),.018,.009);
 }
 fn shape(p:vec3f,material:f32)->f32 {
@@ -396,12 +396,13 @@ fn chamber(ray:vec3f)->vec3f {
         let f=select(fields(shadow_at),vec2f(-99.0,sine_at(shadow_at)),ring());
         // Soft projected contact shadows and rough reflected silhouettes.
         // These are analytic approximations, not traced indirect lighting.
-        let shadow=smoothstep(-9.0,4.0,f.x)*field_coverage(shadow_at);
+        let present=arrival();
+        let shadow=smoothstep(-9.0,4.0,f.x)*field_coverage(shadow_at)*present;
         color*=1.0-shadow*.65;
         let reflection_at=p.xy+vec2f(-.035,.12);
         let reflected=select(halo(letter_field(reflection_at),.20),0.0,ring())*field_coverage(reflection_at);
-        color+=heat(p.x)*reflected*.022;
-        color+=heat(p.x)*halo(f.y,.23)*field_coverage(shadow_at)*lighting(.0376,.012+musical()*.025+bass()*.14);
+        color+=heat(p.x)*reflected*.022*present;
+        color+=heat(p.x)*halo(f.y,.23)*field_coverage(shadow_at)*present*lighting(.0376,.012+musical()*.025+bass()*.14);
     }
     let haze=noise(p.xy*2.5+vec2f(clock()*.055,-clock()*.035));
     color+=heat(p.x)*pow(haze,3.0)*.022*entrance;
@@ -420,6 +421,11 @@ fn shadow(p:vec3f,light:vec3f)->f32 {
     }
     return clamp(shade,.18,1.0);
 }
+// Ring layout only: glass shows this colour, traced behind it, instead of the
+// chamber; and surfaces seen through other glass skip their shadow rays.
+var<private> traced:bool=false;
+var<private> traced_behind:vec3f=vec3f(0);
+var<private> unshadowed:bool=false;
 fn lamp(p:vec3f,n:vec3f,v:vec3f,position:vec3f,color:vec3f,f0:vec3f,rough:f32)->vec3f {
     let l=normalize(position-p);let h=normalize(l+v);
     let nl=max(dot(n,l),0.0);let nv=max(dot(n,v),.001);let nh=max(dot(n,h),0.0);
@@ -429,7 +435,9 @@ fn lamp(p:vec3f,n:vec3f,v:vec3f,position:vec3f,color:vec3f,f0:vec3f,rough:f32)->
     let g=nv/(nv*(1.0-k)+k)*nl/(nl*(1.0-k)+k);
     let fresnel=f0+(1.0-f0)*pow(1.0-vh,5.0);
     let spec=d*g*fresnel/max(4.0*nv*nl,.001);
-    return (spec+vec3f(.055))*color*nl*shadow(p+n*.008,position);
+    var shaded=1.0;
+    if !unshadowed {shaded=shadow(p+n*.008,position);}
+    return (spec+vec3f(.055))*color*nl*shaded;
 }
 fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
     let eye=-ray;let energy=musical();
@@ -465,37 +473,94 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
     if u.scroller.z>1.5 {
         // Experimental tinted solid glass: refracted chamber plus absorption,
         // a reflective coating and lit cut edges. Not a full multi-bounce trace.
-        let refracted=normalize(ray+n*.085);
-        let transmitted=chamber(refracted)*mix(vec3f(.55,.83,.96),vec3f(.96,.65,.36),warm(p.x));
+        var seen=traced_behind;
+        if !traced {seen=chamber(normalize(ray+n*.085));}
+        let transmitted=seen*mix(vec3f(.55,.83,.96),vec3f(.96,.65,.36),warm(p.x));
         color=mix(transmitted*1.35,color,.065+fresnel*.75);
         let transmitted_xy=p.xy+n.xy*.025;
         let behind=sine_at(transmitted_xy);
-        let filament_depth=select(filament_z(transmitted_xy),ring_centre().z,ring());
-        if filament_depth<p.z-.02 {
+        // A traced view behind already holds the sine text.
+        if !traced && filament_z(transmitted_xy)<p.z-.02 {
             color+=heat(p.x)*smoothstep(-.5,.8,behind)*.55;
         }
         color+=heat(p.x)*pow(1.0-face,2.0)*lighting(.462,.20+energy*.25+bass()*.85+attack()*.7);
     }
     return color;
 }
+struct Hit {p:vec3f,material:f32,found:bool}
+// Ring layout: march from `start` along `dir` to the first surface.
+fn ring_march(origin:vec3f,dir:vec3f,steps:i32)->Hit {
+    var t=0.0;
+    for(var i=0;i<steps;i++) {
+        let p=origin+dir*t;
+        if p.z< -4.4 || abs(p.x)>2.4 || abs(p.y)>1.7 {break;}
+        let sample=scene(p);
+        if sample.x<.0012 {return Hit(p,sample.y,true);}
+        t+=max(sample.x*.5,.001);
+    }
+    return Hit(vec3f(0),0.0,false);
+}
+// Step through the solid a ray has just entered, to where it leaves; w is 0
+// if it doesn't get out (grazing an edge-on letter, say).
+fn ring_exit(p:vec3f,dir:vec3f)->vec4f {
+    var t=.004;
+    for(var i=0;i<40;i++) {
+        let d=scene(p+dir*t).x;
+        if d>.002 {return vec4f(p+dir*t,1);}
+        t+=max(-d,.006);
+    }
+    return vec4f(p,0);
+}
+fn ring_opacity(p:vec3f,material:f32)->f32 {
+    if material>.5 {return arrival();}
+    return ring_fade(ring_local(p,ring_of(p)).x)*arrival();
+}
+fn ring_haze(p:vec3f)->f32 {return (1.0-exp(-max(-p.z,0.0)*.22))*.65;}
+// Ring layout: glass and fading letters show what lies behind them. A second
+// march finds it (through the glass, slightly refracted); that layer is shaded
+// without shadow rays, over the chamber. Not a full multi-bounce trace.
+fn ring_view(eye:vec3f,ray:vec3f,background:vec3f)->vec3f {
+    let first=ring_march(eye+ray*(4.8/-ray.z),ray,128);
+    if !first.found {return background;}
+    let n=normal(first.p,first.material);
+    let alpha=ring_opacity(first.p,first.material);
+    let glass=u.scroller.z>1.5 && first.material<.5;
+    let dir=select(ray,normalize(ray+n*.085),glass);
+    var behind=chamber(dir);
+    let out=ring_exit(first.p,dir);
+    if (glass || alpha<.999) && out.w>.5 {
+        let second=ring_march(out.xyz,dir,96);
+        if second.found {
+            unshadowed=true;
+            let far=shade(second.p,normal(second.p,second.material),dir,second.material);
+            unshadowed=false;
+            behind=mix(behind,mix(far,behind,ring_haze(second.p)),ring_opacity(second.p,second.material));
+        }
+    }
+    // Through thick glass the far layer is dimmer and softer than the chamber.
+    traced=true;traced_behind=mix(chamber(dir),behind,.55);
+    let near=shade(first.p,n,ray,first.material);
+    traced=false;
+    return mix(behind,mix(near,background,ring_haze(first.p)),alpha);
+}
 @fragment fn scroller(v:Vertex)->@location(0) vec4f {
     let xy=(v.uv-.5)*vec2f(2.0*aspect(),-2.0);
     let ray=normalize(vec3f(xy,-5.5));
     var color=chamber(ray);
-    if u.state.x>=8.0 {
+    if u.state.x>=8.0 && ring() {
+        color=ring_view(vec3f(0,0,5.5),ray,color);
+    } else if u.state.x>=8.0 {
         let eye=vec3f(0,0,5.5);var t=5.05/-ray.z;var hit=false;var material=0.0;
         var p=eye+ray*t;
-        // The ring reaches further back than the rows' arc.
         let arc=arc_radius()*(cos(arc_limit())-1.0)-.3;
-        let deepest=select(select(-.5,arc,curved()),-4.75,ring());
-        let wide=select(vec2f(field_extent().x+.1,1.25),vec2f(2.6,1.7),ring());
-        let steps=select(80,128,ring());
-        for(var i=0;i<steps;i++) {
+        let deepest=select(-.5,arc,curved());
+        let wide=vec2f(field_extent().x+.1,1.25);
+        for(var i=0;i<80;i++) {
             p=eye+ray*t;
             if p.z<deepest || abs(p.x)>wide.x || abs(p.y)>wide.y {break;}
             // Behind both the rows' slab and the overlay, a ray can only leave
             // the cylinder past its silhouette, where there are no letters.
-            if !ring() && on_arc(p).x< -.3 && p.z<filament_z(p.xy)-.05 {break;}
+            if on_arc(p).x< -.3 && p.z<filament_z(p.xy)-.05 {break;}
             let sample=scene(p);
             if sample.x<.0012 {hit=true;material=sample.y;break;}
             t+=max(sample.x*.50,.001);
@@ -503,13 +568,12 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
         if hit {
             let n=normal(p,material);
             let surface=shade(p,n,ray,material);
-            // The ring's far side stays visible behind the front.
-            let depth=1.0-exp(-max(-p.z,0.0)*select(1.0,.22,ring()));
+            let depth=1.0-exp(-max(-p.z,0.0));
             // Letters on the arc fade as they turn edge-on, past the sides.
             let turn=abs(atan2(p.x,p.z+arc_radius()));
             let limit=arc_limit();
-            let edge=select(smoothstep(limit-.35,limit-.04,turn),0.0,ring() || !curved());
-            color=mix(surface,color,max(depth*.65,edge));
+            let edge=select(smoothstep(limit-.35,limit-.04,turn),0.0,!curved());
+            color=mix(color,mix(surface,color,max(depth*.65,edge)),arrival());
         }
     }
     // Thin local haze receives the same cool/hot lighting. Keep the central

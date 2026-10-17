@@ -242,18 +242,32 @@ with the rounding to whole pixels smoothed out. All of this is authored.
 Each frame, the GPU renders both distance fields once into a texture; the
 marched letters then sample it.
 
-`--scroller-layout ring` (or **G**) is an authored experiment: one tilted ring
-of letters, smaller than the arc's cylinder (radius 2.26) and seen whole, where
-the arc is only the front of a larger one carrying both rows. Its front, at the upper row's height, shows exactly what the upper
-row shows at the centre of the picture. Going round, the same letters pass
-behind and travel right along the far side, at the lower row's height, seen
-from behind and so mirrored. They're replaced out of sight just behind the
-right-hand side, where they sink into the ring. The sine text stands inside
-the ring, so the layering matches the original: in front of the far side,
-behind the front. But a rigid ring can't show what the original lower row
-shows, the text's second copy revealed from its end and read normally. The
-far side instead repeats the first copy about three and a half seconds later.
-The two rows stay the default.
+`--scroller-layout ring` (or **G**) is an authored experiment: two rings of
+letters, one per row, each a whole circle of radius 2 around a vertical axis,
+seen level from between them. Each ring's front, on its row's lines (8–88 and
+112–192), shows exactly what that row shows at the centre of the picture and
+turns the row's way: the upper ring's front moves left, the lower's right.
+Going round, the letters cross the far side, seen from behind and so
+mirrored. From the level viewpoint each far side appears behind the inner
+half of its own front, the two meeting in the gap between the rows without
+overlapping. They show through gaps and through the glass: a second march
+finds what lies behind a glass or fading letter, shaded without shadow rays
+and dimmed a little through the glass. A ring holds about 17 characters of a
+117-character text, so letters are replaced at a seam at the back centre,
+behind the fronts. Over a radian either side of it they fade out, sinking a
+little into the ring, and the next text fades in the same way, so nothing
+pops. The sine text stands inside the upper ring and in front of the lower,
+as it passes the rows. The rings start empty, as the original's rows do, and
+the first letters fade in at the seam about four seconds into part 2. With
+the rings the far sides show each row's text before and after it passes
+the front, which the original's flat rows never show. The two rows stay the
+default.
+
+In both layouts, letters and the sine text fade in over part 2's first 0.8
+seconds; the text itself arrives later, as in the original, so this only
+softens the first sine row at the screen's bottom edge. At the end the
+whole scene fades with the original's palette fade. On the arc, letters
+enter and leave beyond the screen's sides, fading as they turn edge-on.
 
 `--faithful` (or **M**) shows faithful HD: the original backdrop, with the
 original letters and overlay dots drawn over it at display resolution and
@@ -281,7 +295,7 @@ optical simulation. All fields are generated locally in memory.
 | C | Compare original on the left with the selected HD mode on the right |
 | 1 / 2 / 3 | Scroller preset: ribbons, sculpted or glass |
 | L | Scroller lighting: studio or musical |
-| G | Scroller layout: rows or ring |
+| G | Scroller layout: rows or rings |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |

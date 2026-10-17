@@ -82,14 +82,14 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 | `--scroller` or `--scroller glass` | Selected curved glass treatment with reflective edges |
 | `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights |
 | `--scroller-lighting studio` | Steady lighting, selected by default |
-| `--scroller-layout ring` | Experimental: one tilted ring of letters instead of two rows |
+| `--scroller-layout ring` | Experimental: each row becomes a whole ring of letters |
 | `--faithful` | Faithful HD: the original look, with smooth letters and dots |
 
 The scroller modes include the laser transition and continue to the end of
 part 2, around 42 seconds. Omit `--seek` for the complete intro; use `--seek 18`
 to watch the tiles reveal the new scene. Add `--split` for the original on the
 left. In the app, **1 / 2 / 3** switch presets, **L** switches lighting and
-**G** switches between rows and the ring without restarting the music.
+**G** switches between rows and rings without restarting the music.
 
 The letters are drawn from the original font, text and sine tables, read from
 your local data when the preview starts, at the proportions of the original
@@ -102,14 +102,15 @@ lower row and behind the upper row, where it remains visible through the glass.
 
 Depth, extrusion, the arc, materials and lighting are authored experiments.
 Glass transmission, reflections, haze and contact shadows are analytic
-approximations, not a full optical simulation.
+approximations, not a full optical simulation. Letters and the sine text
+fade in as part 2 begins, and the scene fades out with its end.
 
-The ring is an experiment: a smaller, tilted ring seen whole, where the arc is
-just the front of a larger one. Its front matches the upper row exactly; the same
-letters then travel round behind it and back across the far side, seen from
-behind. The original's lower row shows something a ring can't: the second copy
-of the text, read normally, revealed from its end. So the ring drops that copy,
-and the two rows remain the default.
+The rings are an experiment: one whole ring of letters per row, seen level
+from between them. Each ring's front matches its row exactly and turns the
+row's way. Its letters then travel round the back, seen from behind and
+mirrored, visible behind the fronts and through the glass. The text is longer
+than a ring, so letters fade out and in again at a seam at the back. The two
+rows, on their arc, remain the default.
 
 | Key | Action |
 | --- | --- |

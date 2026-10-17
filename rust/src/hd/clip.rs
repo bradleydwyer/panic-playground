@@ -196,9 +196,9 @@ pub enum ScrollerLayout {
     /// The original's two rows, at its proportions, on one authored arc of
     /// constant curvature that turns away towards the sides of the screen.
     Rows = 0,
-    /// Authored alternative: one tilted ring. Its front follows the upper
-    /// row exactly; its back carries the same letters after they pass the
-    /// left side, seen from behind. The lower row's text isn't shown.
+    /// Authored alternative: one whole ring of letters per row. Each front
+    /// follows its row exactly; the far sides carry the same text seen from
+    /// behind, with letters replaced at a fading seam at the back.
     Ring = 1,
 }
 
