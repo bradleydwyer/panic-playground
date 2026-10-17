@@ -174,7 +174,14 @@ uses the original pixels during this transition.
 | C | Compare original on the left with the selected HD mode on the right |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
+| P | Show or hide the frame-rate counter |
+| V | Toggle vsync |
 | Escape | Quit |
+
+`--fps` starts with the frame-rate counter in the top-left corner, showing
+frames per second and milliseconds per frame. With vsync the rate can't exceed
+the display's refresh rate; `--no-vsync`, or V, shows how fast frames can
+actually be drawn. Captures never include the counter.
 
 Without `--modern`, the faithful HD mode retains the original painted artwork,
 using interpolated contours and shading. Its detail is limited by the source

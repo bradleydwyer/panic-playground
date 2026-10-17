@@ -29,6 +29,8 @@ struct Options {
     comparison: u32,
     modern: bool,
     transition: bool,
+    fps: bool,
+    vsync: bool,
     seconds: Option<f64>,
 }
 impl Options {
@@ -47,6 +49,8 @@ impl Options {
             comparison: 0,
             modern: false,
             transition: false,
+            fps: false,
+            vsync: true,
             seconds: None,
         };
         let mut args = std::env::args().skip(1);
@@ -84,6 +88,8 @@ impl Options {
                 "--original" => o.comparison = 1,
                 "--split" => o.comparison = 2,
                 "--modern" => o.modern = true,
+                "--fps" => o.fps = true,
+                "--no-vsync" => o.vsync = false,
                 // --laser is kept as an alias from the transition trials.
                 "--transition" | "--laser" => {
                     o.transition = true;
@@ -95,7 +101,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — opening through the logo\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         3D letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG · Esc: quit\nThe preview holds on the logo. --transition continues to the next backdrop; its scroller is not played."
+                        "Panic HD — opening through the logo\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         3D letter fly-bys, HDR lighting and heated metal\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG · P: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the next backdrop; its scroller is not played."
                     );
                     std::process::exit(0);
                 }
@@ -137,6 +143,16 @@ fn set_audio(
     Ok(samples.len())
 }
 
+/// With vsync the rate is capped at the display's refresh rate; without it
+/// the counter shows how fast frames can actually be produced.
+fn present_mode(vsync: bool) -> wgpu::PresentMode {
+    if vsync {
+        wgpu::PresentMode::Fifo
+    } else {
+        wgpu::PresentMode::AutoNoVsync
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("panic-hd: {error}");
@@ -173,6 +189,7 @@ fn run() -> Result<(), String> {
                 size: o.size,
                 comparison: o.comparison,
                 modern: o.modern,
+                hud: None,
             },
             &o.out,
             format,
@@ -225,7 +242,7 @@ fn run() -> Result<(), String> {
         format,
         width: width.max(1),
         height: height.max(1),
-        present_mode: wgpu::PresentMode::Fifo,
+        present_mode: present_mode(o.vsync),
         desired_maximum_frame_latency: 2,
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
         view_formats: vec![],
@@ -252,6 +269,10 @@ fn run() -> Result<(), String> {
     let runtime = Instant::now();
     let mut presented = 0_u64;
     let mut last_frame = Instant::now();
+    // Frames per second and milliseconds per frame, averaged over ~0.25 s.
+    let mut rate = [0.0_f32; 2];
+    let mut rate_frames = 0_u32;
+    let mut rate_start = Instant::now();
     'preview: loop {
         let now = Instant::now();
         let delta = now.duration_since(last_frame).as_secs_f64();
@@ -308,6 +329,12 @@ fn run() -> Result<(), String> {
                     Keycode::Tab => o.comparison = if o.comparison == 1 { 0 } else { 1 },
                     Keycode::C => o.comparison = if o.comparison == 2 { 0 } else { 2 },
                     Keycode::M => o.modern = !o.modern,
+                    Keycode::P => o.fps = !o.fps,
+                    Keycode::V => {
+                        o.vsync = !o.vsync;
+                        config.present_mode = present_mode(o.vsync);
+                        surface.configure(&renderer.device, &config);
+                    }
                     Keycode::S => capture = true,
                     Keycode::F => {
                         o.fullscreen = !o.fullscreen;
@@ -342,6 +369,7 @@ fn run() -> Result<(), String> {
                     size: o.size,
                     comparison: o.comparison,
                     modern: o.modern,
+                    hud: None,
                 },
                 &o.out,
                 format,
@@ -388,6 +416,7 @@ fn run() -> Result<(), String> {
                 size: (w, h),
                 comparison: o.comparison,
                 modern: o.modern,
+                hud: o.fps.then_some(rate),
             },
         );
         let frame = match surface.get_current_texture() {
@@ -411,6 +440,16 @@ fn run() -> Result<(), String> {
         renderer.queue.submit([encoder.finish()]);
         renderer.queue.present(frame);
         presented += 1;
+        rate_frames += 1;
+        let elapsed = rate_start.elapsed().as_secs_f32();
+        if elapsed >= 0.25 {
+            rate = [
+                rate_frames as f32 / elapsed,
+                elapsed * 1000.0 / rate_frames as f32,
+            ];
+            rate_frames = 0;
+            rate_start = Instant::now();
+        }
     }
     device.pause();
     println!(

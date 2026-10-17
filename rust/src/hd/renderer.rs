@@ -23,6 +23,8 @@ struct Uniforms {
     /// centre carries the exposure length in sequence frames.
     plate_open_center: [f32; 4],
     plate_open_rotation: [f32; 4],
+    /// On-screen counter: shown, frames per second, milliseconds per frame.
+    hud: [f32; 4],
 }
 
 /// Authored exposure for the modern renderer's motion blur, in sequence
@@ -36,6 +38,9 @@ pub struct View {
     pub size: (u32, u32),
     pub comparison: u32,
     pub modern: bool,
+    /// Frames per second and milliseconds per frame for the on-screen
+    /// counter, or `None` to hide it (captures never show it).
+    pub hud: Option<[f32; 2]>,
 }
 
 pub struct Renderer {
@@ -51,6 +56,8 @@ pub struct Renderer {
     background: wgpu::RenderPipeline,
     stars: wgpu::RenderPipeline,
     foreground: wgpu::RenderPipeline,
+    hud: wgpu::RenderPipeline,
+    hud_visible: bool,
     srgb: bool,
     modern_renderer: Modern,
     modern_view: bool,
@@ -222,6 +229,7 @@ impl Renderer {
             "foreground",
             Some(wgpu::BlendState::ALPHA_BLENDING),
         );
+        let hud = pipeline("fullscreen", "hud", Some(wgpu::BlendState::ALPHA_BLENDING));
         let modern_renderer = Modern::new(&device, &layout, &uniform, &reference, format);
         Ok((
             Self {
@@ -237,6 +245,8 @@ impl Renderer {
                 background,
                 stars,
                 foreground,
+                hud,
+                hud_visible: false,
                 srgb: format.is_srgb(),
                 modern_renderer,
                 modern_view: false,
@@ -252,7 +262,9 @@ impl Renderer {
             size,
             comparison,
             modern,
+            hud,
         } = view;
+        self.hud_visible = hud.is_some();
         self.modern_view = modern;
         self.tile_transition = clip
             .transition
@@ -365,6 +377,7 @@ impl Renderer {
             audio: clip.audio_at(time),
             plate_open_center,
             plate_open_rotation,
+            hud: hud.map_or([0.0; 4], |[fps, ms]| [1.0, fps, ms, 0.0]),
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
@@ -374,8 +387,30 @@ impl Renderer {
         if self.modern_view {
             self.modern_renderer
                 .draw(encoder, view, &self.bind_group, self.tile_transition);
-            return;
+        } else {
+            self.draw_faithful(encoder, view);
         }
+        if self.hud_visible {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Frame-rate counter"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_pipeline(&self.hud);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    fn draw_faithful(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("HD intro"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

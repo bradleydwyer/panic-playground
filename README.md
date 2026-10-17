@@ -81,7 +81,12 @@ sheets were removed, but remain in the Git history (commits `4c43ab2`,
 | C | Toggle the split comparison |
 | F | Toggle fullscreen |
 | S | Save a PNG under `artifacts/` |
+| P | Show or hide the frame-rate counter |
+| V | Toggle vsync |
 | Escape | Quit |
+
+Add `--fps` to show a frame-rate counter, and `--no-vsync` to see the uncapped
+rate.
 
 The logo appears around 14.57 seconds. The preview's audio ends around 19.49
 seconds, while the logo keeps animating. End, then Space, jumps straight to it.
