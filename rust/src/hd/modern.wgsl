@@ -250,11 +250,10 @@ fn screen_of(direction:vec3f)->vec2f {
     return uv/(vec2f(u.screen.x/u.screen.y,1)*2.0)+.5;
 }
 fn scene_light(r:vec3f,blur:f32)->vec3f {
-    let sky=space_light(r,blur);
-    if r.z>-.02 {return sky;}
+    if r.z>-.02 {return space_light(r,blur);}
     let uv=screen_of(r);
     let border=min(min(uv.x,1.0-uv.x),min(uv.y,1.0-uv.y));
-    if border<=0.0 {return sky;}
+    if border<=0.0 {return space_light(r,blur);}
     var seen=textureSampleLevel(backdrop,linear,uv,0).rgb;
     if blur>0.0 {
         // A rotated four-tap footprint about `blur` wide, so single-pixel
@@ -265,7 +264,10 @@ fn scene_light(r:vec3f,blur:f32)->vec3f {
                  +textureSampleLevel(backdrop,linear,uv+px*vec2f(-1,-.33),0).rgb
                  +textureSampleLevel(backdrop,linear,uv+px*vec2f(.33,-1),0).rgb);
     }
-    return mix(sky,seen,smoothstep(0.0,.03,border)*smoothstep(-.02,-.12,r.z));
+    // Well inside the frame the backdrop is all there is; skip the sky.
+    let weight=smoothstep(0.0,.03,border)*smoothstep(-.02,-.12,r.z);
+    if weight>=1.0 {return seen;}
+    return mix(space_light(r,blur),seen,weight);
 }
 // `mirror` is the reflection without the cast-metal ripple: stars and
 // streaks are so fine that the ripple would break them into glitter.
@@ -280,6 +282,7 @@ fn environment(p:vec3f,r:vec3f,mirror:vec3f)->vec3f {
 // the metal: a dim sheen and thin strips behind the camera, by direction, so
 // bevels catch them as continuous highlights. Authored lighting.
 fn strips(r:vec3f)->vec3f {
+    if r.z<=-.2 {return vec3f(0);}
     let line=r.xy/max(r.z,.2);
     // A broad soft panel above gives the faces a sheen that slides as the
     // letters cross the screen.
@@ -657,7 +660,10 @@ fn cross_letter(start:vec3f,direction:vec3f,id:u32)->vec4f {
 const GLASS_IOR=vec3f(1.498,1.505,1.512);
 const GLASS_ABSORPTION=vec3f(1.9,.75,.3);
 fn glass(p:vec3f,ray:vec3f,id:u32,behind:vec3f,layered:bool)->vec3f {
-    let geometric=normal(p,id);
+    // On the flat cap the distance field's gradient is exactly ±z.
+    var geometric=vec3f(0,0,sign(p.z));
+    let outline=letter_outline(p.xy,id);
+    if outline>-.0245 {geometric=normal(p,id);}
     // Cast-glass ripples bend the light without moving the outline.
     let e=vec2f(.0008,0);
     let bump=vec2f(cast_surface(p.xy+e.xy)-cast_surface(p.xy-e.xy),cast_surface(p.xy+e.yx)-cast_surface(p.xy-e.yx))/(2.0*e.x);
@@ -705,11 +711,14 @@ fn glass(p:vec3f,ray:vec3f,id:u32,behind:vec3f,layered:bool)->vec3f {
     // Light trapped by internal reflection leaks out near the edges and
     // bevels, so the blocks read against black space; brighter towards the
     // top strip. A little scattering lets thick paths glow faintly.
-    let e2=vec2f(.0015,0);
-    let rim_normal=normalize(vec2f(letter_outline(p.xy+e2.xy,id)-letter_outline(p.xy-e2.xy,id),letter_outline(p.xy+e2.yx,id)-letter_outline(p.xy-e2.yx,id))+1e-6);
     // Distance to the nearest edge line: on a face one coordinate is zero.
-    let edge=length(vec2f(max(-letter_outline(p.xy,id),0.0),max(LETTER_DEPTH-abs(p.z),0.0)));
-    let rim=exp(-edge/.016)*(.25+.75*smoothstep(-.2,1.0,dot(rim_normal,vec2f(-.35,.94))));
+    let edge=length(vec2f(max(-outline,0.0),max(LETTER_DEPTH-abs(p.z),0.0)));
+    var rim=0.0;
+    if edge<.1 {
+        let e2=vec2f(.0015,0);
+        let rim_normal=normalize(vec2f(letter_outline(p.xy+e2.xy,id)-letter_outline(p.xy-e2.xy,id),letter_outline(p.xy+e2.yx,id)-letter_outline(p.xy-e2.yx,id))+1e-6);
+        rim=exp(-edge/.016)*(.25+.75*smoothstep(-.2,1.0,dot(rim_normal,vec2f(-.35,.94))));
+    }
     let scatter=(1.0-exp(-1.4*travelled))*vec3f(.006,.016,.03);
     return color+(transmitted*tint+scatter+rim*vec3f(.20,.42,.75))*(1.0-fresnel);
 }
@@ -792,9 +801,13 @@ const TILE=8.0;
         let low=min(a.xy,b.xy);let high=max(a.zw,b.zw);
         if any(high<low_corner) || any(low>high_corner) {continue;}
         mask|=1u<<(id-range.x);
-        if a.x<-1e8 || b.x<-1e8 {count=MOTION_SAMPLES;reach=60000.0;continue;}
+        // Very long smears hide sampling noise, so they get fewer samples:
+        // the full count up to about 128 pixels of travel, tapering to half
+        // for a letter passing right by the camera.
+        if a.x<-1e8 || b.x<-1e8 {count=max(count,MOTION_SAMPLES/2u);reach=60000.0;continue;}
         let travel=max(length(b.xy-a.xy),length(b.zw-a.zw));
-        count=max(count,clamp(u32(ceil(travel/2.0)),1u,MOTION_SAMPLES));
+        let most=u32(mix(f32(MOTION_SAMPLES),f32(MOTION_SAMPLES/2u),smoothstep(128.0,512.0,travel)));
+        count=max(count,clamp(u32(ceil(travel/2.0)),1u,most));
         reach=max(reach,travel);
     }
     shutter=1.0;
@@ -815,33 +828,76 @@ fn nearest_object(screen:vec2f)->vec2f {
     return nearest;
 }
 
-// Centre-ray coverage: object id + 1 (0 for none), hit distance, and the
-// clearance in pixels: how far the view could shift before this ray met a
-// different surface (an edge of the face it hits, or any other object).
+fn pixel_of(world_point:vec3f)->vec2f {
+    let q=world_point-CAMERA;
+    return vec2f(q.x,-q.y)*FOCAL/max(-q.z,1e-4)*u.screen.y*.5+u.screen.xy*.5;
+}
+// How far, in pixels, an object's box moves on screen during the exposure.
+fn box_travel(id:u32)->f32 {
+    shutter=0.0;
+    let a=screen_box(id);
+    shutter=1.0;
+    let b=screen_box(id);
+    if a.x<-1e8 || b.x<-1e8 {return 1e9;}
+    return max(length(b.xy-a.xy),length(b.zw-a.zw));
+}
+// Centre-ray coverage: object id + 1 (0 for none), hit distance, and a
+// margin in pixels. A positive margin means the motion within the exposure
+// can't bring a different surface under this pixel: the face it hits extends
+// farther than its own point moves, and every other object stays farther
+// away than its box moves.
 @fragment fn probe(v:Vertex)->@location(0) vec4f {
     let tile=tile_at(v.position.xy);
     if tile.x==0.0 {return vec4f(0);}
     relevant=u32(tile.y);
     let direction=view_ray(v.uv);
     let range=object_range();
+    let angle_to_pixels=FOCAL*u.screen.y*.5;
     var nearest=vec4f(0,1e6,0,0);
-    var clearance=1.0;
+    var margin=1e9;
+    var nearest_ray=vec3f(0);
+    var nearest_point=vec3f(0);
     for(var id=range.x;id<range.y;id++) {
-        if !is_relevant(id) || !letter_present(id) {continue;}
+        if !is_relevant(id) {continue;}
+        if !letter_present(id) {
+            // Passing the camera during the exposure: it was here at the
+            // start, so leave this pixel to the full coverage samples.
+            shutter=0.0;
+            if letter_present(id) {margin=-1.0;}
+            shutter=1.0;
+            continue;
+        }
         let ray=normalize(local_direction(direction,id));
         let hit=trace(local(CAMERA,id),ray,id,false);
-        if hit.w<0.0 {clearance=min(clearance,hit.x);continue;}
+        if hit.w<0.0 {
+            margin=min(margin,hit.x*angle_to_pixels-box_travel(id)*1.1-2.0);
+            continue;
+        }
         if hit.w>=nearest.y {continue;}
+        nearest=vec4f(f32(id+1u),hit.w,0,0);
+        nearest_ray=ray;
+        nearest_point=hit.xyz;
+    }
+    if nearest.x>0.0 {
+        let id=u32(nearest.x)-1u;
         // Hits on a flat cap stay on it for the outline distance, shortened
         // by how obliquely the cap is seen. Walls and bevels have none.
-        let shape=profile(hit.xyz.xy,id);
+        let shape=profile(nearest_point.xy,id);
         var inside=0.0;
-        if abs(hit.xyz.z)>shape.y-shape.z-.002 {inside=max(-shape.x-shape.z,0.0)*abs(ray.z)/hit.w;}
-        nearest=vec4f(f32(id+1u),hit.w,inside,0);
+        if abs(nearest_point.z)>shape.y-shape.z-.002 {
+            inside=max(-shape.x-shape.z,0.0)*abs(nearest_ray.z)/nearest.y*angle_to_pixels;
+        }
+        // The point's own path through the exposure, plus the change in
+        // scale across that much face as the object approaches.
+        shutter=0.0;
+        let open=world(nearest_point,id)+center(id);
+        shutter=1.0;
+        let close=world(nearest_point,id)+center(id);
+        let moved=length(pixel_of(close)-pixel_of(open));
+        let scale=abs(1.0-(CAMERA.z-close.z)/max(CAMERA.z-open.z,1e-4));
+        margin=min(margin,inside-(moved*1.2+inside*scale*1.2+2.0));
     }
-    if nearest.x==0.0 {return vec4f(0,0,clearance*FOCAL*u.screen.y*.5,0);}
-    nearest.z=min(nearest.z,clearance)*FOCAL*u.screen.y*.5;
-    return nearest;
+    return vec4f(nearest.xy,margin,0);
 }
 
 @fragment fn model(v:Vertex)->@location(0) vec4f {
@@ -874,7 +930,7 @@ fn nearest_object(screen:vec2f)->vec2f {
     // Nothing within reach of the motion: coverage can't change during the
     // exposure, so one shade at mid-exposure (or the backdrop) is exact.
     var settled=false;
-    if moving>1u && centre.z>tile.z*1.1+2.0 {
+    if moving>1u && centre.z>0.0 {
         if centre.x<.5 {return vec4f(background,1);}
         settled=true;
     }
