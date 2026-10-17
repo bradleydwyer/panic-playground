@@ -33,6 +33,13 @@ struct Uniforms {
     /// interpolated between its frames: upper and lower row text pixel at
     /// screen x = 0, overlay step, and the authored layout (0 rows, 1 ring).
     glyphs: [f32; 4],
+    /// Scroller background: oscillator `xx / 128` and `yy / 128` interpolated
+    /// between ticks, backdrop style (0 chamber, 1 wall, 2 chrome) and the
+    /// authored bump shape.
+    backdrop: [f32; 4],
+    /// Bump wall: oscillator movement over its exposure (source pixels, from
+    /// shutter open to now) and the authored wall strength.
+    backdrop_motion: [f32; 4],
 }
 
 /// The only WGSL declaration of [`Uniforms`] and its binding. [`wgsl`]
@@ -44,6 +51,8 @@ struct Controls {
     state: vec4f,  // reference phase, sequence frame, door, temporal shape interpolation
     misc: vec4f,   // composition aspect, sRGB output, logo reveal time, modern style
     flights: array<vec4f,10>, plate_center: vec4f, plate_rotation: vec4f,
+    // next_palette: the laser cut's destination colours; with the scroller,
+    // its 8x8 background image (linear, unfiltered; see clip.rs).
     transition: vec4f, tile_order: array<vec4f,40>, next_palette: array<vec4f,64>,
     scroller: vec4f,     // shown, seconds since the text began, unused, exit fade
     scroll_light: vec4f, // relative level, musical (1) or studio (0), bass, treble
@@ -55,6 +64,13 @@ struct Controls {
     // Scroller text positions from the original's scroll counters: upper and
     // lower row text pixel at screen x = 0, overlay step, layout (0 rows, 1 ring).
     glyphs: vec4f,
+    // Scroller background: oscillator xx/128 and yy/128 (source pixels,
+    // interpolated between ticks), backdrop (0 chamber, 1 tinted wall, 2 chrome
+    // wall) and the authored bump shape (0 rounded square .. 1 hemisphere).
+    backdrop: vec4f,
+    // Bump wall: oscillator movement over its exposure (source pixels), the
+    // authored wall strength, unused.
+    backdrop_motion: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: Controls;
 ";
@@ -63,6 +79,10 @@ struct Controls {
 pub(super) fn wgsl(body: &str) -> String {
     [CONTROLS_WGSL, body].concat()
 }
+
+/// Authored exposure for the bump wall's motion blur, in 70 Hz ticks: about
+/// 1/100 s, matching the intro's shutter.
+const WALL_SHUTTER_TICKS: f64 = 0.7;
 
 /// Authored exposure for the modern renderer's motion blur, in sequence
 /// frames (35 per second): about 1/100 s, a little under a 180° shutter at
@@ -382,7 +402,12 @@ impl Renderer {
         } = view;
         self.hud_visible = hud.is_some();
         self.modern_view = modern;
-        self.scroller = clip.scroller.is_some();
+        // The scroller scene is first seen through the laser cut.
+        self.scroller = clip.scroller.is_some()
+            && clip
+                .transition
+                .as_ref()
+                .is_some_and(|cut| time * 70.0 >= cut.start_tick as f64);
         self.tile_transition = clip.transition.as_ref().is_some_and(|cut| {
             time * 70.0 >= cut.start_tick as f64 && time * 70.0 < cut.end_tick as f64 + 78.0
         });
@@ -489,6 +514,8 @@ impl Renderer {
         let mut scroller = [0.0; 4];
         let mut scroll_light = [0.0; 4];
         let mut glyphs = [0.0; 4];
+        let mut backdrop = [0.0; 4];
+        let mut backdrop_motion = [0.0; 4];
         if let Some(scroll) = &clip.scroller {
             self.upload_glyphs(scroll);
             if let Some([upper, lower, overlay]) = clip.scroll_at(time) {
@@ -516,15 +543,40 @@ impl Renderer {
                 bass,
                 treble,
             ];
-            if frame.state.phase >= 8 {
-                for (i, color) in next_palette.iter_mut().enumerate() {
-                    for (channel, c) in color[..3].iter_mut().enumerate() {
-                        *c = scroll.backdrop[index][i][channel] * (1.0 - mix)
-                            + scroll.backdrop[next][i][channel] * mix;
-                    }
-                    color[3] = 1.0;
+            // The scroller replaces the transition's palette with its
+            // background image; mix only blends during the exit fade.
+            for (i, color) in next_palette.iter_mut().enumerate() {
+                for (channel, c) in color[..3].iter_mut().enumerate() {
+                    *c = scroll.backdrop[index][i][channel] * (1.0 - mix)
+                        + scroll.backdrop[next][i][channel] * mix;
                 }
+                color[3] = 1.0;
             }
+            // The oscillator is constant outside the scroll, so blending with
+            // the following tick is always safe.
+            let oscillator_at = |t: f64| {
+                let i = clip.frame_index(t);
+                let [a, b] = [
+                    scroll.oscillator[i],
+                    scroll.oscillator[(i + 1).min(clip.frames.len() - 1)],
+                ];
+                let f = (t.max(0.0) * 70.0).fract() as f32;
+                [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]
+            };
+            let now = oscillator_at(time);
+            let open = oscillator_at(time - WALL_SHUTTER_TICKS / 70.0);
+            backdrop = [
+                now[0],
+                now[1],
+                scroll.backdrop_style as u32 as f32,
+                scroll.wall_shape,
+            ];
+            backdrop_motion = [
+                now[0] - open[0],
+                now[1] - open[1],
+                scroll.wall_strength,
+                0.0,
+            ];
         }
         let u = Uniforms {
             screen: [size.0 as f32, size.1 as f32, time as f32, comparison as f32],
@@ -553,6 +605,8 @@ impl Renderer {
             plate_open_rotation,
             hud: hud.map_or([0.0; 4], |[fps, ms]| [1.0, fps, ms, 0.0]),
             glyphs,
+            backdrop,
+            backdrop_motion,
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
@@ -1047,6 +1101,8 @@ mod tests {
             plate_open_rotation,
             hud,
             glyphs,
+            backdrop,
+            backdrop_motion,
         ];
         // A field missing from this list leaves bytes unaccounted for.
         let last = size_of::<[f32; 4]>();

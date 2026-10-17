@@ -168,6 +168,7 @@ uses the original pixels during this transition.
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --scroller-layout ring --seek 27
+cargo run --release --locked --features hires --bin panic-hd -- --scroller --scroller-backdrop wall --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --faithful --seek 27
 ```
 
@@ -184,6 +185,43 @@ titanium lettering with curved row ends, and `sculpted`, the same material on
 straight extrusions. They have been removed from the code but remain in the
 Git history: commit `5e717ff` introduced them, and `ad08523` is the last
 commit with them.
+
+`--scroller-backdrop` selects the background: `chamber` (default), `wall` or
+`chrome`. Press **B** to cycle them while playing. The original's background
+is one 8 by 8 pixel tile repeated across the screen. Every tile uses the same
+64 palette entries, and each frame `palette()` loads them from an 8 by 8 window
+of a tile image, so the whole wall slides as the window moves. Two oscillators
+(`xx`, `yy`) move the window about ±144 pixels across every 5.5 seconds and
+±100 pixels down every 4.6 seconds. Alternate frames add half a tile to cancel
+the hardware scroll, so the wall doesn't travel with the text. The preview
+records the oscillator and image for each frame and interpolates the position
+at display time, so the wall moves in fractions of a pixel. An ignored test
+checks that they reproduce every background pixel of the original's scroll
+frames. Until the first `palette()` call the original still shows the intro's
+flat grey there; the HD view shows the tile wall at rest instead, so the laser
+reveals the same wall that then begins to move. `chamber` shows the moving
+tiles dimly inside the dark chamber.
+
+`wall` and `chrome` are trial treatments: chrome bumps on the original tile
+grid, 40 by 25 tiles in the 4:3 frame, continued across the wide screen.
+`wall` tints them with the tile image; `chrome` leaves them plain. `--wall-shape`
+(0 to 1, default 0.5; **[** and **]** in steps of 0.1) runs from a low cushion
+that fills the tile, like the original's shaded square, to a round hemisphere.
+Each sample intersects the bumps it can reach analytically. A dense, bright
+grid moving this fast reads as op art, so the wall is treated as a defocused
+background: eight samples per pixel spread over a small disc and over a
+1/100 s exposure blur it along the oscillator's own motion. The metal is rough,
+with broad, dim reflections of a studio surround and the letters' lamps, and
+its relief is pulled towards a flat tile's level. It is kept dim overall, with
+a gentle vignette towards the corners, so the letters stay the brightest thing
+on screen.
+Softened reflections of the letters themselves come from a short march through
+the letters' shapes, once per pixel, over the depth the rows' arc (or the
+rings' fronts) occupies in front of the wall. The letters' soft contact
+shadows fall on the wall as they do in the chamber. The glass letters show
+only the wall's average colour, so they don't look textured. `--wall-strength` (0 to 1,
+default 0.4; **-** and **=** in steps of 0.1) sets how present the wall is.
+All of this is authored, not recovered from the original.
 
 `--scroller-lighting musical` uses relative loudness and bass/treble
 onsets from the original PCM. Bass pulses the blue/orange lights, their metal
@@ -260,7 +298,9 @@ and dimmed a little through the glass. A ring holds about 17 characters of a
 behind the fronts. Over a radian either side of it they fade out, sinking a
 little into the ring, and the next text fades in the same way, so nothing
 pops. The sine text stands inside the upper ring and in front of the lower,
-as it passes the rows. The rings start empty, as the original's rows do, and
+as it passes the rows. The rings' fronts cast the same soft projected shadows
+on the chamber and the bump wall as the rows do, fading where the rings pass
+behind the chamber's plane. The rings start empty, as the original's rows do, and
 the first letters fade in at the seam about four seconds into part 2. With
 the rings the far sides show each row's text before and after it passes
 the front, which the original's flat rows never show. The two rows stay the
@@ -279,10 +319,8 @@ pixels, interpolated between them. The backdrop is the original picture with
 its letters replaced by the tile pattern eight pixels away, and its dots
 removed. Only the smoothing is new.
 
-The modern background filters the reconstruction's rapid palette cycling
-into a slow colour drift, then interpolates at display time. The original view
-keeps the unfiltered palette. This ambient filtering is independent of the
-musical accents and is precomputed so seeking and exports remain deterministic.
+The tile wall's oscillator and image are precomputed per frame, so seeking
+and exports remain deterministic.
 Materials, the arc, depth and light placement are authored. Contact
 shadows and reflections are approximations; glass is not a full multi-bounce
 optical simulation. All fields are generated locally in memory.
@@ -298,6 +336,9 @@ optical simulation. All fields are generated locally in memory.
 | C | Compare original on the left with the selected HD mode on the right |
 | L | Scroller lighting: studio or musical |
 | G | Scroller layout: rows or rings |
+| B | Cycle the scroller backdrop: chamber, wall, chrome |
+| [ / ] | Bump shape for the wall backdrops |
+| - / = | Strength of the wall backdrops |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |

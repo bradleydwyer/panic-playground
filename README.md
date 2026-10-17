@@ -81,13 +81,19 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 | `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights |
 | `--scroller-lighting studio` | Steady lighting, selected by default |
 | `--scroller-layout ring` | Experimental: each row becomes a whole ring of letters |
+| `--scroller-backdrop chamber` | Dark chamber with the original tile wall faintly visible, selected by default |
+| `--scroller-backdrop wall` | Trial wall of chrome bumps on the original tile grid, tinted blue steel |
+| `--scroller-backdrop chrome` | The same bumps as plain chrome |
+| `--wall-shape 0.5` | Bump shape, from 0 (a cushion like the original tile) to 1 (a hemisphere) |
+| `--wall-strength 0.4` | Presence of the bump wall, from 0 (dark) to 1 |
 | `--faithful` | Faithful HD: the original look, with smooth letters and dots |
 
 The scroller includes the laser transition and continues to the end of
 part 2, around 42 seconds. Omit `--seek` for the complete intro; use `--seek 18`
 to watch the tiles reveal the new scene. Add `--split` for the original on the
-left. In the app, **L** switches lighting and **G** switches between rows and
-rings without restarting the music.
+left. In the app, **L** switches lighting, **G** switches between rows and
+rings, **B** cycles the backdrop, **[ / ]** change the bump shape and
+**- / =** the wall's strength, without restarting the music.
 
 Glass with studio lighting was chosen from three presets. The other two,
 coated titanium ribbons and straight sculpted extrusions, were removed from the
@@ -114,6 +120,13 @@ row's way. Its letters then travel round the back, seen from behind and
 mirrored, visible behind the fronts and through the glass. The text is longer
 than a ring, so letters fade out and in again at a seam at the back. The two
 rows, on their arc, remain the default.
+
+The tile wall behind the letters moves as in the original, which slides it on
+a slow looping path by changing the palette. Its position comes from the
+original's oscillator, interpolated between frames, so it glides smoothly at
+any display rate. The chrome bumps, their lighting and their reflections of
+the letters are authored. They are drawn as a dim, slightly out-of-focus
+background, blurred along the wall's motion, so the fast sway doesn't strobe.
 
 | Key | Action |
 | --- | --- |

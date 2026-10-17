@@ -4,7 +4,9 @@
 // overlay's sine x table and its row timing are read from the data and code;
 // see Scroller::hd_scroll. The 4:3 proportions follow the original display.
 // Depth, extrusion, the arc the rows follow, the rings, glass and lighting are
-// new; none of it is a recovered 3D model.
+// new; none of it is a recovered 3D model. The tile wall's layout, image and
+// motion are read from the port (see the backdrop section); the chrome bumps
+// and their lighting are authored.
 // The uniform block `u: Controls` (binding 0) is prepended by renderer::wgsl.
 @group(0) @binding(4) var linear:sampler;
 @group(0) @binding(5) var glyph_atlas:texture_2d<f32>;
@@ -351,12 +353,304 @@ fn normal(p:vec3f,material:f32)->vec3f {
         shape(p+e.yxy,material)-shape(p-e.yxy,material),
         shape(p+e.yyx,material)-shape(p-e.yyx,material)));
 }
-fn palette(p:vec2f)->vec3f {
-    let at=fract(p)*8.0;
-    let a=vec2u(floor(at));let f=fract(at);let s=f*f*(3.0-2.0*f);
+// The letters on the front half of the nearer ring, seen straight on at world
+// x, y: distance in source rows, positive inside.
+fn ring_front(q:vec2f)->f32 {
+    let i=select(0,1,q.y<0.0);
+    let gy=40.0-(q.y-ring_centre(i).y)/ROW;
+    let s=q.x/RING_RADIUS;
+    if abs(s)>=1.0 || gy< -ATLAS_PAD || gy>CELL.y+ATLAS_PAD {return -FAR;}
+    return textureSampleLevel(glyph_fields,linear,ring_texel(asin(s),gy,i),0).r;
+}
+// The large letters seen straight on at world x, y, for the projected shadows
+// and reflections on the chamber and the wall: the rows on their arc (the
+// cached field is indexed by surface x) or the rings' fronts.
+fn front_letters(q:vec2f)->f32 {
+    if ring() {return ring_front(q);}
+    return letter_field(q);
+}
+// Their projections fade where the letters pass behind the chamber's plane,
+// towards the sides of the arc or of the rings.
+fn front_coverage(q:vec2f)->f32 {
+    if !ring() {return field_coverage(q);}
+    let x=sqrt(RING_RADIUS*RING_RADIUS-pow(RING_RADIUS+WALL_Z,2.0));
+    return 1.0-smoothstep(.8*x,x,abs(q.x));
+}
+// ---- Backdrop -------------------------------------------------------------
+// Read from the port (scenes/scroller.rs; the ignored clip test checks it on
+// every scroll frame): pixel (sx,sy) of the 320x200 frame shows cell
+// ((sy+7+y)&7, (sx+4+x)&7) of the 8x8 image, where x=(xx>>7)&7, y=(yy>>7)&7.
+// The palette parity term only cancels the hardware scroll's half tile, so
+// the wall does not follow the text. Here the position is continuous: xx/128
+// and yy/128 interpolated between ticks, less half a pixel to centre the
+// original's whole-pixel steps. The image's dark seam is column 7 and row 0.
+const WALL_Z=-.9; // The chamber plane, 6.4 from the eye.
+fn wall_scale()->f32 {return (5.5-WALL_Z)/5.5;}
+// Source-pixel image coordinate of a wall point. The 4:3 frame spans
+// x=[-4/3,4/3], y=[-1,1] on screen: 120 source pixels per unit across and 100
+// down, so a tile is 1.2 times taller than wide, as on a 4:3 display.
+fn wall_source(p:vec2f)->vec2f {
+    let s=p/wall_scale();
+    return vec2f(s.x*120.0+164.0,107.0-s.y*100.0)+u.backdrop.xy+wall_shift-.5;
+}
+fn tile_image(at:vec2f)->vec3f {
+    // Smoothed between the 8x8 image's texels (centres at +.5), wrapping.
+    let q=at-.5;
+    let a=vec2u(vec2i(floor(q))&vec2i(7));let f=fract(q);let s=f*f*(3.0-2.0*f);
     let b=(a+1u)%8u;
     return mix(mix(u.next_palette[a.y*8u+a.x].rgb,u.next_palette[a.y*8u+b.x].rgb,s.x),
         mix(u.next_palette[b.y*8u+a.x].rgb,u.next_palette[b.y*8u+b.x].rgb,s.x),s.y);
+}
+// Grid space: one unit per tile, integers on the seam centres, y downwards,
+// z in tile widths above the wall plane. An affine map of world space.
+fn grid_point(p:vec3f)->vec3f {
+    let s=wall_source(p.xy);
+    return vec3f((s.x+.5)/8.0,(s.y-.5)/8.0,(p.z-WALL_Z)*15.0/wall_scale());
+}
+fn grid_direction(d:vec3f)->vec3f {return vec3f(d.x*15.0,-d.y*12.5,d.z*15.0)/wall_scale();}
+fn world_normal(n:vec3f)->vec3f {return normalize(vec3f(n.x*15.0,-n.y*12.5,n.z*15.0));}
+// Authored bump profile from u.backdrop.w, in a tile space where the 7/8
+// tile body spans -.875..+.875. A rounded box, intersected with a dome
+// through its top centre and the body's base corners. 0 gives a low cushion
+// with rounded edges that fills the tile like the original image (1.2 times
+// taller than wide); 1 a round hemisphere, with wider gaps above and below.
+struct Bump { inner:f32, radius:f32, flat:f32, dome:f32, dome_z:f32, tall:f32 }
+fn bump()->Bump {
+    let s=clamp(u.backdrop.w,0.0,1.0);
+    let radius=mix(.30,1.0,s)*.875;
+    let corner2=2.0*.875*.875;
+    let dome=(corner2+radius*radius)/(2.0*radius);
+    return Bump(.875-radius,radius,mix(.55,1.0,s),dome,radius-dome,mix(1.0,1.0/1.2,s));
+}
+fn octant(v:vec3f)->vec3f {return select(vec3f(1),vec3f(-1),v<vec3f(0));}
+// Analytic ray / rounded box intersection, adapted from Inigo Quilez's
+// MIT-licensed rounded box intersector (iquilezles.org/articles/intersectors):
+// bounding box, then flat faces, the corner sphere and the edge cylinders of
+// the entry octant. rd must be normalised. Returns -1 on a miss.
+fn rounded_box(ro0:vec3f,rd0:vec3f,size:vec3f,rad:f32)->f32 {
+    let rd1=select(rd0,octant(rd0)*1e-7,abs(rd0)<vec3f(1e-7));
+    let m=1.0/rd1;let n=m*ro0;let k=abs(m)*(size+rad);
+    let t1=-n-k;let t2=-n+k;
+    let near=max(max(t1.x,t1.y),t1.z);let far=min(min(t2.x,t2.y),t2.z);
+    if near>far || far<0.0 {return -1.0;}
+    let entry=ro0+near*rd1;let s=octant(entry);
+    let ro=ro0*s;let rd=rd1*s;
+    var q=entry*s-size;
+    q=max(q,q.yzx);
+    if min(min(q.x,q.y),q.z)<0.0 {return near;}
+    let oc=ro-size;let dd=rd*rd;let oo=oc*oc;let od=oc*rd;let ra2=rad*rad;
+    var t=1e20;
+    let bc=od.x+od.y+od.z;let hc=bc*bc-(oo.x+oo.y+oo.z-ra2);
+    if hc>0.0 {t=-bc-sqrt(hc);}
+    var a=dd.y+dd.z;var b=od.y+od.z;var h=b*b-a*(oo.y+oo.z-ra2);
+    if h>0.0 {
+        let e=(-b-sqrt(h))/a;
+        if e>0.0 && e<t && abs(ro.x+rd.x*e)<size.x {t=e;}
+    }
+    a=dd.z+dd.x;b=od.z+od.x;h=b*b-a*(oo.z+oo.x-ra2);
+    if h>0.0 {
+        let e=(-b-sqrt(h))/a;
+        if e>0.0 && e<t && abs(ro.y+rd.y*e)<size.y {t=e;}
+    }
+    return select(t,-1.0,t>1e19);
+}
+// Entry into one bump, with its tile-space normal; t<0 on a miss. Entering
+// the intersection of two convex solids is the later of the two entries, as
+// long as the ray is still inside both; that holds for rays arriving from
+// above, which is all the wall needs.
+fn bump_hit(ro:vec3f,rd:vec3f,shape:Bump)->vec4f {
+    let size=vec3f(shape.inner,shape.inner,0);
+    let t=rounded_box(ro,rd,size,shape.radius);
+    if t<0.0 {return vec4f(-1);}
+    let oc=ro-vec3f(0,0,shape.dome_z);
+    let b=dot(oc,rd);let h=b*b-dot(oc,oc)+shape.dome*shape.dome;
+    if h<0.0 {return vec4f(-1);}
+    let td=-b-sqrt(h);
+    if td>t {return vec4f(normalize(oc+rd*td),td);}
+    let p=ro+rd*t;
+    return vec4f(octant(p)*normalize(max(abs(p)-size,vec3f(0))),t);
+}
+struct WallHit { hit:bool, bump:bool, t:f32, n:vec3f, at:vec3f }
+// Each ray tests only the tiles it crosses inside the bumps' height: one to
+// four for camera rays, up to 3x3 for rays leaving the wall.
+fn wall_trace(origin:vec3f,ray:vec3f,from_wall:bool)->WallHit {
+    let shape=bump();
+    let g=grid_point(origin);let dg=grid_direction(ray);
+    // Start a little above the bumps: a ray starting on the flat top face
+    // could otherwise miss it by rounding.
+    let top=shape.radius*shape.flat*.5+.02;
+    var t0=0.0;var t1=0.0;
+    if from_wall {
+        if dg.z<=0.0 {return WallHit(false,false,0.0,vec3f(0,0,1),g);}
+        t1=max((top-g.z)/dg.z,0.0);
+    } else {
+        if dg.z>=0.0 {return WallHit(false,false,0.0,vec3f(0,0,1),g);}
+        t0=(top-g.z)/dg.z;t1=-g.z/dg.z;
+    }
+    let a=g+dg*t0;let b=g+dg*t1;
+    let lo=max(floor(min(a.xy,b.xy)),floor(a.xy)-1.0);
+    let hi=min(floor(max(a.xy,b.xy)),floor(a.xy)+1.0);
+    let stretch=vec3f(2.0,2.0/shape.tall,2.0/shape.flat);
+    let l=dg*stretch;let scale=length(l);let ld=l/scale;
+    // A reflected ray must not find the bump it leaves.
+    let home=floor(a.xy);
+    var best=1e20;var normal=vec3f(0,0,1);
+    for(var y=lo.y;y<=hi.y;y+=1.0) {
+        for(var x=lo.x;x<=hi.x;x+=1.0) {
+            if from_wall && x==home.x && y==home.y {continue;}
+            let start=vec3f(a.xy-vec2f(x,y)-.5,a.z)*stretch;
+            let hit=bump_hit(start,ld,shape);
+            if hit.w>=0.0 && hit.w<best {
+                best=hit.w;
+                normal=hit.xyz*stretch;
+            }
+        }
+    }
+    if best<1e19 {
+        let t=t0+best/scale;
+        return WallHit(true,true,t,world_normal(normal),g+dg*t);
+    }
+    if from_wall {return WallHit(false,false,0.0,vec3f(0,0,1),g);}
+    return WallHit(true,false,t1,vec3f(0,0,1),b);
+}
+// The bump wall is drawn as a defocused, motion-blurred background: soft,
+// dim and low in contrast, so the letters stay the brightest and sharpest
+// thing on screen and the fast original sway doesn't strobe. All authored.
+// u.backdrop_motion.xy: the oscillator's movement during the exposure (source
+// pixels); .z: wall strength, the owner's presence control.
+var<private> wall_shift:vec2f; // Per-sample offset along the exposure.
+// Authored studio surround, prefiltered for a rough metal: a broad frontal
+// softbox, a soft top light and the chamber's cool and warm side light, which
+// follow the scroller's lighting mode.
+fn studio(r:vec3f,x:f32)->vec3f {
+    var c=vec3f(.012,.016,.022)+vec3f(.04,.05,.06)*smoothstep(-.6,1.0,r.y)*smoothstep(-.6,.6,r.z);
+    let soft=r.xy-vec2f(-.30,.38);
+    c+=vec3f(.24,.28,.34)*exp(-dot(soft,soft)*2.2)*smoothstep(-.4,.6,r.z);
+    c+=vec3f(.10,.11,.13)*exp(-pow((r.y-.72)*2.4,2.0));
+    let sides=exp(-pow((r.x+.62)*3.0,2.0))*.30+exp(-pow((r.x-.66)*3.5,2.0))*.36;
+    c+=mix(heat(-.8),heat(1.0),smoothstep(-.3,.3,r.x))*sides*lighting(.88,.30+musical()*.5+bass()*1.4);
+    return c;
+}
+fn wall_metal(at:vec3f)->vec3f {
+    let silver=vec3f(.56,.60,.66);
+    if u.backdrop.z>1.5 {return silver;}
+    // Optional base tint: the unfiltered tile image at this point, scaled so
+    // its brightest texel is about 1. It keeps the original's blue steel and
+    // fades with the image during the exit. Towards the ball shape the
+    // image's own baked shading is mostly replaced by the tile's centre colour.
+    let image=mix(tile_image(vec2f(at.x*8.0-.5,at.y*8.0+.5)),
+        tile_image(floor(at.xy)*8.0+vec2f(3.5,4.5)),clamp(u.backdrop.w,0.0,1.0)*.6)*4.6;
+    return mix(silver*.25,image,.85);
+}
+fn wall_glint(p:vec3f,n:vec3f,v:vec3f,f0:vec3f)->vec3f {
+    // The letters' three lamps as broad, dim highlights on rough metal (no
+    // shadow rays): no small sparkle on every bump.
+    var c=vec3f(0);
+    let lamps=array<vec3f,3>(vec3f(-2.5,2.1,3.8),vec3f(2.5,-1.3,3.2),vec3f(sin(clock()*.23*u.scroll_light.y)*2.0,1.4,3.0));
+    let colors=array<vec3f,3>(vec3f(.8,1.3,2.2)*lighting(1.098,.08+musical()*.12+bass()*4.0),
+        vec3f(2.4,.9,.30)*lighting(1.168,.08+musical()*.15+bass()*4.8),
+        vec3f(1.0,1.1,1.2)*lighting(1.0,.08+attack()*1.8));
+    for(var i=0;i<3;i++) {
+        let l=normalize(lamps[i]-p);let h=normalize(l+v);
+        let nh=max(dot(n,h),0.0);let nl=max(dot(n,l),0.0);
+        c+=colors[i]*f0*pow(nh,16.0)*nl*.06;
+    }
+    return c;
+}
+// What a bump reflects in a given direction: the letters, found by marching
+// scene() a few steps through the slab they occupy, else the studio. The slab
+// follows the rows' arc (or the rings' fronts) back from the screen plane,
+// but not behind the wall. Reflected letters are seen from behind, so they are
+// shaded simply: the travelling filament glows, the bodies are dark glass that
+// hides the studio behind them.
+fn reflected(p:vec3f,r:vec3f)->vec3f {
+    let env=studio(r,p.x);
+    if u.state.x<8.0 || r.z<.05 {return env;}
+    let start=max(min(-.42,ribbon_z(p.x)-.42),p.z);
+    var t=(start-p.z)/r.z;let end=(.30-p.z)/r.z;
+    let wide=vec2f(field_extent().x+.1,1.25);
+    for(var i=0;i<14;i++) {
+        let q=p+r*t;
+        if t>end || abs(q.x)>wide.x || abs(q.y)>wide.y {break;}
+        let d=scene(q);
+        if d.x<.004 {
+            var seen=mix(vec3f(.05,.10,.14),vec3f(.14,.08,.04),warm(q.x))+heat(q.x)*.02;
+            if d.y>.5 {seen=heat(q.x)*lighting(.8,.08+musical()*.2+bass()*2.0);}
+            return mix(env,seen,arrival());
+        }
+        t+=max(d.x,.012);
+    }
+    return env;
+}
+// Shading of one wall sample, without the letter reflections.
+fn wall_surface(hit:WallHit,p:vec3f,ray:vec3f)->vec3f {
+    let metal=wall_metal(hit.at);
+    // The level a flat tile would have: the backing and the relief are pulled
+    // towards it, for roughly the original's subtle relief.
+    let level=metal*studio(vec3f(0,0,1),p.x);
+    if !hit.bump {return level*.45;}
+    let n=hit.n;let r=reflect(ray,n);
+    let fresnel=metal+(1.0-metal)*pow(1.0-max(dot(n,-ray),0.0),5.0)*.5;
+    var c=fresnel*studio(r,p.x)+wall_glint(p,n,-ray,metal);
+    // Faint occlusion where a bump meets the backing.
+    c*=mix(.55,1.0,smoothstep(.0,.5,n.z));
+    return mix(level,c,.6);
+}
+// Soft contact shadow of the letters on the chamber or wall point p: the
+// letters seen straight on, displaced slightly as if lit from the front.
+// An analytic approximation, not a traced shadow.
+fn letter_shadow(p:vec3f)->f32 {
+    if u.state.x<8.0 {return 0.0;}
+    let at=p.xy+vec2f(.045,-.065);
+    return smoothstep(-9.0,4.0,front_letters(at))*front_coverage(at)*arrival();
+}
+// Overall presence: the strength control, a gentle corner vignette and the
+// letters' shade. No horizontal banding: darkening the text rows, or an
+// ellipse stretched across the wide frame, read as a bright stripe.
+fn wall_presence(p:vec3f)->f32 {
+    let xy=p.xy*(5.5/6.4); // Back to screen units: x in +-aspect, y in +-1.
+    let corner=length(vec2f(xy.x/aspect(),xy.y))*.7071;
+    let vignette=mix(.6,1.0,1.0-smoothstep(.75,1.05,corner));
+    let entrance=smoothstep(-1.7,1.2,u.scroller.y);
+    // .58: the calm level the row bands used to give, now applied evenly.
+    return u.backdrop_motion.z*.9*.58*vignette*mix(.55,1.0,entrance)*(1.0-letter_shadow(p)*.7);
+}
+fn wall_point(ray:vec3f)->vec3f {return vec3f(0,0,5.5)+ray*(6.4/-ray.z);}
+// Eight samples per pixel spread over a small defocus disc (about a tenth of
+// a tile) and over the exposure, so the wall blurs along its own motion. The
+// letter reflections are traced once per pixel and softened.
+fn wall_pixel(xy:vec2f)->vec3f {
+    let eye=vec3f(0,0,5.5);
+    let defocus=.0075; // Screen units; a tile is .067 wide.
+    var c=vec3f(0);
+    for(var i=0;i<8;i++) {
+        let f=f32(i);
+        let disc=sqrt((f+.5)/8.0)*defocus*vec2f(cos(f*2.39996),sin(f*2.39996));
+        // Stratified in time, in an order that doesn't follow the disc.
+        wall_shift=-u.backdrop_motion.xy*fract((f*5.0+.5)/8.0);
+        let ray=normalize(vec3f(xy+disc,-5.5));
+        let hit=wall_trace(eye,ray,false);
+        c+=wall_surface(hit,eye+ray*hit.t,ray);
+    }
+    c*=.125;
+    let ray=normalize(vec3f(xy,-5.5));
+    wall_shift=-u.backdrop_motion.xy*.5;
+    let hit=wall_trace(eye,ray,false);
+    let p=eye+ray*hit.t;
+    if hit.bump && u.state.x>=8.0 {
+        let r=reflect(ray,hit.n);
+        let metal=wall_metal(hit.at);
+        c+=(reflected(p,r)-studio(r,p.x))*metal*.35;
+    }
+    wall_shift=vec2f(0);
+    return max(c,vec3f(0))*wall_presence(wall_point(ray));
+}
+// The wall as seen through the glass letters: no detail at all, just its
+// average tint and level, so the glass doesn't look textured.
+fn wall_soft(ray:vec3f)->vec3f {
+    let p=wall_point(ray);
+    let metal=wall_metal(vec3f(.5,.5,0));
+    return metal*studio(reflect(ray,vec3f(0,0,1)),p.x)*.8*wall_presence(p);
 }
 fn ripple(p:vec2f)->f32 {
     let t=clock();
@@ -368,33 +662,33 @@ fn chamber(ray:vec3f)->vec3f {
     let e=.012;
     let n=normalize(vec3f((ripple(p.xy-vec2f(e,0))-ripple(p.xy+vec2f(e,0)))/(2.0*e),
         (ripple(p.xy-vec2f(0,e))-ripple(p.xy+vec2f(0,e)))/(2.0*e),1));
-    let refl=reflect(ray,n);
     let entrance=smoothstep(-1.7,1.2,u.scroller.y);
-    let pattern=palette(p.xy*.22+vec2f(ripple(p.xy)));
+    // The original's tile wall at its own scale and position, moving with the
+    // oscillator, kept dim inside the chamber.
     var color=mix(vec3f(.012,.020,.030),vec3f(.006,.011,.019),entrance);
-    color+=pattern*.045*entrance;
-    let grid=abs(fract(p.xy*vec2f(7,9))-.5);
-    let seams=exp(-min(grid.x,grid.y)*160.0);
-    color+=heat(p.x)*seams*.006*entrance;
+    color+=tile_image(wall_source(p.xy))*mix(.12,.30,entrance);
+    let refl=reflect(ray,n);
     let strip=exp(-pow((refl.x+.62)*13.0,2.0))*.11+exp(-pow((refl.x-.65)*16.0,2.0))*.15;
     color+=heat(p.x)*strip*lighting(.88,.30+musical()*.5+bass()*1.4)*entrance;
     if u.state.x>=8.0 {
-        let shadow_at=p.xy+vec2f(.045,-.065);
-        // The ring's letters cast no projected shadow; its field holds bands.
-        let f=select(fields(shadow_at),vec2f(-99.0,sine_at(shadow_at)),ring());
-        // Soft projected contact shadows and rough reflected silhouettes.
+        // Soft projected contact shadows and rough reflected silhouettes of
+        // the letters, on the arc or the rings' fronts, as on the bump wall.
         // These are analytic approximations, not traced indirect lighting.
         let present=arrival();
-        let shadow=smoothstep(-9.0,4.0,f.x)*field_coverage(shadow_at)*present;
-        color*=1.0-shadow*.65;
+        color*=1.0-letter_shadow(p)*.65;
         let reflection_at=p.xy+vec2f(-.035,.12);
-        let reflected=select(halo(letter_field(reflection_at),.20),0.0,ring())*field_coverage(reflection_at);
+        let reflected=halo(front_letters(reflection_at),.20)*front_coverage(reflection_at);
         color+=heat(p.x)*reflected*.022*present;
-        color+=heat(p.x)*halo(f.y,.23)*field_coverage(shadow_at)*present*lighting(.0376,.012+musical()*.025+bass()*.14);
+        let glow_at=p.xy+vec2f(.045,-.065);
+        color+=heat(p.x)*halo(sine_at(glow_at),.23)*field_coverage(glow_at)*present*lighting(.0376,.012+musical()*.025+bass()*.14);
     }
     let haze=noise(p.xy*2.5+vec2f(clock()*.055,-clock()*.035));
     color+=heat(p.x)*pow(haze,3.0)*.022*entrance;
     return color;
+}
+fn backdrop(ray:vec3f)->vec3f {
+    if u.backdrop.z>.5 {return wall_soft(ray);}
+    return chamber(ray);
 }
 fn shadow(p:vec3f,light:vec3f)->f32 {
     let direction=normalize(light-p);var shade=1.0;var t=.035;
@@ -459,10 +753,11 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
     let small=sine_at(p.xy);
     color+=heat(p.x)*halo(small,.16)*lighting(.234,.025+energy*.08+bass()*.65);
     // Tinted solid glass over the coated metal shading above: refracted
-    // chamber plus absorption, a reflective coating and lit cut edges. Not a
-    // full multi-bounce trace.
+    // backdrop plus absorption, a reflective coating and lit cut edges. Not a
+    // full multi-bounce trace. The bump wall is fine detail: refract it
+    // through the smooth surface, without the brushed grain.
     var seen=traced_behind;
-    if !traced {seen=chamber(normalize(ray+n*.085));}
+    if !traced {seen=backdrop(normalize(ray+select(n,n0,u.backdrop.z>.5)*.085));}
     let transmitted=seen*mix(vec3f(.55,.83,.96),vec3f(.96,.65,.36),warm(p.x));
     color=mix(transmitted*1.35,color,.065+fresnel*.75);
     let transmitted_xy=p.xy+n.xy*.025;
@@ -513,7 +808,11 @@ fn ring_view(eye:vec3f,ray:vec3f,background:vec3f)->vec3f {
     let alpha=ring_opacity(first.p,first.material);
     let glass=first.material<.5;
     let dir=select(ray,normalize(ray+n*.085),glass);
-    var behind=chamber(dir);
+    // Through glass the refracted backdrop (only its average for the bump
+    // wall); through fading sine text, this pixel's own background.
+    var through=background;
+    if glass {through=backdrop(dir);}
+    var behind=through;
     let out=ring_exit(first.p,dir);
     if (glass || alpha<.999) && out.w>.5 {
         let second=ring_march(out.xyz,dir,96);
@@ -525,7 +824,7 @@ fn ring_view(eye:vec3f,ray:vec3f,background:vec3f)->vec3f {
         }
     }
     // Through thick glass the far layer is dimmer and softer than the chamber.
-    traced=true;traced_behind=mix(chamber(dir),behind,.55);
+    traced=true;traced_behind=mix(through,behind,.55);
     let near=shade(first.p,n,ray,first.material);
     traced=false;
     return mix(behind,mix(near,background,ring_haze(first.p)),alpha);
@@ -533,7 +832,8 @@ fn ring_view(eye:vec3f,ray:vec3f,background:vec3f)->vec3f {
 @fragment fn scroller(v:Vertex)->@location(0) vec4f {
     let xy=(v.uv-.5)*vec2f(2.0*aspect(),-2.0);
     let ray=normalize(vec3f(xy,-5.5));
-    var color=chamber(ray);
+    var color=vec3f(0);
+    if u.backdrop.z>.5 {color=wall_pixel(xy);} else {color=chamber(ray);}
     if u.state.x>=8.0 && ring() {
         color=ring_view(vec3f(0,0,5.5),ray,color);
     } else if u.state.x>=8.0 {
