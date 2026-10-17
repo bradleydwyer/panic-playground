@@ -26,4 +26,6 @@ path = "src/bin/panic-hd.rs"
 required-features = ["hires"]
 
 [dev-dependencies]
+# Same version wgpu uses; parses and validates the WGSL in default tests.
+naga = { version = "=30.0.1", features = ["wgsl-in"] }
 sha2 = "0.10"

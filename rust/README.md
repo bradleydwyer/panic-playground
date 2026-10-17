@@ -159,37 +159,40 @@ The geometry, gravity, laser treatment and particle motion are authored effects.
 The lighting uses analytic approximations; this isn't a physical simulation.
 The original destination is a plain light screen at this point;
 the modern view gives it a dark brushed-metal finish.
-Use `--scroller` to continue into the selected glass scroller with studio lighting.
+Use `--scroller` to continue into the glass scroller with studio lighting.
 Original/comparison mode shows the actual reference wipe, and faithful HD
 uses the original pixels during this transition.
 
-### Scroller experiments
-
-Glass with studio lighting is the selected treatment; bare `--scroller` selects both.
+### Scroller experiment
 
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --seek 27
-cargo run --release --locked --features hires --bin panic-hd -- --scroller ribbons --seek 27
-cargo run --release --locked --features hires --bin panic-hd -- --scroller sculpted --seek 27
-cargo run --release --locked --features hires --bin panic-hd -- --scroller glass --seek 27
 ```
 
-`ribbons` bends the ends of coated titanium lettering into depth. `sculpted`
-keeps the same material on straight extrusions. `glass` uses the ribbon shape
-with approximate tinted transmission and reflective edges. The vertical sine
-overlay passes in front of the lower row and behind the upper row. It follows
-the ribbon curvature, with its depth crossover in the gap between rows, above
-a rippling dark chamber. The three modes share the reference frames, music
-and scene boundaries. The existing laser
-transition reveals the chamber; the preview ends after part 2's fade.
+The scroller uses glass lettering with studio lighting. The ends of each row
+curve into depth; the glass has approximate tinted transmission and reflective
+edges. The vertical sine overlay passes in front of the lower row and behind
+the upper row. It follows the same curvature, with its depth crossover in the
+gap between rows, above a rippling dark chamber. The existing laser transition
+reveals the chamber; the preview ends after part 2's fade. `--scroller glass`
+is still accepted.
+
+Glass was chosen from three presets. The other two were `ribbons`, coated
+titanium lettering with the same curved ends, and `sculpted`, the same material
+on straight extrusions. They have been removed from the code but remain in the
+Git history: commit `5e717ff` introduced them, and `ad08523` is the last
+commit with them.
 
 `--scroller-lighting musical` uses relative loudness and bass/treble
 onsets from the original PCM. Bass pulses the blue/orange lights, their metal
 reflections and the small lettering; treble adds short white highlights.
 These are authored audio cues, not recovered tracker events. The levels adapt
-to loud passages so the response retains contrast. `--scroller-lighting studio` (default)
-holds the lights steady for material comparisons. Press **1 / 2 / 3** to change the preset and
-**L** to toggle lighting while playing or paused. `--split` compares the
+to loud passages so the response retains contrast. They come from the same
+causal analysis of the PCM as the intro's music lighting, computed once per
+clip: the bass cue reads the band below about 150 Hz, the treble cue the band
+above about 1.8 kHz. `--scroller-lighting studio` (default) holds the lights
+steady for material comparisons. Press **L** to toggle lighting while playing
+or paused. `--split` compares the
 modern view with the locally rendered original. Omit `--seek` for the full
 intro, or use `--seek 18` to start at the transition.
 
@@ -206,7 +209,7 @@ time. The modern background filters the reconstruction's rapid palette cycling
 into a slow colour drift, then interpolates at display time. The original view
 keeps the unfiltered palette. This ambient filtering is independent of the
 musical accents and is precomputed so seeking and exports remain deterministic.
-Materials, ribbon bending, depth and light placement are authored. Contact
+Materials, the curved row ends, depth and light placement are authored. Contact
 shadows and reflections are approximations; glass is not a full multi-bounce
 optical simulation. All fields are generated locally in memory.
 
@@ -249,7 +252,10 @@ still requires a GPU and the `hires` build dependencies. `--data` and `PANIC_DAT
 override the preview's default `artifacts/local-data` path. All original data and
 generated images stay local, outside Git.
 
-The default HD tests use synthetic data. Separate ignored tests check the
+The default HD tests use synthetic data. They also parse and validate every
+WGSL shader with naga and check that the one WGSL declaration of the shared
+uniform block, which `renderer.rs` prepends to each shader, matches the Rust
+`Uniforms` layout field by field. Separate ignored tests check the
 intro's reference pixels and PCM against the existing engine, sampled fly-by
 projection heights, and the transition's complete reference frames, audio and
 tile schedule:

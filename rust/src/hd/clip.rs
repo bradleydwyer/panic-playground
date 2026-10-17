@@ -57,7 +57,7 @@ impl Frame {
         if self.state.phase >= 8 {
             // The original uses bits 0..6 for the large font/background and
             // bit 7 for the overlaid sine text. Contours stay locally derived;
-            // extrusion, coatings and ribbon deformation are authored.
+            // extrusion, glass and the curved row ends are authored.
             let large: Vec<bool> = self.indices.iter().map(|i| i & 127 < 64).collect();
             let mut small = vec![false; WIDTH * HEIGHT];
             // The sine overlay writes one VGA plane every four pixels/rows.
@@ -156,29 +156,21 @@ pub struct Clip {
     /// Pinhole motion fitted from the locally decoded reference silhouettes:
     /// camera crossing frame, depth per frame, world x and world y.
     pub flights: [[f32; 4]; 10],
-    /// Lighting controls measured from `pcm`, one per 70 Hz window; see
-    /// [`audio_features`]. They only steer authored lighting.
-    pub audio: Vec<[f32; 4]>,
+    /// Lighting cues measured once from `pcm`, one per 70 Hz window; see
+    /// [`audio_cues`]. They steer only authored lighting, in the intro and in
+    /// the scroller's musical mode.
+    pub audio: Vec<AudioCues>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u32)]
-pub enum ScrollerStyle {
-    Ribbons = 0,
-    Sculpted = 1,
-    Glass = 2,
-}
-
-impl std::str::FromStr for ScrollerStyle {
-    type Err = String;
-    fn from_str(value: &str) -> Result<Self, String> {
-        match value {
-            "ribbons" => Ok(Self::Ribbons),
-            "sculpted" => Ok(Self::Sculpted),
-            "glass" => Ok(Self::Glass),
-            _ => Err("Use --scroller ribbons, sculpted or glass".into()),
-        }
-    }
+/// Authored lighting cues for one 70 Hz window of the clip's PCM, each 0..=1.
+/// Both are read from the same analysis; see [`audio_cues`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AudioCues {
+    /// Modern intro (`u.audio`): energy, onset, low band, accent.
+    pub intro: [f32; 4],
+    /// Scroller's musical mode (`u.scroll_light` x, z, w): relative level,
+    /// bass onset, treble onset.
+    pub scroller: [f32; 3],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -201,11 +193,9 @@ impl std::str::FromStr for ScrollerLighting {
 pub struct ScrollerPreview {
     pub start_tick: usize,
     pub end_tick: usize,
-    pub style: ScrollerStyle,
+    /// Musical mode reads `Clip::audio`, precomputed on the audio timeline so
+    /// seeking and exports agree; studio mode ignores it.
     pub lighting: ScrollerLighting,
-    /// Authored lighting controls from PCM: relative level, bass and treble onsets.
-    /// Precomputed on the audio timeline so seeking and exports agree.
-    pub audio: Vec<[f32; 3]>,
     /// Modern ambient palette with the rapid original cycling filtered out.
     /// Reference frames retain the original palette, including its alternating phase.
     pub backdrop: Vec<[[f32; 4]; 64]>,
@@ -231,15 +221,9 @@ impl Clip {
         Self::load_mode(data, true, false)
     }
 
-    pub fn load_scroller(
-        data: &Data,
-        style: ScrollerStyle,
-        lighting: ScrollerLighting,
-    ) -> Result<Self, String> {
+    pub fn load_scroller(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
         let mut clip = Self::load_mode(data, true, true)?;
-        let preview = clip.scroller.as_mut().unwrap();
-        preview.style = style;
-        preview.lighting = lighting;
+        clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
 
@@ -363,9 +347,7 @@ impl Clip {
                 scroller_preview = Some(ScrollerPreview {
                     start_tick: scroll_start,
                     end_tick: scroll_end,
-                    style: ScrollerStyle::Glass,
                     lighting: ScrollerLighting::Studio,
-                    audio: audio_lighting(&pcm, frames.len()),
                     backdrop: backdrop_palettes(&frames, scroll_start, transition.palette),
                 });
             }
@@ -377,7 +359,7 @@ impl Clip {
         };
         Ok(Self {
             frames,
-            audio: audio_features(&pcm),
+            audio: audio_cues(&pcm),
             pcm,
             logo_at: logo_at.ok_or("Intro never reached the logo")?,
             logo_ready_at,
@@ -390,26 +372,31 @@ impl Clip {
     pub fn duration(&self) -> f64 {
         self.pcm.len() as f64 / (SAMPLE_RATE * 2) as f64
     }
-    /// Audio lighting controls at a clip time. Window `i` is only known once
-    /// it has played, at `(i + 1) / 70` s, so the lights never anticipate the
-    /// music. Values interpolate between windows and fall to zero outside the
-    /// PCM. Seeking reads the same precomputed table as playback.
-    pub fn audio_at(&self, time: f64) -> [f32; 4] {
+    /// Audio lighting cues at a clip time, for the intro and the scroller
+    /// alike. Window `i` is only known once it has played, at `(i + 1) / 70` s,
+    /// so the lights never anticipate the music. Values interpolate between
+    /// windows and fall to zero outside the PCM. Seeking reads the same
+    /// precomputed table as playback.
+    pub fn audio_at(&self, time: f64) -> AudioCues {
         let position = time * FRAME_RATE as f64 - 1.0;
         if !position.is_finite() || position <= -1.0 {
-            return [0.0; 4];
+            return AudioCues::default();
         }
         let base = position.floor();
         let fraction = (position - base) as f32;
         let at = |i: f64| {
             if i < 0.0 {
-                [0.0; 4]
+                AudioCues::default()
             } else {
-                self.audio.get(i as usize).copied().unwrap_or([0.0; 4])
+                self.audio.get(i as usize).copied().unwrap_or_default()
             }
         };
         let (a, b) = (at(base), at(base + 1.0));
-        std::array::from_fn(|k| a[k] + (b[k] - a[k]) * fraction)
+        let lerp = |x: f32, y: f32| x + (y - x) * fraction;
+        AudioCues {
+            intro: std::array::from_fn(|k| lerp(a.intro[k], b.intro[k])),
+            scroller: std::array::from_fn(|k| lerp(a.scroller[k], b.scroller[k])),
+        }
     }
     pub fn frame_index(&self, time: f64) -> usize {
         ((time.max(0.0) * FRAME_RATE as f64) as usize).min(self.frames.len() - 1)
@@ -465,55 +452,6 @@ fn backdrop_palettes(
         .collect()
 }
 
-fn audio_lighting(pcm: &[i16], frames: usize) -> Vec<[f32; 3]> {
-    // Separate stereo filters avoid cancelling instruments panned out of phase.
-    // These broad bands are lighting cues, not recovered tracker events.
-    let bass_alpha = 1.0 - (-std::f32::consts::TAU * 180.0 / SAMPLE_RATE as f32).exp();
-    let treble_alpha = 1.0 - (-std::f32::consts::TAU * 1800.0 / SAMPLE_RATE as f32).exp();
-    let mut bass_filter = [0.0_f32; 2];
-    let mut treble_filter = [0.0_f32; 2];
-    let mut average = [0.0_f32; 3];
-    let mut previous = [0.0_f32; 3];
-    let mut output = [0.0_f32; 3];
-    (0..frames)
-        .map(|n| {
-            let a = n * SAMPLE_RATE as usize / FRAME_RATE as usize * 2;
-            let b = ((n + 1) * SAMPLE_RATE as usize / FRAME_RATE as usize * 2).min(pcm.len());
-            let samples = &pcm[a.min(b)..b];
-            let mut power = [0.0_f32; 3];
-            for pair in samples.chunks_exact(2) {
-                for channel in 0..2 {
-                    let s = pair[channel] as f32 / 32768.0;
-                    bass_filter[channel] += bass_alpha * (s - bass_filter[channel]);
-                    treble_filter[channel] += treble_alpha * (s - treble_filter[channel]);
-                    power[0] += s * s;
-                    power[1] += bass_filter[channel].powi(2);
-                    power[2] += (s - treble_filter[channel]).powi(2);
-                }
-            }
-            for band in 0..3 {
-                let rms = (power[band] / samples.len().max(1) as f32).sqrt();
-                let smooth = previous[band] + (rms - previous[band]) * 0.6;
-                // Relative energy keeps loud passages from pinning the controls
-                // at one, as the old fixed RMS gain did. A floor rejects noise.
-                average[band] += (smooth - average[band]) * 0.025;
-                if band == 0 {
-                    let target = ((smooth / (average[band] + 0.035) - 0.65) * 0.65).clamp(0.0, 1.0);
-                    output[band] +=
-                        (target - output[band]) * if target > output[band] { 0.45 } else { 0.12 };
-                } else {
-                    let rise = (smooth - previous[band]) / (average[band] + 0.015);
-                    let target = ((rise - 0.045) * 4.0).clamp(0.0, 1.0);
-                    let decay = if band == 1 { 0.88 } else { 0.80 };
-                    output[band] = target.max(output[band] * decay);
-                }
-                previous[band] = smooth;
-            }
-            output
-        })
-        .collect()
-}
-
 /// Low-pass the locally derived contour to remove one-pixel stair steps from
 /// the new bevels. This deliberately rounds the raster; it is not a recovered
 /// vector outline. Kept separate from the faithful comparison and intro.
@@ -555,13 +493,18 @@ fn smooth_contour(input: &[f32], width: usize, height: usize) -> Vec<f32> {
     a
 }
 
-/// Measure authored lighting controls from the clip's interleaved stereo PCM,
-/// one value per 70 Hz window (the same sample split `Clip::load_mode` uses).
-/// This reads only the rendered audio, so the music itself is untouched. The
-/// filters are causal: a prefix of the PCM always gives a prefix of the result.
+/// Measure authored lighting cues from the clip's interleaved stereo PCM, one
+/// per 70 Hz window (the same sample split `Clip::load_mode` uses). This is the
+/// only analysis of the audio: one causal pass over the mono mix with one
+/// filter bank, read by both the intro and the scroller. It reads only the
+/// rendered audio, so the music itself is untouched. A prefix of the PCM always
+/// gives a prefix of the result.
 ///
-/// The components are new display controls in 0..=1, not anything recovered
-/// from the original program:
+/// The mono mix cannot cancel an instrument against itself: the port's mixer
+/// routes each channel to the left and right with non-negative gains.
+///
+/// All values are new display controls in 0..=1, not anything recovered from
+/// the original program, and not tracker events. Intro cues (`intro`):
 /// - `[0]` energy: broadband RMS with fast attack and a 0.25 s release.
 /// - `[1]` onset: a rise in high-band (above about 150 Hz) energy over its
 ///   recent level, gated by loudness, held and decayed with a 0.12 s constant.
@@ -569,33 +512,51 @@ fn smooth_contour(input: &[f32], width: usize, height: usize) -> Vec<f32> {
 /// - `[3]` accent: loudness well above the last two seconds, such as a strong
 ///   downbeat after a quieter passage, decayed with a 0.25 s constant.
 ///
-/// The time constants and scales were tuned by eye and ear to the intro.
-pub fn audio_features(pcm: &[i16]) -> Vec<[f32; 4]> {
+/// Scroller cues (`scroller`) for its musical mode, relative to the recent
+/// level so loud passages keep their contrast:
+/// - `[0]` level: smoothed broadband RMS over its average of about half a
+///   second, released in about 0.1 s.
+/// - `[1]` bass: a rise in the band below about 150 Hz, decayed in about 0.11 s.
+/// - `[2]` treble: a rise in the band above about 1.8 kHz (mostly percussion),
+///   decayed in about 0.06 s.
+///
+/// The time constants and scales were tuned by eye and ear.
+pub fn audio_cues(pcm: &[i16]) -> Vec<AudioCues> {
     let rate = SAMPLE_RATE as usize;
     let frames = pcm.len() / 2;
     let windows = (frames * FRAME_RATE as usize).div_ceil(rate);
     let release = |seconds: f64| 1.0 - (-1.0 / (seconds * FRAME_RATE as f64)).exp();
     let decay = |seconds: f64| (-1.0 / (seconds * FRAME_RATE as f64)).exp();
     let crossover = 1.0 - (-std::f64::consts::TAU * 150.0 / rate as f64).exp();
-    let (mut lp1, mut lp2) = (0.0_f64, 0.0_f64);
+    let treble_cut = 1.0 - (-std::f64::consts::TAU * 1800.0 / rate as f64).exp();
+    let (mut lp1, mut lp2, mut treble_lp) = (0.0_f64, 0.0, 0.0);
     let (mut energy, mut low, mut onset, mut accent) = (0.0_f64, 0.0, 0.0, 0.0);
     let (mut recent_high, mut long_power) = (0.0_f64, 0.0);
+    // Scroller state per band (broadband, bass, treble): lightly smoothed RMS,
+    // its slow average and the previous smoothed value.
+    let (mut smooth, mut average) = ([0.0_f64; 3], [0.0_f64; 3]);
+    let mut scroller = [0.0_f64; 3];
     let mut result = Vec::with_capacity(windows);
     for i in 0..windows {
         let start = i * rate / FRAME_RATE as usize;
         let end = ((i + 1) * rate / FRAME_RATE as usize).min(frames);
         let (mut power, mut low_power, mut high_power) = (0.0, 0.0, 0.0);
+        let mut treble_power = 0.0;
         for frame in pcm[start * 2..end * 2].chunks_exact(2) {
             let mono = (frame[0] as f64 + frame[1] as f64) / 65536.0;
             lp1 += crossover * (mono - lp1);
             lp2 += crossover * (lp1 - lp2);
+            treble_lp += treble_cut * (mono - treble_lp);
             let high = mono - lp2;
+            let treble = mono - treble_lp;
             power += mono * mono;
             low_power += lp2 * lp2;
             high_power += high * high;
+            treble_power += treble * treble;
         }
         let count = (end - start).max(1) as f64;
         let (power, low_power, high_power) = (power / count, low_power / count, high_power / count);
+        let treble_power = treble_power / count;
         let follow = |state: &mut f64, value: f64, seconds: f64| {
             *state += (value - *state)
                 * if value > *state {
@@ -614,12 +575,37 @@ pub fn audio_features(pcm: &[i16]) -> Vec<[f32; 4]> {
         let rise = ((power + 1e-6) / (long_power + 1e-6)).ln() / 6.0_f64.ln();
         accent = (((rise - 0.35) / 0.65).clamp(0.0, 1.0) * gate).max(accent * decay(0.25));
         long_power += (power - long_power) * release(2.0);
-        result.push([
-            (1.0 - (-energy / 0.25).exp()) as f32,
-            onset as f32,
-            (1.0 - (-low / 0.12).exp()) as f32,
-            accent as f32,
-        ]);
+        for (band, band_power) in [power, low_power, treble_power].into_iter().enumerate() {
+            let previous = smooth[band];
+            smooth[band] += (band_power.sqrt() - previous) * 0.6;
+            average[band] += (smooth[band] - average[band]) * 0.025;
+            if band == 0 {
+                // A floor keeps near-silence from reading as a loud level.
+                let target = ((smooth[0] / (average[0] + 0.035) - 0.65) * 0.65).clamp(0.0, 1.0);
+                scroller[0] +=
+                    (target - scroller[0]) * if target > scroller[0] { 0.45 } else { 0.12 };
+            } else {
+                // The bass band is the intro's steeper low band; its higher
+                // floor and threshold keep about the old analyser's activity.
+                let (floor, threshold, hold) = if band == 1 {
+                    (0.03, 0.08, 0.88)
+                } else {
+                    (0.015, 0.045, 0.80)
+                };
+                let rise = (smooth[band] - previous) / (average[band] + floor);
+                let target = ((rise - threshold) * 4.0).clamp(0.0, 1.0);
+                scroller[band] = target.max(scroller[band] * hold);
+            }
+        }
+        result.push(AudioCues {
+            intro: [
+                (1.0 - (-energy / 0.25).exp()) as f32,
+                onset as f32,
+                (1.0 - (-low / 0.12).exp()) as f32,
+                accent as f32,
+            ],
+            scroller: scroller.map(|v| v as f32),
+        });
     }
     result
 }
@@ -859,7 +845,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_lighting_keeps_accents_in_a_loud_mix_and_releases_to_silence() {
+    fn scroller_cues_keep_accents_in_a_loud_mix_and_release_to_silence() {
         let pcm: Vec<i16> = (0..SAMPLE_RATE * 4)
             .flat_map(|i| {
                 let t = i as f32 / SAMPLE_RATE as f32;
@@ -877,11 +863,12 @@ mod tests {
                     0.0
                 };
                 let sample = ((bed + hit) * 32767.0) as i16;
-                // Anti-phase stereo must retain the same energy as in-phase.
-                [sample, -sample]
+                [sample, sample]
             })
             .collect();
-        let signal = audio_lighting(&pcm, 280);
+        let cues = audio_cues(&pcm);
+        assert_eq!(cues.len(), 280);
+        let signal: Vec<[f32; 3]> = cues.iter().map(|c| c.scroller).collect();
         assert!(
             signal
                 .iter()
@@ -907,8 +894,6 @@ mod tests {
             "A loud sustained bed must not pin the level"
         );
         assert!(signal[279].iter().all(|v| *v < 0.005));
-        assert_eq!(audio_lighting(&[], 3), vec![[0.0; 3]; 3]);
-        assert_eq!(audio_lighting(&vec![0; 32000], 70), vec![[0.0; 3]; 70]);
     }
 
     #[test]
@@ -946,8 +931,7 @@ mod tests {
     #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
     fn scroller_matches_complete_engine_reference_and_pcm() {
         let data = crate::test_support::data();
-        let clip =
-            Clip::load_scroller(&data, ScrollerStyle::Ribbons, ScrollerLighting::Musical).unwrap();
+        let clip = Clip::load_scroller(&data, ScrollerLighting::Musical).unwrap();
         let mut engine = crate::engine::Engine::new(data, false).unwrap();
         let mut pcm = Vec::new();
         for (i, frame) in clip.frames.iter().enumerate() {
@@ -958,15 +942,21 @@ mod tests {
         assert_eq!(pcm, clip.pcm);
         assert_eq!(engine.part(), 6, "Stop exactly at the next scene boundary");
         let scroll = clip.scroller.as_ref().unwrap();
-        assert_eq!(scroll.audio.len(), clip.frames.len());
+        // One shared analysis covers every frame, for the intro and scroller.
+        assert_eq!(clip.audio.len(), clip.frames.len());
         assert_eq!(scroll.backdrop.len(), clip.frames.len());
         assert!(
-            scroll
-                .audio
+            clip.audio
                 .iter()
-                .flatten()
-                .all(|e| e.is_finite() && (0.0..=1.0).contains(e))
+                .flat_map(|c| c.intro.into_iter().chain(c.scroller))
+                .all(|e| e.is_finite() && (0.0..=1.0).contains(&e))
         );
+        // The scroller's musical mode has accents to show during the text.
+        let text = &clip.audio[scroll.start_tick..scroll.end_tick];
+        for band in 1..3 {
+            let lit = text.iter().filter(|c| c.scroller[band] > 0.5).count();
+            assert!(lit > 20 && lit < text.len() / 2, "band {band}: {lit}");
+        }
         assert_eq!(clip.frames[scroll.start_tick].state.phase, 8);
         assert_eq!(clip.frames[scroll.end_tick].state.phase, 9);
         // The reported E tear at 29.2167 s: source scanout loses row 100, but
@@ -1036,12 +1026,12 @@ mod tests {
 
     #[test]
     fn silence_gives_no_audio_lighting() {
-        let features = audio_features(&vec![0; 4 * SAMPLE_RATE as usize]); // 2 s stereo
-        assert_eq!(features.len(), 2 * FRAME_RATE as usize);
-        assert!(features.iter().flatten().all(|&v| v == 0.0));
-        assert!(audio_features(&[]).is_empty());
+        let cues = audio_cues(&vec![0; 4 * SAMPLE_RATE as usize]); // 2 s stereo
+        assert_eq!(cues.len(), 2 * FRAME_RATE as usize);
+        assert!(cues.iter().all(|c| *c == AudioCues::default()));
+        assert!(audio_cues(&[]).is_empty());
         // A trailing partial window still gets a value.
-        assert_eq!(audio_features(&[0; 2 * 300]).len(), 2);
+        assert_eq!(audio_cues(&[0; 2 * 300]).len(), 2);
     }
 
     #[test]
@@ -1056,7 +1046,8 @@ mod tests {
                 0.0
             }
         }));
-        let f = audio_features(&pcm);
+        let cues = audio_cues(&pcm);
+        let f: Vec<[f32; 4]> = cues.iter().map(|c| c.intro).collect();
         assert_eq!(f.len(), 140);
         assert!(f[..35].iter().flatten().all(|&v| v == 0.0));
         // The onset and accent fire on the first loud window.
@@ -1081,6 +1072,13 @@ mod tests {
         // A 2 kHz tone is not bass.
         assert!(f[50][2] < 0.2 * f[50][0], "{:?}", f[50]);
         assert!(f.iter().flatten().all(|v| (0.0..=1.0).contains(v)));
+        // The scroller's treble cue fires once on the burst; its level releases.
+        let s: Vec<[f32; 3]> = cues.iter().map(|c| c.scroller).collect();
+        assert!(s[..35].iter().flatten().all(|&v| v == 0.0));
+        assert!(s[35..38].iter().any(|v| v[2] > 0.9), "{:?}", &s[35..38]);
+        assert!(s[55][2] < 0.05, "A steady tone does not retrigger");
+        assert!(s[139][0] < 0.005);
+        assert!(s.iter().flatten().all(|v| (0.0..=1.0).contains(v)));
     }
 
     #[test]
@@ -1092,20 +1090,39 @@ mod tests {
                     0.5 * (std::f64::consts::TAU * hz * i as f64 / SAMPLE_RATE as f64).sin()
                 }))
             };
-        let bass = audio_features(&tone(60.0));
-        let treble = audio_features(&tone(3000.0));
-        assert!(bass[60][2] > 0.8 && treble[60][2] < 0.1);
-        assert!((bass[60][0] - treble[60][0]).abs() < 0.05);
+        let bass = audio_cues(&tone(60.0));
+        let treble = audio_cues(&tone(3000.0));
+        assert!(bass[60].intro[2] > 0.8 && treble[60].intro[2] < 0.1);
+        assert!((bass[60].intro[0] - treble[60].intro[0]).abs() < 0.05);
+        // A tone starting from silence is a strong scroller bass onset only
+        // if it is bass. (Any start leaks into the gentler treble filter.)
+        let peak = |cues: &[AudioCues], band: usize| {
+            cues[..5]
+                .iter()
+                .map(|c| c.scroller[band])
+                .fold(0.0_f32, f32::max)
+        };
+        assert!(peak(&bass, 1) > 0.9 && peak(&treble, 1) < 0.4);
+        assert!(peak(&treble, 2) > 0.9);
         // Truncating the PCM at a window boundary never changes earlier values,
         // so the shorter logo-only clip agrees with the longer transition clip.
         let pcm = tone(440.0);
-        let prefix = audio_features(&pcm[..window(41) * 2]);
-        assert_eq!(prefix, audio_features(&pcm)[..41]);
+        let prefix = audio_cues(&pcm[..window(41) * 2]);
+        assert_eq!(prefix, audio_cues(&pcm)[..41]);
     }
 
     #[test]
     fn audio_lighting_is_sampled_by_time_and_ends_with_the_pcm() {
-        let audio = vec![[0.5, 1.0, 0.25, 0.0], [1.0, 0.0, 0.75, 1.0]];
+        let audio = vec![
+            AudioCues {
+                intro: [0.5, 1.0, 0.25, 0.0],
+                scroller: [0.5, 0.0, 1.0],
+            },
+            AudioCues {
+                intro: [1.0, 0.0, 0.75, 1.0],
+                scroller: [1.0, 0.5, 0.0],
+            },
+        ];
         let clip = Clip {
             frames: Vec::new(),
             pcm: Vec::new(),
@@ -1116,16 +1133,19 @@ mod tests {
             flights: [[0.0; 4]; 10],
             audio,
         };
+        let intro = |time: f64| clip.audio_at(time).intro;
         // Window 0 is known once it has played, at 1/70 s.
-        assert_eq!(clip.audio_at(0.0), [0.0; 4]);
-        assert_eq!(clip.audio_at(0.5 / 70.0), [0.25, 0.5, 0.125, 0.0]);
-        assert_eq!(clip.audio_at(1.0 / 70.0), [0.5, 1.0, 0.25, 0.0]);
-        assert_eq!(clip.audio_at(1.5 / 70.0), [0.75, 0.5, 0.5, 0.5]);
-        assert_eq!(clip.audio_at(2.5 / 70.0), [0.5, 0.0, 0.375, 0.5]);
-        assert_eq!(clip.audio_at(3.0 / 70.0), [0.0; 4]);
-        assert_eq!(clip.audio_at(100.0), [0.0; 4]);
-        assert_eq!(clip.audio_at(-1.0), [0.0; 4]);
-        assert_eq!(clip.audio_at(f64::NAN), [0.0; 4]);
+        assert_eq!(clip.audio_at(0.0), AudioCues::default());
+        assert_eq!(intro(0.5 / 70.0), [0.25, 0.5, 0.125, 0.0]);
+        assert_eq!(intro(1.0 / 70.0), [0.5, 1.0, 0.25, 0.0]);
+        assert_eq!(intro(1.5 / 70.0), [0.75, 0.5, 0.5, 0.5]);
+        assert_eq!(intro(2.5 / 70.0), [0.5, 0.0, 0.375, 0.5]);
+        // The scroller's cues follow the same clock.
+        assert_eq!(clip.audio_at(0.5 / 70.0).scroller, [0.25, 0.0, 0.5]);
+        assert_eq!(clip.audio_at(1.5 / 70.0).scroller, [0.75, 0.25, 0.5]);
+        for time in [3.0 / 70.0, 100.0, -1.0, f64::NAN] {
+            assert_eq!(clip.audio_at(time), AudioCues::default());
+        }
     }
 
     #[test]
@@ -1195,8 +1215,8 @@ mod tests {
             intro
                 .audio
                 .iter()
-                .flatten()
-                .all(|v| (0.0..=1.0).contains(v))
+                .flat_map(|c| c.intro.into_iter().chain(c.scroller))
+                .all(|v| (0.0..=1.0).contains(&v))
         );
         let cut = clip.transition.as_ref().unwrap();
         assert_eq!(cut.end_tick - cut.start_tick, 169);

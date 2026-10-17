@@ -4,6 +4,8 @@ use bytemuck::{Pod, Zeroable};
 use std::{fs::File, io::BufWriter, path::Path};
 use wgpu::util::DeviceExt;
 
+/// Shared controls for every shader. [`CONTROLS_WGSL`] declares the same
+/// layout once for WGSL; keep the two in step (the tests check them).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Uniforms {
@@ -18,8 +20,8 @@ struct Uniforms {
     next_palette: [[f32; 4]; 64],
     scroller: [f32; 4],
     scroll_light: [f32; 4],
-    /// Authored music-reactive lighting, measured from the clip's PCM (see
-    /// `clip::audio_features`): energy, onset, low band, accent, each 0..=1.
+    /// Authored music-reactive intro lighting, measured from the clip's PCM
+    /// (see `clip::audio_cues`): energy, onset, low band, accent, each 0..=1.
     audio: [f32; 4],
     /// Plate pose when the modern renderer's virtual shutter opened; w of the
     /// centre carries the exposure length in sequence frames.
@@ -27,6 +29,32 @@ struct Uniforms {
     plate_open_rotation: [f32; 4],
     /// On-screen counter: shown, frames per second, milliseconds per frame.
     hud: [f32; 4],
+}
+
+/// The only WGSL declaration of [`Uniforms`] and its binding. [`wgsl`]
+/// prepends it to every shader module, so no module can declare a stale or
+/// partial copy that silently shifts later fields.
+const CONTROLS_WGSL: &str = "\
+struct Controls {
+    screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode
+    state: vec4f,  // reference phase, sequence frame, door, temporal shape interpolation
+    misc: vec4f,   // composition aspect, sRGB output, logo reveal time, modern style
+    flights: array<vec4f,10>, plate_center: vec4f, plate_rotation: vec4f,
+    transition: vec4f, tile_order: array<vec4f,40>, next_palette: array<vec4f,64>,
+    scroller: vec4f,     // shown, seconds since the text began, unused, exit fade
+    scroll_light: vec4f, // relative level, musical (1) or studio (0), bass, treble
+    // The intro's authored music response, measured from the clip's PCM,
+    // each 0..1: energy, onset (decaying pulse), low band, accent.
+    audio: vec4f,
+    plate_open_center: vec4f, plate_open_rotation: vec4f,
+    hud: vec4f,    // on-screen counter: shown, frames per second, milliseconds per frame
+}
+@group(0) @binding(0) var<uniform> u: Controls;
+";
+
+/// A shader module's complete source: the shared controls, then its body.
+pub(super) fn wgsl(body: &str) -> String {
+    [CONTROLS_WGSL, body].concat()
 }
 
 /// Authored exposure for the modern renderer's motion blur, in sequence
@@ -132,7 +160,7 @@ impl Renderer {
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Native-resolution intro"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("intro.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(wgsl(include_str!("intro.wgsl")).into()),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Intro inputs"),
@@ -365,28 +393,29 @@ impl Renderer {
             }
             next_palette = cut.palette;
         }
+        let audio = clip.audio_at(time);
         let mut scroller = [0.0; 4];
         let mut scroll_light = [0.0; 4];
         if let Some(scroll) = &clip.scroller {
             scroller = [
                 1.0,
                 (time - scroll.start_tick as f64 / 70.0) as f32,
-                scroll.style as u32 as f32,
+                // Formerly the preset; glass is now the only scroller style.
+                0.0,
                 (1.0 - ((time * 70.0 - scroll.end_tick as f64) / 12.0).max(0.0)).clamp(0.0, 1.0)
                     as f32,
             ];
-            let audio: [f32; 3] = std::array::from_fn(|band| {
-                scroll.audio[index][band] * (1.0 - mix) + scroll.audio[next][band] * mix
-            });
+            // The same causal cues as the intro; studio mode ignores them.
+            let [level, bass, treble] = audio.scroller;
             scroll_light = [
-                audio[0],
+                level,
                 if scroll.lighting == ScrollerLighting::Musical {
                     1.0
                 } else {
                     0.0
                 },
-                audio[1],
-                audio[2],
+                bass,
+                treble,
             ];
             if frame.state.phase >= 8 {
                 for (i, color) in next_palette.iter_mut().enumerate() {
@@ -420,7 +449,7 @@ impl Renderer {
             next_palette,
             scroller,
             scroll_light,
-            audio: clip.audio_at(time),
+            audio: audio.intro,
             plate_open_center,
             plate_open_rotation,
             hud: hud.map_or([0.0; 4], |[fps, ms]| [1.0, fps, ms, 0.0]),
@@ -609,5 +638,103 @@ fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
             multisampled: false,
         },
         count: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::{offset_of, size_of};
+
+    /// Every shader module body in this directory. Reading the directory
+    /// means a new module is checked without being listed here.
+    fn modules() -> Vec<(String, String)> {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/hd");
+        let mut modules: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|e| e == "wgsl"))
+            .map(|path| {
+                let body = std::fs::read_to_string(&path).unwrap();
+                (path.file_name().unwrap().to_string_lossy().into(), body)
+            })
+            .collect();
+        modules.sort();
+        modules
+    }
+
+    #[test]
+    fn every_shader_validates_with_the_one_controls_declaration() {
+        let modules = modules();
+        let names: Vec<_> = modules.iter().map(|m| m.0.as_str()).collect();
+        for expected in [
+            "intro.wgsl",
+            "modern.wgsl",
+            "post.wgsl",
+            "scroller.wgsl",
+            "transition.wgsl",
+        ] {
+            assert!(names.contains(&expected), "{expected} not found");
+        }
+        let expected: Vec<(&str, usize)> = rust_fields();
+        for (name, body) in &modules {
+            assert!(
+                !body.contains("struct Controls") && !body.contains("@binding(0)"),
+                "{name} must not declare its own controls; renderer::wgsl prepends them"
+            );
+            let source = wgsl(body);
+            let module = naga::front::wgsl::parse_str(&source)
+                .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(&source)));
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::default(),
+            )
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(&source)));
+            let controls = module
+                .types
+                .iter()
+                .find(|(_, ty)| ty.name.as_deref() == Some("Controls"))
+                .expect("Controls struct");
+            let naga::TypeInner::Struct { members, span } = &controls.1.inner else {
+                panic!("Controls is not a struct");
+            };
+            assert_eq!(*span as usize, size_of::<Uniforms>(), "{name}: size");
+            let layout: Vec<_> = members
+                .iter()
+                .map(|m| (m.name.as_deref().unwrap(), m.offset as usize))
+                .collect();
+            assert_eq!(layout, expected, "{name}: field names and offsets");
+        }
+    }
+
+    /// Rust field names and byte offsets, in declaration order.
+    fn rust_fields() -> Vec<(&'static str, usize)> {
+        macro_rules! fields {
+            ($($field:ident),* $(,)?) => {
+                vec![$((stringify!($field), offset_of!(Uniforms, $field))),*]
+            };
+        }
+        let fields = fields![
+            screen,
+            state,
+            misc,
+            flights,
+            plate_center,
+            plate_rotation,
+            transition,
+            tile_order,
+            next_palette,
+            scroller,
+            scroll_light,
+            audio,
+            plate_open_center,
+            plate_open_rotation,
+            hud,
+        ];
+        // A field missing from this list leaves bytes unaccounted for.
+        let last = size_of::<[f32; 4]>();
+        assert_eq!(fields.last().unwrap().1 + last, size_of::<Uniforms>());
+        fields
     }
 }

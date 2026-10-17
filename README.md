@@ -69,7 +69,7 @@ works as an alias. Earlier trials of a curling burn and of falling, burning
 sheets were removed, but remain in the Git history (commits `4c43ab2`,
 `00a63d5` and `0fe8b55`).
 
-To continue into the selected glass scroller with studio lighting:
+To continue into the glass scroller with studio lighting:
 
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --seek 27
@@ -77,24 +77,26 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 
 | Flag | Experiment |
 | --- | --- |
-| `--scroller ribbons` | Coated titanium lettering with ends curving into depth |
-| `--scroller sculpted` | Straight extruded lettering for comparison |
-| `--scroller` or `--scroller glass` | Selected curved glass treatment with reflective edges |
+| `--scroller` | Glass lettering with reflective edges; the row ends curve into depth |
 | `--scroller-lighting musical` | Bass pulses the coloured lights; percussion catches white highlights |
 | `--scroller-lighting studio` | Steady lighting, selected by default |
 
-The scroller modes include the laser transition and continue to the end of
+The scroller includes the laser transition and continues to the end of
 part 2, around 42 seconds. Omit `--seek` for the complete intro; use `--seek 18`
 to watch the tiles reveal the new scene. Add `--split` for the original on the
-left. In the app, **1 / 2 / 3** switch presets and **L** switches lighting without
-restarting the music.
+left. In the app, **L** switches lighting without restarting the music.
+
+Glass with studio lighting was chosen from three presets. The other two,
+coated titanium ribbons and straight sculpted extrusions, were removed from the
+code but remain in the Git history: commit `5e717ff` introduced them, and
+`ad08523` is the last commit that still has them.
 
 The vertical sine scroller passes in front of the lower horizontal row and
 behind the upper row, where it remains visible through the glass.
 
 The large lettering and sine overlay use smoothed contours from locally
-rendered reference frames. Depth, ribbon bending, materials and lighting are
-authored experiments. Glass transmission, reflections, haze and contact shadows
+rendered reference frames. Depth, the curved row ends, materials and lighting
+are authored experiments. Glass transmission, reflections, haze and contact shadows
 are analytic approximations, not a full optical simulation.
 
 | Key | Action |
