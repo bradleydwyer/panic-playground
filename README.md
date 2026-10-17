@@ -2,9 +2,9 @@
 
 Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
-[![Watch the modern Panic intro on YouTube](https://img.youtube.com/vi/Is5-mirSX-I/maxresdefault.jpg)](https://youtu.be/Is5-mirSX-I)
+[![Watch the modern Panic intro on YouTube](https://img.youtube.com/vi/kydoV3qX6J4/maxresdefault.jpg)](https://youtu.be/kydoV3qX6J4)
 
-[▶ Watch the intro on YouTube](https://youtu.be/Is5-mirSX-I)
+[▶ Watch the intro on YouTube](https://youtu.be/kydoV3qX6J4)
 
 So far this covers the opening through the PANIC logo: the FUTURE CREW letters
 flying past, the tumbling block and the logo reveal. The idea is to keep the
