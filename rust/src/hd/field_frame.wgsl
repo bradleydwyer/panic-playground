@@ -33,7 +33,8 @@
 //   physical model. The mountain's silhouette (frame_prepass) shades the
 //   frame from the lava and the key and darkens it behind its base.
 // Nothing is displaced: the frame shows exactly where the picture has it.
-// The smoke is still the stand-in: none.
+// The smoke is simulated in field_frame_smoke.rs and its kernels; this file
+// draws its two light layers.
 
 // The frame's shape (field_frame.rs's FrameShape), bound by field_render.rs:
 // two pages of SHAPE_SCALE texels a source pixel and a row of parameters.
@@ -425,10 +426,53 @@ fn frame_ornament_at(px:FieldPixel,lights:FrameLights)->FieldLayer {
     return field_layer(frame_shade(sf,lights),cover,LAYER_FRAME_Z);
 }
 
+// ---- The smoke ------------------------------------------------------------------------
+// The smoke's light (field_frame_smoke.rs), in two layers over FLUID's
+// region: what lies behind the picture plane, bound as fluid_state, and what
+// lies in front of it, as fluid_previous. Premultiplied linear HDR light and
+// opacity, rows from the top. The smoke behind goes behind the window's
+// content too, as the window is part of the frame's plate; the smoke in
+// front goes behind the mountain, which it is not to veil.
+const FRAME_SMOKE_BEHIND_Z=-100.0;
+const FRAME_SMOKE_FRONT_Z=50.0;
+// A layer at uv, smoothly: a cubic B-spline from four bilinear taps.
+fn frame_smoke_at(front:bool,uv:vec2f)->vec4f {
+    var size:vec2f;
+    if front {size=vec2f(textureDimensions(fluid_previous));} else {size=vec2f(textureDimensions(fluid_state));}
+    let x=uv*size-.5;
+    let i=floor(x);let t=x-i;let t2=t*t;let t3=t2*t;
+    let w0=(1.0-t)*(1.0-t)*(1.0-t)/6.0;
+    let w1=(4.0-6.0*t2+3.0*t3)/6.0;
+    let w2=(1.0+3.0*t+3.0*t2-3.0*t3)/6.0;
+    let w3=t3/6.0;
+    let g0=w0+w1;let g1=w2+w3;
+    let p0=(i-1.0+w1/g0+.5)/size;
+    let p1=(i+1.0+w3/g1+.5)/size;
+    var c=vec4f(0);
+    let taps=array<vec2f,4>(vec2f(p0.x,p0.y),vec2f(p1.x,p0.y),vec2f(p0.x,p1.y),vec2f(p1.x,p1.y));
+    let weights=vec4f(g0.x*g0.y,g1.x*g0.y,g0.x*g1.y,g1.x*g1.y);
+    for(var k=0;k<4;k++) {
+        var v:vec4f;
+        if front {v=textureSampleLevel(fluid_previous,linear,taps[k],0.0);}
+        else {v=textureSampleLevel(fluid_state,linear,taps[k],0.0);}
+        c+=weights[k]*v;
+    }
+    return max(c,vec4f(0));
+}
+fn frame_smoke(px:FieldPixel,front:bool,z:f32)->FieldLayer {
+    let uv=fluid_uv(px.source);
+    if any(uv<vec2f(0)) || any(uv>vec2f(1)) {return no_layer();}
+    let c=frame_smoke_at(front,uv);
+    if c.a<=1e-4 {return no_layer();}
+    return FieldLayer(c.rgb,min(c.a,1.0),z);
+}
+
 fn frame_layers(px:FieldPixel)->FrameLayers {
     let s=px.source;
+    let behind=frame_smoke(px,false,FRAME_SMOKE_BEHIND_Z);
+    let front=frame_smoke(px,true,FRAME_SMOKE_FRONT_Z);
     if !in_frame(s) || window_cover(s,px.pixel)>=1.0 {
-        return FrameLayers(no_layer(),no_layer(),no_layer());
+        return FrameLayers(behind,no_layer(),front);
     }
     let lights=frame_lights();
     var frame=frame_layer_at(px,lights);
@@ -439,7 +483,7 @@ fn frame_layers(px:FieldPixel)->FrameLayers {
                 frame.alpha+ornament.alpha*(1.0-frame.alpha),LAYER_FRAME_Z);
         }
     }
-    return FrameLayers(no_layer(),frame,no_layer());
+    return FrameLayers(behind,frame,front);
 }
 
 // The prepass's first row holds, for each column, the top of the mountain's
@@ -469,11 +513,8 @@ fn frame_prepass(px:FieldPixel)->vec4f {
     return vec4f(top,0,0,0);
 }
 
-// The fluid runs, drawing nothing yet: its state counts its steps, modulo
-// 1000, in w, which the ignored test part5_fluid_is_the_same_however_it_is_
-// reached reads back.
+// The groundwork's single-texture fluid step, which field_style.wgsl's
+// field_fluid still calls: unused, as the smoke runs in its own modules
+// (field_frame_smoke.rs).
 fn frame_fluid_init(cell:FluidCell)->vec4f {return vec4f(0);}
-fn frame_fluid(cell:FluidCell)->vec4f {
-    let before=fluid_load(cell.texel);
-    return vec4f(0,0,0,f32((u32(round(before.w))+1u)%1000u));
-}
+fn frame_fluid(cell:FluidCell)->vec4f {return fluid_load(cell.texel);}

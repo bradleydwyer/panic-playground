@@ -3,20 +3,15 @@
 //! into the modern renderer's HDR target, which then takes the shared bloom
 //! and tonemap.
 //!
-//! The fluid hook runs the frame author's `frame_fluid` as a compute pass at
-//! a fixed step ([`FLUID`]): state n is the fluid at its start plus n steps,
-//! each step reading the state before it and the part-5 block at its own
-//! start. A moment shows the state after it and the one before, blended, so
-//! the fluid is always one step ahead. Every step depends only on the one
-//! before, so playing on, seeking and exporting a single frame all reach the
-//! same state; seeking back starts again from the nearest state kept every
-//! `FLUID.checkpoint` steps, or from the start.
+//! The fluid hook is the frame author's [`FrameFluid`] (field_frame_smoke.rs):
+//! a smoke simulation at a fixed step ([`FLUID`]), deterministic per step,
+//! with its own GPU state, kept states for seeking back and lighting. This
+//! file brings it to each moment shown and binds its two light layers for
+//! the fragments.
 use super::field::{
-    BUFFER_SIZE, COARSE_CELLS, FLUID, FieldBlock, FieldPreview, FluidStart, MAP_SIZE, authors,
-    frame_shape,
+    BUFFER_SIZE, COARSE_CELLS, FieldPreview, FrameFluid, MAP_SIZE, authors, frame_shape,
 };
 use super::renderer::wgsl_parts;
-use bytemuck::{Pod, Zeroable};
 use wgpu::*;
 
 const COMMON: &str = include_str!("field_common.wgsl");
@@ -35,21 +30,6 @@ pub(super) fn style_source() -> String {
     let [frame, zoom, mountain] = authors();
     wgsl_parts(&[COMMON, frame.source, zoom.source, mountain.source, ENTRIES])
 }
-
-/// One fluid step's controls, as field_common.wgsl's `FluidStep`.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub struct FluidStep {
-    pub block: FieldBlock,
-    /// Step number, fluid seconds at its start, seconds per step, 1 for the
-    /// initial state.
-    pub step: [f32; 4],
-}
-
-/// Bytes between the steps' controls in their buffer (a multiple of the
-/// 256-byte dynamic offset alignment), and the steps one submission holds.
-const STEP_STRIDE: u64 = 512;
-const STEP_SLOTS: usize = 256;
 
 /// Everything group 0 holds but the prepass textures.
 struct Inputs {
@@ -92,22 +72,6 @@ impl Inputs {
     }
 }
 
-/// The fluid's state textures (ping-pong: state n lives in texture n % 2),
-/// their bind groups, the steps' controls and the kept states.
-struct Fluid {
-    pipeline: ComputePipeline,
-    textures: [Texture; 2],
-    /// Fragment bind groups: texture k latest, the other previous.
-    draw: [BindGroup; 2],
-    /// Compute bind groups: read texture k, write the other.
-    step: [BindGroup; 2],
-    steps: Buffer,
-    kept: Texture,
-    filled: Vec<bool>,
-    /// The state the latest texture holds, once the first has been made.
-    done: Option<usize>,
-}
-
 /// Group 0 with the authors' prepass targets, the targets (one per author
 /// with a prepass) and their size.
 type Prepassed = (BindGroup, [Option<TextureView>; 3], (u32, u32));
@@ -127,7 +91,7 @@ pub(super) struct FieldRenderer {
     faithful: RenderPipeline,
     style: RenderPipeline,
     prepasses: [Option<RenderPipeline>; 3],
-    fluid: Fluid,
+    fluid: FrameFluid,
 }
 
 fn texture(
@@ -240,12 +204,12 @@ impl FieldRenderer {
             bytemuck::cast_slice(&preview.relief.texels),
         );
         // The frame author's shape, baked from the picture (field_frame.rs).
-        let shape = frame_shape(preview);
+        let frame = frame_shape(preview);
         let shape = made(
             "Part 5 frame shape",
-            shape.size,
+            frame.size,
             TextureFormat::Rgba16Float,
-            bytemuck::cast_slice(&shape.texels),
+            bytemuck::cast_slice(&frame.texels),
         );
         let blank = made("No prepass", (1, 1), TextureFormat::Rgba16Float, &[0; 8])
             .create_view(&Default::default());
@@ -295,37 +259,6 @@ impl FieldRenderer {
                 visibility: ShaderStages::FRAGMENT,
                 ..sampled_entry(binding)
             }),
-        });
-        let compute_fluid = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("Part 5 fluid step"),
-            entries: &[
-                BindGroupLayoutEntry {
-                    visibility: ShaderStages::COMPUTE,
-                    ..sampled_entry(1)
-                },
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: std::num::NonZeroU64::new(
-                            std::mem::size_of::<FluidStep>() as u64,
-                        ),
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::StorageTexture {
-                        access: StorageTextureAccess::WriteOnly,
-                        format: TextureFormat::Rgba16Float,
-                        view_dimension: TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
-            ],
         });
         let inputs = Inputs {
             layout,
@@ -408,96 +341,7 @@ impl FieldRenderer {
                 )
             })
         });
-        let fluid_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("Part 5 fluid step"),
-            layout: Some(&layout_of(&[&inputs.layout, &compute_fluid])),
-            module: &module,
-            entry_point: Some("field_fluid"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        let [width, height] = FLUID.size;
-        let states = ["Part 5 fluid A", "Part 5 fluid B"].map(|label| {
-            texture(
-                device,
-                label,
-                (width, height),
-                TextureFormat::Rgba16Float,
-                TextureUsages::TEXTURE_BINDING
-                    | TextureUsages::STORAGE_BINDING
-                    | TextureUsages::COPY_SRC
-                    | TextureUsages::COPY_DST,
-            )
-        });
-        let views = states
-            .each_ref()
-            .map(|t| t.create_view(&Default::default()));
-        let steps = device.create_buffer(&BufferDescriptor {
-            label: Some("Part 5 fluid steps"),
-            size: STEP_STRIDE * STEP_SLOTS as u64,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let draw = [0, 1].map(|k| {
-            device.create_bind_group(&BindGroupDescriptor {
-                label: Some("Part 5 fluid, drawn"),
-                layout: &fragment_fluid,
-                entries: &[
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: BindingResource::TextureView(&views[k]),
-                    },
-                    BindGroupEntry {
-                        binding: 2,
-                        resource: BindingResource::TextureView(&views[1 - k]),
-                    },
-                ],
-            })
-        });
-        let step = [0, 1].map(|k| {
-            device.create_bind_group(&BindGroupDescriptor {
-                label: Some("Part 5 fluid step"),
-                layout: &compute_fluid,
-                entries: &[
-                    BindGroupEntry {
-                        binding: 1,
-                        resource: BindingResource::TextureView(&views[k]),
-                    },
-                    BindGroupEntry {
-                        binding: 3,
-                        resource: BindingResource::Buffer(BufferBinding {
-                            buffer: &steps,
-                            offset: 0,
-                            size: std::num::NonZeroU64::new(
-                                std::mem::size_of::<FluidStep>() as u64,
-                            ),
-                        }),
-                    },
-                    BindGroupEntry {
-                        binding: 4,
-                        resource: BindingResource::TextureView(&views[1 - k]),
-                    },
-                ],
-            })
-        });
-        // The states kept for seeking back, one layer per checkpoint from the
-        // fluid's start to the end of part 5.
-        let span = preview.seconds(preview.frames.len()) - fluid_start(preview);
-        let layers = (span * FLUID.rate) as usize / FLUID.checkpoint.max(1) + 2;
-        let kept = device.create_texture(&TextureDescriptor {
-            label: Some("Part 5 fluid checkpoints"),
-            size: Extent3d {
-                width,
-                height,
-                depth_or_array_layers: layers as u32,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba16Float,
-            usage: TextureUsages::COPY_SRC | TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
+        let fluid = FrameFluid::new(device, queue, preview, &frame, &relief, &fragment_fluid);
         Self {
             key: key(preview),
             palette,
@@ -510,16 +354,7 @@ impl FieldRenderer {
             faithful,
             style,
             prepasses,
-            fluid: Fluid {
-                pipeline: fluid_pipeline,
-                textures: states,
-                draw,
-                step,
-                steps,
-                kept,
-                filled: vec![false; layers],
-                done: None,
-            },
+            fluid,
         }
     }
 
@@ -574,7 +409,7 @@ impl FieldRenderer {
     }
 
     /// Bring the fluid to the moment `time` shows: the state one step past
-    /// it, with the one before. Returns `u.field.fluid`.
+    /// it, lit. Returns `u.field.fluid`.
     pub fn advance_fluid(
         &mut self,
         device: &Device,
@@ -582,134 +417,19 @@ impl FieldRenderer {
         preview: &FieldPreview,
         time: f64,
     ) -> [f32; 4] {
-        let dt = 1.0 / FLUID.rate;
-        let start = fluid_start(preview);
-        let elapsed = time - start;
-        if elapsed < 0.0 {
-            return [0.0, 0.0, dt as f32, elapsed as f32];
-        }
-        let position = elapsed * FLUID.rate;
-        let target = position.floor() as usize + 1;
-        let every = FLUID.checkpoint.max(1);
-        let fluid = &mut self.fluid;
-        let mut encoder = device.create_command_encoder(&Default::default());
-        // Seeking back: the latest kept state at or before the one before the
-        // target, or the start.
-        if fluid.done.is_none_or(|done| done > target) {
-            let wanted = ((target - 1) / every).min(fluid.filled.len() - 1);
-            fluid.done = None;
-            if let Some(k) = (0..=wanted).rev().find(|&k| fluid.filled[k]) {
-                let n = k * every;
-                copy_layer(
-                    &mut encoder,
-                    (&fluid.kept, k as u32),
-                    (&fluid.textures[n % 2], 0),
-                );
-                fluid.done = Some(n);
-            }
-        }
-        let groups = FLUID.size.map(|s| s.div_ceil(8));
-        let first = fluid.done.map_or(0, |done| done + 1);
-        let mut slot = 0;
-        for n in first..=target {
-            if slot == STEP_SLOTS {
-                queue.submit([encoder.finish()]);
-                encoder = device.create_command_encoder(&Default::default());
-                slot = 0;
-            }
-            // State n is made by the step from state n - 1, with the block at
-            // that step's start; state 0 is the first.
-            let from = n.saturating_sub(1);
-            let t = from as f64 * dt;
-            let mut block = preview.controls(start + t);
-            block.fluid = [from as f32, 0.0, dt as f32, t as f32];
-            let step = FluidStep {
-                block,
-                step: [
-                    from as f32,
-                    t as f32,
-                    dt as f32,
-                    if n == 0 { 1.0 } else { 0.0 },
-                ],
-            };
-            let offset = slot as u64 * STEP_STRIDE;
-            queue.write_buffer(&fluid.steps, offset, bytemuck::bytes_of(&step));
-            {
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                    label: Some("Part 5 fluid step"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&fluid.pipeline);
-                pass.set_bind_group(0, &self.plain, &[]);
-                // Writes texture n % 2, reading the other.
-                pass.set_bind_group(1, &fluid.step[(n + 1) % 2], &[offset as u32]);
-                pass.dispatch_workgroups(groups[0], groups[1], 1);
-            }
-            slot += 1;
-            fluid.done = Some(n);
-            let k = n / every;
-            if n % every == 0 && k < fluid.filled.len() && !fluid.filled[k] {
-                copy_layer(
-                    &mut encoder,
-                    (&fluid.textures[n % 2], 0),
-                    (&fluid.kept, k as u32),
-                );
-                fluid.filled[k] = true;
-            }
-        }
-        queue.submit([encoder.finish()]);
-        [
-            target as f32,
-            (position - (target - 1) as f64) as f32,
-            dt as f32,
-            elapsed as f32,
-        ]
+        self.fluid.advance(device, queue, preview, time)
     }
 
-    /// The latest fluid state and the one before, as Rgba16Float bytes.
+    /// A hash of the fluid's latest state, and its number.
     #[cfg(test)]
-    pub(super) fn read_fluid(&self, device: &Device, queue: &Queue) -> [Vec<u8>; 2] {
-        let [width, height] = FLUID.size;
-        let row = (width * 8).div_ceil(256) * 256;
-        let latest = self.fluid.done.unwrap_or(0) % 2;
-        [latest, 1 - latest].map(|k| {
-            let buffer = device.create_buffer(&BufferDescriptor {
-                label: Some("Part 5 fluid readback"),
-                size: (row * height) as u64,
-                usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            let mut encoder = device.create_command_encoder(&Default::default());
-            encoder.copy_texture_to_buffer(
-                self.fluid.textures[k].as_image_copy(),
-                TexelCopyBufferInfo {
-                    buffer: &buffer,
-                    layout: TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(row),
-                        rows_per_image: Some(height),
-                    },
-                },
-                Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
-            queue.submit([encoder.finish()]);
-            buffer.slice(..).map_async(MapMode::Read, |_| {});
-            device.poll(PollType::wait_indefinitely()).unwrap();
-            let mapped = buffer.slice(..).get_mapped_range().unwrap();
-            mapped
-                .chunks(row as usize)
-                .flat_map(|r| r[..width as usize * 8].to_vec())
-                .collect()
-        })
+    pub(super) fn read_fluid(&self, device: &Device, queue: &Queue) -> (u64, usize) {
+        self.fluid.read(device, queue)
     }
 
-    /// The fragments' fluid bind group: the latest state and the one before.
+    /// The fragments' fluid bind group: the smoke's light behind the frame
+    /// and in front of it.
     fn fluid_shown(&self) -> &BindGroup {
-        &self.fluid.draw[self.fluid.done.unwrap_or(0) % 2]
+        self.fluid.drawn()
     }
 
     fn pass(
@@ -773,39 +493,6 @@ impl FieldRenderer {
             inputs = bound;
         }
         self.pass(encoder, hdr, &self.style, inputs, true, "Part 5 modern");
-    }
-}
-
-/// Copy one layer of a fluid state texture to another.
-fn copy_layer(encoder: &mut CommandEncoder, from: (&Texture, u32), to: (&Texture, u32)) {
-    fn at((texture, layer): (&Texture, u32)) -> TexelCopyTextureInfo<'_> {
-        TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: Origin3d {
-                x: 0,
-                y: 0,
-                z: layer,
-            },
-            aspect: TextureAspect::All,
-        }
-    }
-    encoder.copy_texture_to_texture(
-        at(from),
-        at(to),
-        Extent3d {
-            width: FLUID.size[0],
-            height: FLUID.size[1],
-            depth_or_array_layers: 1,
-        },
-    );
-}
-
-/// When the fluid starts, in clip seconds.
-fn fluid_start(preview: &FieldPreview) -> f64 {
-    match FLUID.start {
-        FluidStart::Part5 => preview.seconds(0),
-        FluidStart::PictureFade => preview.picture_fade.unwrap_or(preview.seconds(0)),
     }
 }
 

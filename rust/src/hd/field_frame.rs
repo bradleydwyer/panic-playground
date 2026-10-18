@@ -18,6 +18,10 @@
 use super::{AuthorInfo, FIELD_WINDOW, FieldBlock, FieldPreview, FluidInfo, FluidStart};
 use half::f16;
 
+#[path = "field_frame_smoke.rs"]
+mod smoke;
+pub use smoke::FrameFluid;
+
 pub static FRAME: AuthorInfo = AuthorInfo {
     name: "frame",
     source: include_str!("field_frame.wgsl"),
@@ -25,17 +29,18 @@ pub static FRAME: AuthorInfo = AuthorInfo {
     controls: frame_controls,
 };
 
-/// The fluid hook's settings: `frame_fluid` in field_frame.wgsl runs once a
-/// step on a grid of this many texels over this source-pixel rectangle, at
-/// a fixed rate from part 5's start (or from part 6's PSTART fade), and the
-/// renderer keeps a state every `checkpoint` steps for seeking back. The
-/// stand-in does nothing visible, so its grid is small.
+/// The fluid's settings: the smoke (field_frame_smoke.rs) steps 60 times a
+/// second from part 6's PSTART fade, after its pre-roll, and keeps a state
+/// every 3 s as it is first reached, for seeking back. Its two light layers,
+/// `size` texels over the source-pixel rectangle `region`, are the
+/// fragments' `fluid_state` (the smoke behind the frame) and
+/// `fluid_previous` (in front of it).
 pub static FLUID: FluidInfo = FluidInfo {
-    size: [256, 160],
-    region: [-96.0, -36.0, 416.0, 236.0],
-    rate: 70.0,
-    start: FluidStart::Part5,
-    checkpoint: 256,
+    size: smoke::LAYERS,
+    region: smoke::REGION,
+    rate: 60.0,
+    start: FluidStart::PictureFade,
+    checkpoint: 180,
 };
 
 /// Draw part 6's PSTART fade (80.36 to 81.27 s) with part 5's modern view,
@@ -93,6 +98,40 @@ const DISTANCE_LIMIT: f32 = 8.0;
 pub struct FrameShape {
     pub size: (usize, usize),
     pub texels: Vec<[f16; 4]>,
+}
+
+impl FrameShape {
+    fn texel(&self, x: usize, y: usize) -> [f32; 4] {
+        self.texels[y * self.size.0 + x].map(f16::to_f32)
+    }
+    /// The measured frame's outer rectangle and its crease's (x0, y0, x1,
+    /// y1, source pixels), if the frame was found.
+    pub fn frame(&self) -> Option<([f32; 4], [f32; 4])> {
+        let row = self.size.1 - 1;
+        (self.texel(RECTANGLES + 2, row)[0] > 0.5)
+            .then(|| (self.texel(RECTANGLES, row), self.texel(RECTANGLES + 1, row)))
+    }
+    /// The ornaments' signed distance at source point s, source pixels,
+    /// inside positive (bilinear between texels; far outside beyond the
+    /// picture).
+    pub fn ornament_distance(&self, s: [f64; 2]) -> f32 {
+        let k = SHAPE_SCALE as f64;
+        let (w, h) = (WIDTH * SHAPE_SCALE, HEIGHT * SHAPE_SCALE);
+        let q = [s[0] * k - 0.5, s[1] * k - 0.5];
+        if q[0] < -1.0 || q[1] < -1.0 || q[0] > w as f64 || q[1] > h as f64 {
+            return -DISTANCE_LIMIT;
+        }
+        let (x0, y0) = (q[0].floor(), q[1].floor());
+        let (fx, fy) = ((q[0] - x0) as f32, (q[1] - y0) as f32);
+        let at = |x: f64, y: f64| {
+            let x = (x as isize).clamp(0, w as isize - 1) as usize;
+            let y = (y as isize).clamp(0, h as isize - 1) as usize;
+            self.texel(x, y)[3]
+        };
+        let top = at(x0, y0) * (1.0 - fx) + at(x0 + 1.0, y0) * fx;
+        let bottom = at(x0, y0 + 1.0) * (1.0 - fx) + at(x0 + 1.0, y0 + 1.0) * fx;
+        top * (1.0 - fy) + bottom * fy
+    }
 }
 
 /// The frame's shape for a preview: from its picture, through the palette

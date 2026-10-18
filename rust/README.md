@@ -801,8 +801,8 @@ during the terrain, as `--bench` measures it, CPU and waiting for the GPU
 included (it gives part 6's faithful HD 0.7 ms).
 
 The modern view is three authors' work, each in their own files; see
-"Adding to part 5" below. The metal frame is in, without its smoke so far.
-Until the other two fill theirs in, each draws a plain stand-in: the window
+"Adding to part 5" below. The metal frame and its smoke are in. Until the
+other two fill theirs in, each draws a plain stand-in: the window
 is faithful HD's, and the mountain is the fitted relief, marched with the
 code's camera and projection and lit plainly in MAP.PAL's ramp by height.
 The stand-ins only show that the framework runs end to end; their modern
@@ -846,9 +846,68 @@ terrain pixel the window is dark, and the frame holds, lit only by the
 room's dim lights, until part 3 takes it. At 2560 × 1440 on an Apple M5 Max,
 the frame costs about 0.2 ms a frame at 85, 98.2, 105 and 129 seconds, as
 `--bench` measures it against the same build drawing no frame. That is less
-than the flat picture it replaces cost. With the other stand-ins, a frame
-takes about 1.1 ms during the zoom and 2.9 ms during the terrain, the shared
-bloom included; timings on a busy machine run higher.
+than the flat picture it replaces cost.
+
+Round the frame is smoke, a real fluid simulation: stable fluids (Stam
+1999) on a 3D grid, with MacCormack advection, buoyancy, vorticity
+confinement and a multigrid pressure solve. It is lifted from a separate
+prototype, kept locally, whose kernels it adapts to the real scene
+(`field_frame_smoke.rs` and its `field_frame_smoke/*.wgsl` kernels). The
+velocity grid is 208 × 124 × 64 cells over the 16:9 screen, with margins.
+Density and temperature are at twice that each way, stored as f16. It
+steps 60 times a second from part 6's fade, after an unseen pre-roll of 8
+seconds. Its light is computed each frame toward the window and the lava,
+and drawn in two layers, behind the frame and in front of it.
+
+- Driven by the scene's own state, through the part-5 block at each
+  step: the zoom, the mountain's rise, level, camera and orbit, the
+  window's clear, the sinking and the last terrain pixel, as the preview
+  observes them, so the no-music timeline works too. The lights are the
+  other authors' (or the frame's stand-ins for them).
+- Derived from the user's picture: the obstacles. The frame and its window
+  are a solid plate up to the bevels' tops. The ornaments are smoothed into
+  solid ribbons, as the cells are coarser than the filigree, and their
+  softened coverage shadows the smoke.
+- Interpretation: the lava's heat rises in a band below the mountain's
+  outline over each column. The outline is the fitted relief marched with
+  the code's camera and projection, as the mountain's stand-in is drawn.
+- Authored: the emitters, the heat, the air's movement, the lights' placing
+  and strength, and the solver's parameters. The smoke is kept mostly
+  behind and beside the frame, secondary to it and the mountain. Its heat
+  lies behind the picture plane, or near it beside the frame, and a draft
+  toward the back keeps the window and the mountain clear. Smoke in front
+  of the frame draws behind the mountain.
+
+`SMOKE` in `field_frame_smoke.rs` picks the smoke: `Volume` (the default,
+above), `SoftVolume` (density and temperature at the velocity grid's own
+resolution, softer) or `Flat` (the prototype's 2D fallback, 512 × 288,
+which reads as ink in water). At 2560 × 1440 on an Apple M5 Max, `Volume`
+costs about 5 ms a frame during the zoom and 6 to 7 ms during the terrain
+and after it, as `--bench` measures it against the frame without smoke. A
+step takes about 4.4 ms, and the light the rest. With the other stand-ins,
+a whole frame takes about 6 ms during the zoom and 9 ms during the terrain,
+the shared bloom included. The mountain's own cost replaces its
+stand-in's, about 2 ms of that. Timings on a busy machine run higher.
+
+The simulation is a pure function of the step, so it reaches the same
+state however a moment is reached, which an ignored test checks by a hash
+of the whole state. It is chaotic, so changing a kernel or a parameter
+changes every later frame. Bit-exactness holds on one machine, GPU and
+driver. Seeking and memory, for `Volume`:
+
+- A fresh process, as a one-frame export is, simulates from the fade's
+  pre-roll: about 9 seconds to reach 105 seconds and 15 to reach the end.
+- A state is kept every 3 seconds as it is first reached: 76 MB each, up
+  to 17 of them (1.3 GB), on the GPU. The simulation's own working set is
+  about 0.4 GB.
+- Seeking back runs at most 179 steps from a kept state, about 0.8 seconds
+  at worst; onto a kept state it is immediate.
+- Scrubbing stays exact. Forward through time not yet simulated, a quarter
+  second a frame costs about 75 ms a displayed frame. Backward, a second a
+  frame costs 0.2 to 0.9 seconds a frame. Playing on runs a step a frame.
+
+The renderer asks the GPU for its full number of storage buffers per
+shader stage, as the smoke's solver binds more than wgpu's default of 8.
 
 ### Adding to part 5
 
@@ -857,7 +916,7 @@ file of their own in `src/hd/`:
 
 | Author | Files | Draws |
 | --- | --- | --- |
-| Frame | `field_frame.wgsl`, `field_frame.rs` | The metal frame and the smoke behind and round it, with the fluid hook |
+| Frame | `field_frame.wgsl`, `field_frame.rs`, and the smoke's `field_frame_smoke.rs` and `field_frame_smoke/*.wgsl` | The metal frame and the smoke behind and round it, with the fluid hook |
 | Zoom | `field_zoom.wgsl`, `field_zoom.rs` | What the window shows |
 | Mountain | `field_mountain.wgsl`, `field_mountain.rs` | The mountain |
 
@@ -969,24 +1028,20 @@ controls, so they work in both. They include:
 - Music cues measured from the PCM, as in the earlier parts: `cue_energy()`,
   `cue_onset()`, `cue_low()` and `cue_accent()` (fragments only).
 
-The fluid hook runs `frame_fluid` as a compute pass over a grid of
-`FLUID.size` texels (Rgba16Float) covering the source rectangle
-`FLUID.region`, one step every 1 / `FLUID.rate` seconds (70 by default, one a
-frame of the original) from part 5's start, or from part 6's PSTART fade
-(80.36 seconds) with `FluidStart::PictureFade`. State n is the fluid at its
-start plus n steps; each step reads the one before it (`fluid_load`,
-`fluid_sample`) and the part-5 block at its own start, and nothing else that
-varies, so it is deterministic. A moment shows the state just past it and
-the one before (`fluid_blend` mixes them). Playing on runs a step or two a
-frame; a seek forward runs the steps it skips; a seek back starts again from
-the latest state kept every `FLUID.checkpoint` steps (256 by default) on the
-GPU, or from the start. Playback, seeking, scrubbing and a single exported
-frame therefore reach the same state, which an ignored test checks byte for
-byte on the GPU; a fresh process, as one-frame export uses, runs from the
-start. The step is a compute shader: use `textureSampleLevel` or
-`textureLoad`, not `textureSample`, `fwidth`, the music cues or
-`fluid_blend`. The stand-in draws nothing and only counts its steps, which
-the test reads back.
+The fluid hook is the frame author's `FrameFluid` (`field_frame_smoke.rs`),
+which `field_render.rs` creates with the frame's shape and the relief, and
+brings to each moment shown. It owns its GPU state, its steps (one every 1
+/ `FLUID.rate` seconds from `FLUID.start`, part 6's PSTART fade), the
+states it keeps every `FLUID.checkpoint` steps for seeking back, and its
+lighting. Its two light layers, `FLUID.size` texels over the source
+rectangle `FLUID.region` (rows from the top), are bound for the fragments
+as `fluid_state` (the smoke behind the frame) and `fluid_previous` (in
+front of it); `fluid_uv` maps a source point onto them. `u.field.fluid`
+holds the state shown, its fraction past the one before, the step's length
+and the seconds since the fluid's start. The groundwork's single-texture
+step, `frame_fluid` and `frame_fluid_init` with `field_style.wgsl`'s
+`field_fluid`, remains but is unused, as do the helpers for it
+(`fluid_load`, `fluid_blend`, `fluid_cell` and the step's own).
 
 Two hand-overs frame the part. Part 6 ends on the PSTART picture, and its
 look is part 6's own. Setting `FRAME_TAKES_PART6_FADE`, as the frame now
@@ -1034,7 +1089,8 @@ tile schedule, the scroller's letters and positions against every part-2
 frame, part 6's state, replayed frames and PCM against every part-6 frame,
 and part 5's against every part-5 frame; one bakes the frame's shape from
 PSTART and checks what it measures. Another, which needs a GPU, checks
-that part 5's fluid hook reaches the same state however a moment is reached:
+that part 5's smoke reaches the same state however a moment is reached (it
+re-simulates from the start at each of nine moments, a minute and a half):
 
 ```sh
 cargo test --release --locked --features hires
