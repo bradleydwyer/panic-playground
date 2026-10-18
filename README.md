@@ -157,26 +157,29 @@ cargo run --release --locked --features hires --bin panic-hd -- --rings --seek 4
 
 | Option | Effect |
 | --- | --- |
-| `--rings` | Continue through part 6, in the faithful-plus style |
-| `--rings-style glass` | Choose the part 6 style: `faithful-plus` (the default), `glass`, `pool`, `room` or `volume` |
+| `--rings` | Continue through part 6, as a liquid-chrome pool under neon |
 
 Part 6 starts at 42.23 seconds, black until its first symbol at 43.41. The
 rings fade in from 50.33 seconds and out from 72.99, and the PSTART picture
 fades in from 80.36; part 5 would begin at 81.27, where the preview ends.
-Faithful-plus keeps the original's two-grey interference pattern, smooth and
-antialiased, and turns the symbols into neon: glowing gas in clear glass
-tubes, bent into separate runs with gaps where lines cross, as signs are
-made, lighting the rings and the dark wall behind them. Glass turns the two
-ring layers into edge-lit glass plates, one glowing cool and the other warm,
-with the neon reflected in their rods. Pool makes them two sets of waves
-interfering on liquid chrome under a cool and a warm lamp. Room projects them
-in cool and warm onto the scroller's bump wall, left in the dark and lit by
-the neon. Volume makes them spherical waves in haze, with the camera
-drifting off the original's axis while the rings are at full strength. In
-the app, **1** to **5** switch styles and
-**M** shows faithful HD, the original's look at display resolution. The
+The symbols become neon: glowing gas in clear glass tubes, bent into
+separate runs with gaps where lines cross, as signs are made. The two ring
+layers become two sets of waves interfering on a pool of liquid chrome that
+fills the screen, under a cool and a warm lamp. Until the rings fade in
+there is only the neon on black. The pool comes up with them, its waves
+mirroring the neon far out across it, and when they fade out the lamps go,
+leaving the waves lit by the neon alone. In the app, **M** shows faithful
+HD, the original's look at display resolution. The
 [renderer notes](rust/README.md#part-6-rings) say what is read from the port,
 what is interpreted and what is authored, and how to add a style.
+
+Four other styles were tried alongside the pool and removed from the code:
+faithful-plus, the original's two greys with the neon symbols; edge-lit
+glass plates; the rings projected onto the scroller's bump wall; and
+spherical waves in haze. They remain in the Git history: commit `a786132`
+introduced faithful-plus and the style framework, `43a1b78` glass, `64877d8`
+the bump wall and `3e1c181` the haze, and `a9f0e30` is the last commit that
+still has them.
 
 ### Keys
 
@@ -189,7 +192,6 @@ what is interpreted and what is authored, and how to add a style.
 | M | Switch modern 3D / faithful HD |
 | Tab | Toggle the original rendering |
 | C | Toggle the split comparison |
-| 1 to 5 | Part 6 style: faithful-plus, glass, pool, room, volume |
 | F | Toggle fullscreen |
 | S | Save a PNG under `artifacts/` |
 | P | Show or hide the frame-rate counter |

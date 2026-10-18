@@ -1,5 +1,5 @@
 // The bump wall's geometry, shared by the scroller (scroller.wgsl) and the
-// part-6 styles (rings_*.wgsl): the tile layout read from the port, the
+// part-6 style modules, which include it: the tile layout read from the port, the
 // authored bump shape, the authored waves and the analytic ray / bump
 // intersections, including Inigo Quilez's MIT-licensed rounded box below.
 // Shading stays with each user. renderer::wgsl and the module lists in

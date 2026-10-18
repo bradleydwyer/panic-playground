@@ -97,8 +97,8 @@ struct Controls {
     // During part 6 the scroller's fields are reused for the bump wall:
     // backdrop holds the oscillator as part 2 left it and the wall shape,
     // backdrop_motion.z the wall strength, next_palette the tile image.
-    // Shown (1), seconds since part 6 began, style (0 faithful-plus, 1 glass,
-    // 2 pool, 3 room, 4 volume), phase (0 waiting, 1 rings, 2 picture).
+    // Shown (1), seconds since part 6 began, style (0 pool, the only one),
+    // phase (0 waiting, 1 rings, 2 picture).
     rings: vec4f,
     // Ring centres in source pixels, layer 0 xy then layer 1 xy: now, and
     // at the shutter's opening.
@@ -460,7 +460,7 @@ impl Renderer {
                 scroller: false,
                 rings: None,
                 part6: false,
-                rings_style: RingsStyle::FaithfulPlus,
+                rings_style: RingsStyle::Pool,
             },
             format,
         ))
@@ -1280,11 +1280,7 @@ mod tests {
             "rings_common.wgsl",
             "rings_style.wgsl",
             "rings_faithful.wgsl",
-            "rings_plus.wgsl",
-            "rings_glass.wgsl",
             "rings_pool.wgsl",
-            "rings_room.wgsl",
-            "rings_volume.wgsl",
         ] {
             assert!(
                 files.iter().any(|f| f.0 == expected),

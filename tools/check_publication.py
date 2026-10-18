@@ -28,12 +28,10 @@ RESEARCH_FILES = {
     'rust/src/hd/transition.wgsl',
     'rust/src/hd/scroller.wgsl', 'rust/src/hd/wall.wgsl',
     # Part 6: its state and fields, its GPU side, the shared shader code,
-    # faithful HD and the five styles (each style edits only its own file).
+    # faithful HD and the style (each style edits only its own file).
     'rust/src/hd/rings.rs', 'rust/src/hd/rings_render.rs',
     'rust/src/hd/rings_common.wgsl', 'rust/src/hd/rings_style.wgsl',
-    'rust/src/hd/rings_faithful.wgsl', 'rust/src/hd/rings_plus.wgsl',
-    'rust/src/hd/rings_glass.wgsl', 'rust/src/hd/rings_pool.wgsl',
-    'rust/src/hd/rings_room.wgsl', 'rust/src/hd/rings_volume.wgsl',
+    'rust/src/hd/rings_faithful.wgsl', 'rust/src/hd/rings_pool.wgsl',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
     'rust/src/scenes/scroller.rs', 'rust/src/scenes/field.rs',
     'rust/src/scenes/rings.rs', 'rust/src/scenes/dots.rs',
@@ -41,6 +39,12 @@ RESEARCH_FILES = {
     'rust/src/scenes/ending.rs',
     'tools/import_panic.py', 'tools/unpack_panic.py', 'tests/test_import_panic.py',
     'tools/look_check.py', 'tests/test_look_check.py',
+}
+# Research files since removed from the tree: earlier commits may hold them,
+# the index may not. Part 6's other four styles, tried and dropped.
+RETIRED_FILES = {
+    'rust/src/hd/rings_plus.wgsl', 'rust/src/hd/rings_glass.wgsl',
+    'rust/src/hd/rings_room.wgsl', 'rust/src/hd/rings_volume.wgsl',
 }
 
 
@@ -68,7 +72,9 @@ def check_rows(records, label, allowed, *, staged=False):
                 raise ValueError(f'{label}: unexpected object type: {name}')
             oid = third
         if name not in allowed:
-            if name in RESEARCH_FILES:
+            if staged and name in RETIRED_FILES:
+                raise ValueError(f'{label}: retired file staged again: {name}')
+            if name in RESEARCH_FILES or name in RETIRED_FILES:
                 raise ValueError(f'{label}: research file outside standalone-tooling scope: {name}. '
                                  'Use --research to check the complete research source scope.')
             raise ValueError(f'{label}: file outside reviewed scope: {name}')
@@ -85,11 +91,12 @@ def main():
                         help='Include the explicit research source list; not publication clearance')
     args = parser.parse_args()
     allowed = APPROVED_FILES | RESEARCH_FILES if args.research else APPROVED_FILES
+    history = allowed | RETIRED_FILES if args.research else allowed
     try:
         blobs = check_rows(git('ls-files', '--stage', '-z'), 'index', allowed, staged=True)
         commits = git('rev-list', '--all').decode('ascii').splitlines()
         for commit in commits:
-            blobs.extend(check_rows(git('ls-tree', '-rz', '--full-tree', commit), commit, allowed))
+            blobs.extend(check_rows(git('ls-tree', '-rz', '--full-tree', commit), commit, history))
         seen = set()
         for name, oid in blobs:
             if oid in seen:

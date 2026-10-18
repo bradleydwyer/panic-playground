@@ -400,7 +400,6 @@ optical simulation. All fields are generated locally in memory.
 | W | Waves on the wall backdrops, on or off |
 | , / . | Depth of the waves |
 | ; / ' | Strength of the waves' side light and shadows |
-| 1 to 5 | Part 6 style: faithful-plus, glass, pool, room, volume |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
@@ -412,14 +411,11 @@ optical simulation. All fields are generated locally in memory.
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --rings --seek 42
 cargo run --release --locked --features hires --bin panic-hd -- --rings --faithful --seek 50
-cargo run --release --locked --features hires --bin panic-hd -- --rings-style glass --seek 57
 ```
 
 `--rings` continues past part 2 through part 6, the interference rings and
-flashing symbols, to the first frame of part 5, with the music unbroken.
-`--rings-style` chooses its style and implies `--rings`; **1** to **5** switch
-styles while playing, and the title shows the one in use. `--faithful` (or
-**M**) shows faithful HD, and `--split` (or **C**) the original on the left,
+flashing symbols, to the first frame of part 5, with the music unbroken,
+as the pool described below. `--faithful` (or **M**) shows faithful HD, and `--split` (or **C**) the original on the left,
 as in the earlier parts. Part 5 itself is outside the preview: the clip ends
 on the PSTART picture as part 5 begins, at 81.27 seconds, and holds there.
 
@@ -480,53 +476,32 @@ rings in the original window with its two greys and XOR, antialiased; the
 symbols as smooth strokes at half strength in the original's yellow, which
 is the average of its flicker in linear light (the random blue component
 averaged too); and the PSTART picture smoothly upscaled, fading in DAC units
-as its palette does.
+as its palette does. It takes 0.15 to 0.5 ms a frame at 2560 by 1440 on an
+Apple M5 Max.
 
-The styles are authored experiments. Faithful-plus, the default, keeps the
-original's moiré exactly, antialiased and blurred over a 1/100 s shutter so
-it doesn't strobe, under a faint print grain. The lit symbol is a yellow neon
-tube along its stroke's centreline, just above the rings, lighting them, and
-the shared HDR bloom makes it glow. Following the owner's direction and
-photographs of neon signs, each tube is a clear glass tube about as wide as
-the original stroke, with a column of glowing gas down its middle: white
-hot along the centre once tonemapped, where a line of sight crosses the most
-gas, and a saturated amber yellow at its edge, warmer than the original's
-lemon. The glass carries a little of that light, gathers a bright line along
-each wall and catches a lamp's highlight, and the rings show through it,
-bent. As in a real sign, each tube is a single run that bends but never
-branches: where the original's strokes meet or cross, the two branches that
-continue each other most nearly straight stay one run, and the others stop
-short of it with a gap of about a tube's radius, glowing to their rounded
-ends (their electrodes bend away behind the sign; `NEON_ELECTRODE` shows
-them instead). Fragments shorter than a tube's width go. A haze of
-scattered light follows the tubes' shape.
-The tubes light the rings and a dark backing behind them, close by and in a
-wide pool. The neon light is an approximation: a prefiltered map of the
-tubes, not traced light. At 2560 by 1440 on an Apple M5 Max, with other work
-sharing the GPU, faithful-plus took 0.6 to 1.25 ms a frame over repeated
-runs, including bloom and tonemapping, and faithful HD 0.15 to 0.5 ms.
+Part 6's style, the pool, is an authored experiment. It keeps the
+original's ring centres, bands, fades and symbol timing through the shared
+helpers; everything seen is authored.
 
-The other styles keep the original's ring centres, bands, fades and symbol
-timing through the shared helpers; everything seen is authored.
+The lit symbol is a yellow neon tube along its stroke's centreline, from the
+shared tubes in `rings_common.wgsl`, and the shared HDR bloom makes it glow.
+Following the owner's direction and photographs of neon signs, each tube is a
+clear glass tube about as wide as the original stroke, with a column of
+glowing gas down its middle: white hot along the centre once tonemapped,
+where a line of sight crosses the most gas, and a saturated amber yellow at
+its edge, warmer than the original's lemon. The glass carries a little of
+that light, gathers a bright line along each wall and catches a lamp's
+highlight, and what lies behind shows through it, bent. As in a real sign,
+each tube is a single run that bends but never branches: where the original's
+strokes meet or cross, the two branches that continue each other most nearly
+straight stay one run, and the others stop short of it with a gap of about a
+tube's radius, glowing to their rounded ends (their electrodes bend away
+behind the sign; `NEON_ELECTRODE` shows them instead). Fragments shorter than
+a tube's width go. A haze of scattered light follows the tubes' shape. The
+neon's light is an approximation: a prefiltered map of the tubes, not traced
+light.
 
-Glass (**2**) turns each ring layer into a clear glass plate whose set bands
-are raised rods, with layer 0's plate in front of layer 1's. Each plate is
-lit through its own edge, cool for the front plate and warm for the back
-one, so its rods glow from inside, brightest along their walls; the back
-plate is seen through the front one, bent by its rods. Where rods of both
-plates cross, an authored rule turns their light aside, so crossings stay
-dark as in the original and the moiré reads the same way. The symbols are
-neon tubes in front of the plates, lemon yellow here rather than the shared
-amber so they stay apart from the warm plate; the rods reflect them, and
-their light passes through the plates onto a dark backing. While the lamps
-are off, the neon still catches the glass faintly. `GLASS_LIGHTING` in
-`rings_glass.wgsl` switches the plates to clear glass with no colour, or to
-both plates lit blue from the left and warm from the right. The plates fill
-the whole screen, widescreen included, rather than the original's 256 by 184
-window, and the tubes' own glass is clear, catching the lamps and showing
-the rings bent through it. It took 1.2 to 2.6 ms a frame.
-
-Pool (**3**) shows the rings as liquid chrome seen from above. The two ring
+The pool shows the rings as liquid chrome seen from above. The two ring
 layers are two wave sources at the original's ring centres, with its band
 spacing; the second layer's waves are inverted, so the surface lies level and
 dark where the original is black, and rises or sinks where only one layer is
@@ -549,32 +524,15 @@ It is exposed over a whole 60 Hz frame, its samples spread across each pixel
 as well, so the fringes don't flicker and the reflections stay sharp. It
 takes about 2 ms a frame at 2560 × 1440.
 
-Room (**4**) keeps part 2's chrome bump wall, seen with the scroller's camera,
-and turns the lights out: the wall fades with the scroller and stays black
-until the first symbol. The lit symbol hangs a few rows in front of the wall
-as neon tubes, which light the bumps turned to them and show in their
-chrome. Two gobo projectors above the camera cast the ring layers onto the
-wall, layer 0 in cool blue and layer 1 in warm orange, aligned so that the
-wall's flat backing shows the original's bands exactly; the bumps take the
-pattern displaced towards each projector, shade and shadow themselves, and
-each tube casts a shadow in each beam. Lamps add, so the original's dark
-overlaps come from an authored subtraction rather than from the light. The
-bump shape and wall strength keys apply, and musical lighting (**L**) lets
-the lamps flare on the bass. It took 4.1 to 4.5 ms a frame on a quiet GPU.
-
-Volume (**5**) turns the two ring layers into spherical waves in haze. Each
-layer's centre is an emitter in the screen plane, and shells at the
-original's band radii hold the haze, so the plane cuts them in the
-original's rings and the moiré extends into depth; layer 0's shells are
-cool, layer 1's warm, and where both are set the haze is dark, as the
-original's XOR palette is. Each band's haze is lens-shaped, thin at its edges
-so the bands stay sharp from any angle, and deepens round the emitters into
-nested spheres; a side light from the upper left shades and shadows it, and
-the neon symbols light the shells near them. The camera keeps the original's
-view while the rings fade in and out, and drifts up to 24 degrees off the
-axis while they are at full intensity, an authored move that depends only on
-the clip time. The haze is ray-marched at half resolution in closed form,
-without noise, in about 2 ms a frame.
+Four other styles were tried alongside the pool and removed from the code.
+Faithful-plus kept the original's two-grey moiré, antialiased, under the
+neon; glass made each ring layer an edge-lit glass plate, one cool and one
+warm; room projected the layers onto part 2's bump wall in the dark; and
+volume made them spherical waves in haze, with a drifting camera. They
+remain in the Git history: commit `a786132` introduced faithful-plus and
+the style framework, `43a1b78` glass, `64877d8` room and `3e1c181` volume,
+and `a9f0e30` is the last commit that still has them, with `--rings-style`
+and the keys **1** to **5** to choose between them.
 
 ### Adding a part-6 style
 
@@ -590,7 +548,7 @@ The renderer builds the style's module from the shared controls,
 `rings_common.wgsl`, `wall.wgsl`, the style's file and `rings_style.wgsl`,
 whose entry points call these two functions. The style draws into the modern
 renderer's HDR target; the shared bloom and ACES tonemap follow. Prefix the
-style's own names with its name (`glass_`, `pool_` and so on); the naga test
+style's own names with its name (`pool_` for the pool); the naga test
 validates every style's module. Edit only the style's file and, in
 `src/hd/rings.rs`, the style's own `StyleInfo` constant and controls function.
 Set `prepass: true` there to have `style_prepass` drawn first, at half the
@@ -647,7 +605,7 @@ The helpers in `rings_common.wgsl` include:
 
 `style_color` returns linear light before tonemapping. After 80.36 seconds
 it should show the PSTART picture, which part 5 opens on. Check a style
-against the others with `tools/look_check.py`, which has a shot of each.
+with `tools/look_check.py`, whose part-6 shots show it through each phase.
 
 `--fps` starts with the frame-rate counter in the top-left corner, showing
 frames per second and milliseconds per frame. With vsync the rate can't exceed
@@ -725,13 +683,12 @@ here. Don't commit any binary fixtures, including audio.
 and compares them with an earlier set, to catch unintended changes to the look
 while the shaders change. It needs only the Python standard library and your
 imported data, and writes everything under `artifacts/look-check/`, which Git
-ignores. Its 35 shots cover the modern intro letters, the plate and doors, the
+ignores. Its 31 shots cover the modern intro letters, the plate and doors, the
 logo, the laser cut, the scroller with each backdrop and lighting mode, part 6
-through its phases and in each style, faithful HD and the original view, at
-960 × 540. Their times are authored test
-points, not cues from the original. `list` shows them, and `--only` selects
-shots or groups by name, with wildcards (`--only scroller,laser` or
-`--only 'intro-7*'`).
+through its phases, faithful HD and the original view, at 960 × 540. Their
+times are authored test points, not cues from the original. `list` shows
+them, and `--only` selects shots or groups by name, with wildcards
+(`--only scroller,laser` or `--only 'intro-7*'`).
 
 ```sh
 python3 tools/look_check.py render baseline --bin /path/to/older/panic-hd

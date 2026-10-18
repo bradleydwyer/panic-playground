@@ -35,8 +35,8 @@
 // default the waves stay whole after it, seen only by the neon they reflect
 // (POOL_DARK_WAVES; at 0 their height follows ring_intensity down too, and
 // the pool settles into a still black mirror). From 80.36 s the PSTART
-// picture at its fade level, placed with tonemap_inverse as faithful-plus
-// places it, so that at 81.27 s the screen shows the picture part 5 opens on.
+// picture at its fade level, placed with tonemap_inverse, so that at
+// 81.27 s the screen shows the picture part 5 opens on.
 
 // ---- Tunables (all authored) -------------------------------------------------
 // The waves' depth: each layer's crest height at full intensity, in rows

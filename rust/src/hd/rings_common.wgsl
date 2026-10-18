@@ -1,7 +1,7 @@
 // Part 6 (Rings): bindings, coordinates and helpers shared by every part-6
-// module: faithful HD (rings_faithful.wgsl) and the five styles
-// (rings_plus.wgsl, rings_glass.wgsl, rings_pool.wgsl, rings_room.wgsl,
-// rings_volume.wgsl). A style module is the shared controls, this file,
+// module: faithful HD (rings_faithful.wgsl) and the style, the pool
+// (rings_pool.wgsl; four more were tried and removed, and remain in the Git
+// history). A style module is the shared controls, this file,
 // wall.wgsl, the style's file and rings_style.wgsl; see rust/README.md,
 // "Adding a part-6 style".
 //
