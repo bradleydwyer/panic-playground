@@ -1,23 +1,25 @@
 // Glass (authored): the owner's pick. Each ring layer is a clear glass plate
 // whose set bands are raised rods: layer 0's plate in front, layer 1's a
-// little behind it. Each plate is lit through its own edge by its own lamp,
-// cool for layer 0 and warm for layer 1, so its rods glow from inside in that
-// colour, brightest along their walls (GLASS_LIGHTING 0; 1 is clear glass
-// with no colour, 2 lights both plates blue from the left and warm from the
-// right). The back plate is seen through the
-// front one, bent by its rods. The lit symbols are neon tubes in front of
-// both plates, reflected in the rods and shining through them onto a dark
-// backing.
+// little behind it. By default each plate is lit through its own edge by its
+// own lamp, cool for layer 0 and warm for layer 1, so its rods glow from
+// inside in that colour, brightest along their walls (GLASS_LIGHTING 0; 1 is
+// clear glass with no colour, 2 lights both plates blue from the left and
+// warm from the right). The back plate is seen through the front one, bent
+// by its rods. By default the plates fill the screen (GLASS_FILL). The lit
+// symbols are neon tubes of clear glass in front of both plates: the rods
+// reflect them and their light shines through onto a dark backing, and the
+// tubes in turn reflect the lamps and the glowing rings.
 // Module: the shared controls, rings_common.wgsl, wall.wgsl, this file and
 // rings_style.wgsl. Prefix this file's own names with glass_.
 //
 // Where it comes from:
 // - From the port, through the shared helpers: the bands' geometry, both
 //   layers' centres (each plate slides exactly on its layer's, with the
-//   shared 1/100 s shutter), the ring window, the ring intensity and its
-//   fades, the lit symbol and its windows, and the PSTART picture.
-// - Authored: the plates, rods, lamps and depths, the light in and through
-//   the glass, the reflections, the plates' edges and the neon's colour.
+//   shared 1/100 s shutter), the ring window (with GLASS_FILL 0), the ring
+//   intensity and its fades, the lit symbol and its windows, and the PSTART picture.
+// - Authored: the plates, rods, lamps and depths, the bands continued past
+//   the window to fill the screen, the light in and through the glass, the
+//   reflections, the plates' edges and the neon's colour.
 // - The original's palette draws the two layers grey 48 and grey 32, and
 //   black where both are set or neither is. Here a layer's rods glow on
 //   their own; where rods of both plates cross, an authored rule turns
@@ -42,6 +44,11 @@ const GLASS_IOR=1.5;
 //   light fades across the plate and lights the rods' walls facing it, and
 //   the rods reflect only those two lamps.
 const GLASS_LIGHTING=0;
+// Where the plates are: 0 the original's ring window (256 x 184 source
+// pixels at (32, 8), read from the code; black round it), 1 the whole
+// screen, wide screens included (authored: the bands are continued
+// beyond the window, from the same centres).
+const GLASS_FILL=1;
 // The layers' edge lamps: colour and level, and the way their light runs
 // through each plate (scene axes): cool in from the upper left, warm from
 // the lower right, as the scroller's key and warm lamps.
@@ -95,16 +102,29 @@ const GLASS_GAS_AMBER=NEON_GAS;
 const GLASS_GAS_LEMON=vec3f(1.0,.86,.10);
 const GLASS_GAS_WHITE=vec3f(1.0,.80,.50);
 const GLASS_GAS=GLASS_GAS_LEMON;
-// The plates' polished edges at the ring window: the lamp light that
+// The plates' polished edges at the ring window (not drawn when the plates
+// fill the screen): the lamp light that
 // crossed the plate leaves through them, brightest at the lamp's own edge
 // (cool on the left, warm on the right).
 const GLASS_EDGE=.6;
+// The tubes are glass too: how strongly they reflect the lamps and the
+// rings below them.
+const GLASS_TUBE_LAMPS=10.0;
+const GLASS_TUBE_RINGS=2.5;
+// The gas light the tubes' clear glass carries round the glowing column
+// (the shared tubes: 1), lower here so what the glass reflects shows.
+const GLASS_TUBE_GLOW=.5;
 // The shared haze round the tubes, scaled.
 const GLASS_HAZE=.7;
 
 // ---- Helpers ----------------------------------------------------------------
 // Steady with studio lighting; with musical lighting (L), the reactive level.
 fn glass_music(studio:f32,reactive:f32)->f32 {return mix(studio,reactive,musical_lighting());}
+// The lamps' levels at fade level `lit`. With musical lighting the cool (or
+// left, or front) lamp follows the bass and the warm (right, back) one the
+// treble (the shared cues measured from the PCM).
+fn glass_bass(lit:f32)->f32 {return lit*glass_music(1.0,.45+cue_level()*.35+cue_bass()*cue_bass()*1.8);}
+fn glass_treble(lit:f32)->f32 {return lit*glass_music(1.0,.45+cue_level()*.35+pow(cue_treble(),1.5)*1.6);}
 // The lamps' level through the original's fades: its palette steps the
 // greys linearly in DAC units (ring_intensity, read from the port), so the
 // lamps follow the light grey 48 gives on the way.
@@ -172,8 +192,8 @@ fn glass_studio(r:vec3f,lit:f32,bass:f32,treble:f32)->vec3f {
 }
 // ---- The neon, in this style's colour ----------------------------------------
 // Local copies of rings_common.wgsl's neon_tube and neon_glass with the gas
-// colour as a parameter, so the tubes can be tinted here; otherwise the
-// same. The light-map helpers return NEON_GAS times a level, so their
+// colour as a parameter, so the tubes can be tinted here, and less gas light
+// in their clear glass (GLASS_TUBE_GLOW); otherwise the same. The light-map helpers return NEON_GAS times a level, so their
 // results are recoloured exactly.
 fn glass_recolour(c:vec3f)->vec3f {return c.r/NEON_GAS.r*GLASS_GAS;}
 fn glass_tube(d:f32,end:f32,across:vec2f,footprint:f32,gas_color:vec3f)->NeonGlass {
@@ -187,7 +207,7 @@ fn glass_tube(d:f32,end:f32,across:vec2f,footprint:f32,gas_color:vec3f)->NeonGla
     let gas=gas_color*(NEON_WALL*mix(exp(-(c-1.0)*5.0)*.35,1.0,column)+NEON_HOT*pow(chord,6.0));
     let electrode=vec3f(.03,.027,.024)*column;
     let wall=smoothstep(.8,.92,x)*(1.0-smoothstep(.95,1.0,x));
-    var light=mix(electrode,gas,lit)+gas_color*(NEON_GLASS_GLOW+.5*wall)*mix(.35,1.0,lit);
+    var light=mix(electrode,gas,lit)+gas_color*(NEON_GLASS_GLOW+.5*wall)*mix(.35,1.0,lit)*GLASS_TUBE_GLOW;
     let normal=vec3f(across*x,sqrt(1.0-x*x));
     let half_way=normalize(normalize(vec3f(-.45,.6,.65))+vec3f(0,0,1));
     let shown=step(1e-3,dot(across,across));
@@ -195,26 +215,32 @@ fn glass_tube(d:f32,end:f32,across:vec2f,footprint:f32,gas_color:vec3f)->NeonGla
     let bend=vec2f(across.x*COLUMN,-across.y)*x*NEON_RADIUS*.6;
     return NeonGlass(light*glass,glass*mix(1.0,.35,max(column*lit,0.0)),bend);
 }
-fn glass_tube_at(mask:i32,s:vec2f,footprint:f32)->NeonGlass {
+// The tubes at a point, with the glass's outward normal there (scene axes,
+// weighted by how much glass covers the pixel), for its reflections.
+struct GlassNeon { tube:NeonGlass, normal:vec3f }
+fn glass_tube_at(mask:i32,s:vec2f,footprint:f32)->GlassNeon {
     let f=symbol_field(mask,s);
-    if f.y>NEON_RADIUS+footprint {return NeonGlass(vec3f(0),0.0,vec2f(0));}
+    if f.y>NEON_RADIUS+footprint {return GlassNeon(NeonGlass(vec3f(0),0.0,vec2f(0)),vec3f(0));}
     let e=.5;
     let g=vec2f(symbol_field(mask,s+vec2f(e,0)).y-symbol_field(mask,s-vec2f(e,0)).y,
         symbol_field(mask,s+vec2f(0,e)).y-symbol_field(mask,s-vec2f(0,e)).y);
     let across=vec2f(g.x/COLUMN,-g.y);
     let n=select(vec2f(0),across/max(length(across),1e-5),length(across)>1e-4);
-    return glass_tube(f.y,f.w,n,footprint,GLASS_GAS);
+    let tube=glass_tube(f.y,f.w,n,footprint,GLASS_GAS);
+    let x=min(f.y/NEON_RADIUS,1.0);
+    return GlassNeon(tube,vec3f(n*x,sqrt(max(1.0-x*x,0.0)))*tube.glass);
 }
-fn glass_tubes(s:vec2f,footprint:f32)->NeonGlass {
-    var n=NeonGlass(vec3f(0),0.0,vec2f(0));
+fn glass_tubes(s:vec2f,footprint:f32)->GlassNeon {
+    var n=GlassNeon(NeonGlass(vec3f(0),0.0,vec2f(0)),vec3f(0));
     for(var k=0;k<2;k++) {
         let mask=select(neon_mask(),neon_previous(),k==1);
         let on=select(neon_on(),neon_previous_on(),k==1);
         if on>0.0 {
             let t=glass_tube_at(mask,s,footprint);
-            n.light+=t.light*on;
-            n.bend+=t.bend*t.glass*on;
-            n.glass=max(n.glass,t.glass*on);
+            n.tube.light+=t.tube.light*on;
+            n.tube.bend+=t.tube.bend*t.tube.glass*on;
+            n.tube.glass=max(n.tube.glass,t.tube.glass*on);
+            n.normal+=t.normal*on;
         }
     }
     return n;
@@ -229,7 +255,7 @@ fn glass_glint(p:vec3f,r:vec3f,pixel:f32,curve:f32)->vec3f {
     let footprint=pixel*(1.0+2.0*hit.w*curve);
     let soft=glass_recolour(neon_reflection(p,r,0.0,max(footprint,.6)/hit.w));
     if footprint>2.0 {return soft;}
-    let sharp=glass_tubes(source_of_scene(hit.xy),footprint).light;
+    let sharp=glass_tubes(source_of_scene(hit.xy),footprint).tube.light;
     return mix(sharp,soft,smoothstep(.8,2.0,footprint));
 }
 fn glass_neon_light(p:vec3f,n:vec3f)->vec3f {return glass_recolour(neon_irradiance(p,n,0.0));}
@@ -270,14 +296,30 @@ fn glass_lens(layer:u32,q:vec2f,below:f32,depth:f32)->f32 {
     let rod=glass_rod(layer,s,.5+depth*.12);
     let x=abs(rod.across);
     let focus=1.0+.9*exp(-pow((x-.55)/.13,2.0))-.8*smoothstep(.72,.98,x);
-    return mix(1.0,mix(focus,.6,smoothstep(4.0,16.0,depth)),rod.cover*ring_window(s,1.0));
+    return mix(1.0,mix(focus,.6,smoothstep(4.0,16.0,depth)),rod.cover*glass_window(s,1.0));
 }
 
 // ---- The scene --------------------------------------------------------------
+// The plates' extent at source point s: 1 on a plate, antialiased over
+// `blur` pixels at the window's edge.
+fn glass_window(s:vec2f,blur:f32)->f32 {
+    if GLASS_FILL==1 {return 1.0;}
+    return ring_window(s,blur);
+}
+// Across the plates from left (0) to right (1) at source point s: the ring
+// window, or the screen when the plates fill it.
+fn glass_across(s:vec2f)->f32 {
+    if GLASS_FILL==1 {
+        let half=100.0*screen_aspect()/COLUMN;
+        return clamp((s.x-160.0+half)/(2.0*half),0.0,1.0);
+    }
+    return clamp((s.x-RING_WINDOW.x)/(RING_WINDOW.z-RING_WINDOW.x),0.0,1.0);
+}
 // A plate's polished edge at source point s, for a lamp on the left
 // (side -1) or right (1): a thin line `at` rows inside the ring window
 // (the back plate's lies just outside the front one's).
 fn glass_edge(s:vec2f,blur:f32,side:f32,at:f32)->f32 {
+    if GLASS_FILL==1 {return 0.0;}
     let inside=min(min(s.x-RING_WINDOW.x,RING_WINDOW.z-s.x),min(s.y-RING_WINDOW.y,RING_WINDOW.w-s.y));
     let line=exp(-pow((inside-at)/max(.4,blur),2.0));
     let across=clamp((s.x-RING_WINDOW.x)/(RING_WINDOW.z-RING_WINDOW.x),0.0,1.0);
@@ -290,7 +332,7 @@ fn glass_edge(s:vec2f,blur:f32,side:f32,at:f32)->f32 {
 fn glass_lamps(layer:u32,rod:GlassRod,s:vec2f,blur:f32,at:f32,bass:f32,treble:f32,cover:f32)->vec3f {
     let front=layer==0u;
     if GLASS_LIGHTING==2 {
-        let u=clamp((s.x-RING_WINDOW.x)/(RING_WINDOW.z-RING_WINDOW.x),0.0,1.0);
+        let u=glass_across(s);
         let fade=mix(GLASS_SIDE_FAR,1.0,1.0-smoothstep(0.0,1.0,u));
         let rise=mix(GLASS_SIDE_FAR,1.0,smoothstep(0.0,1.0,u));
         let share=select(GLASS_SIDE_PLATES.y,GLASS_SIDE_PLATES.x,front);
@@ -312,14 +354,11 @@ fn glass_scene(px:RingsPixel,s:vec2f,lit:f32,caught:f32)->vec3f {
     let ray=camera_ray(px.xy);
     let up=vec3f(0,0,1);
     let blur=px.pixel;
-    // Lamp levels. With musical lighting the cool (or left, or front)
-    // lamp follows the bass and the warm (right, back) one the treble (the
-    // shared cues measured from the PCM).
-    let bass=lit*glass_music(1.0,.45+cue_level()*.35+cue_bass()*cue_bass()*1.8);
-    let treble=lit*glass_music(1.0,.45+cue_level()*.35+pow(cue_treble(),1.5)*1.6);
+    let bass=glass_bass(lit);
+    let treble=glass_treble(lit);
     // The front plate: its rod, the surface's reflection and the light it
     // lets through.
-    let window0=ring_window(s,blur*1.5);
+    let window0=glass_window(s,blur*1.5);
     let p0=vec3f(scene_of_source(s)*(EYE_Z+GLASS_DEPTH)/EYE_Z,-GLASS_DEPTH);
     let f=glass_rod(0u,s,blur);
     let n0=normalize(mix(up,glass_normal(f),window0));
@@ -336,7 +375,7 @@ fn glass_scene(px:RingsPixel,s:vec2f,lit:f32,caught:f32)->vec3f {
     let shift=(below.xy/-below.z-ray.xy/-ray.z)*GLASS_GAP;
     let s1=s+vec2f(shift.x/COLUMN,-shift.y);
     // The back plate, as seen through the front one.
-    let window1=ring_window(s1,blur*1.5);
+    let window1=glass_window(s1,blur*1.5);
     let p1=vec3f(scene_of_source(s1)*(EYE_Z+GLASS_DEPTH+GLASS_GAP)/EYE_Z,-GLASS_DEPTH-GLASS_GAP);
     let b=glass_rod(1u,s1,blur);
     let n1=normalize(mix(up,glass_normal(b),window1));
@@ -368,6 +407,41 @@ fn glass_scene(px:RingsPixel,s:vec2f,lit:f32,caught:f32)->vec3f {
     return c;
 }
 
+// The lamps as a tube's glass reflects them along r: they stand at the
+// plates' edges, low on the horizon seen from the tubes (lighting 0 and 1:
+// one at the upper left, one at the lower right; 2: left and right).
+fn glass_lamp_glints(r:vec3f,bass:f32,treble:f32)->vec3f {
+    let low=exp(-pow((r.z+.1)/.45,2.0));
+    let along=r.xy/max(length(r.xy),1e-4);
+    var a=select(GLASS_COOL,GLASS_WHITE_FRONT,GLASS_LIGHTING==1);
+    var b=select(GLASS_WARM,GLASS_WHITE_BACK,GLASS_LIGHTING==1);
+    var da=-GLASS_COOL_RUN;
+    var db=-GLASS_WARM_RUN;
+    if GLASS_LIGHTING==2 {
+        a=GLASS_SIDE_BLUE;
+        b=GLASS_SIDE_WARM;
+        da=vec2f(-1,0);
+        db=vec2f(1,0);
+    }
+    return (a*bass*pow(max(dot(along,da),0.0),2.0)+b*treble*pow(max(dot(along,db),0.0),2.0))*low;
+}
+// A tube's glass as a mirror: the lamps near the horizon, and below it the
+// front plate, whose glowing rings it shows along the tube's sides.
+fn glass_tube_mirror(px:RingsPixel,tubes:GlassNeon,lit:f32,caught:f32)->vec3f {
+    let g=tubes.tube.glass;
+    if dot(tubes.normal,tubes.normal)<1e-6 {return vec3f(0);}
+    let n=normalize(tubes.normal);
+    let ray=camera_ray(px.xy);
+    let r=reflect(ray,n);
+    let fresnel=glass_fresnel(dot(n,-ray));
+    var c=glass_lamp_glints(r,glass_bass(lit),glass_treble(lit))*GLASS_TUBE_LAMPS;
+    if r.z< -.02 {
+        let q=px.scene+r.xy*(GLASS_DEPTH/-r.z);
+        let rings=glass_scene(px,source_of_scene(q),lit,caught);
+        c+=rings*GLASS_TUBE_RINGS*smoothstep(-.02,-.2,r.z);
+    }
+    return c*fresnel*g;
+}
 // Black while part 6 waits for 06:00, as the original; from 80.36 s the
 // PSTART picture exactly as faithful HD shows it, so part 5 can take over at
 // 81.27 s. In between the lamps follow the ring intensity, and the neon
@@ -379,9 +453,14 @@ fn style_color(px:RingsPixel)->vec3f {
     let caught=mix(GLASS_DARK_CATCH,1.0,ring_intensity());
     let behind=glass_scene(px,px.source,lit,caught);
     let tubes=glass_tubes(px.source,px.pixel);
-    // Through the tubes' glass, the plates a little to the side.
+    // Through the tubes' glass, the plates a little to the side; on it, the
+    // lamps and the glowing rings it reflects.
     var seen=behind;
-    if tubes.glass>0.0 {seen=glass_scene(px,px.source+tubes.bend,lit,caught);}
-    return neon_over(behind,seen,tubes)+glass_recolour(neon_haze(px.source))*GLASS_HAZE;
+    var mirror=vec3f(0);
+    if tubes.tube.glass>0.0 {
+        seen=glass_scene(px,px.source+tubes.tube.bend,lit,caught);
+        mirror=glass_tube_mirror(px,tubes,lit,caught);
+    }
+    return neon_over(behind,seen,tubes.tube)+mirror+glass_recolour(neon_haze(px.source))*GLASS_HAZE;
 }
 fn style_prepass(px:RingsPixel)->vec4f {return vec4f(0);}
