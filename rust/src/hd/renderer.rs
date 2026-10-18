@@ -1,4 +1,6 @@
-use super::clip::{Clip, HEIGHT, ScrollerLighting, ScrollerPreview, WIDTH, plate_transform};
+use super::clip::{
+    Clip, HEIGHT, RIPPLE_SLOTS, ScrollerLighting, ScrollerPreview, WIDTH, plate_transform,
+};
 use super::modern::Modern;
 use bytemuck::{Pod, Zeroable};
 use std::{fs::File, io::BufWriter, path::Path};
@@ -41,6 +43,11 @@ struct Uniforms {
     /// Bump wall: oscillator movement over its exposure (source pixels, from
     /// shutter open to now) and the authored wall strength.
     backdrop_motion: [f32; 4],
+    /// Authored wall waves: amplitude (0 off), the exposure in seconds, and
+    /// two unused slots.
+    waves: [f32; 4],
+    /// The waves' moving ripples, newest first; see `ScrollerPreview::waves_at`.
+    ripples: [[f32; 4]; RIPPLE_SLOTS],
 }
 
 /// The only WGSL declaration of [`Uniforms`] and its binding. [`wgsl`]
@@ -72,6 +79,10 @@ struct Controls {
     // Bump wall: oscillator movement over its exposure (source pixels), the
     // authored wall strength, unused.
     backdrop_motion: vec4f,
+    // Authored wall waves: amplitude (0 off), exposure in seconds, unused x2;
+    // ripples newest first: screen x and y (fractions of the half-size), age
+    // in seconds, strength (0 unused).
+    waves: vec4f, ripples: array<vec4f,4>,
 }
 @group(0) @binding(0) var<uniform> u: Controls;
 ";
@@ -517,6 +528,8 @@ impl Renderer {
         let mut glyphs = [0.0; 4];
         let mut backdrop = [0.0; 4];
         let mut backdrop_motion = [0.0; 4];
+        let mut waves = [0.0; 4];
+        let mut ripples = [[0.0; 4]; RIPPLE_SLOTS];
         if let Some(scroll) = &clip.scroller {
             self.upload_glyphs(scroll);
             if let Some([upper, lower, overlay]) = clip.scroll_at(time) {
@@ -577,6 +590,10 @@ impl Renderer {
                 scroll.wall_strength,
                 0.0,
             ];
+            let reveal = clip.transition.as_ref().map_or(0, |cut| cut.start_tick);
+            let (amplitude, moving) = scroll.waves_at(time, reveal);
+            waves = [amplitude, (WALL_SHUTTER_TICKS / 70.0) as f32, 0.0, 0.0];
+            ripples = moving;
         }
         let u = Uniforms {
             screen: [size.0 as f32, size.1 as f32, time as f32, comparison as f32],
@@ -607,6 +624,8 @@ impl Renderer {
             glyphs,
             backdrop,
             backdrop_motion,
+            waves,
+            ripples,
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
@@ -1103,9 +1122,11 @@ mod tests {
             glyphs,
             backdrop,
             backdrop_motion,
+            waves,
+            ripples,
         ];
         // A field missing from this list leaves bytes unaccounted for.
-        let last = size_of::<[f32; 4]>();
+        let last = size_of::<[[f32; 4]; RIPPLE_SLOTS]>();
         assert_eq!(fields.last().unwrap().1 + last, size_of::<Uniforms>());
         fields
     }

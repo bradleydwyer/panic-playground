@@ -233,6 +233,13 @@ pub struct ScrollerPreview {
     pub wall_shape: f32,
     /// Authored presence of the bump wall, 0 to 1: its overall brightness.
     pub wall_strength: f32,
+    /// Authored waves across the bump wall, 0 (off, the default) to 1: the
+    /// size of a slow swell and of ripples set off by hits in the music. The
+    /// original's wall is flat; see [`ScrollerPreview::waves_at`].
+    pub wall_waves: f32,
+    /// When and where those ripples start, from the clip's audio cues; see
+    /// [`ripple_schedule`].
+    pub ripples: Vec<Ripple>,
     /// The 8x8 background image behind palette entries 64..=127 at each frame,
     /// linear RGB, unfiltered: the image `palette()` read for that frame.
     /// Before the first call the original still shows the intro's flat grey
@@ -432,6 +439,8 @@ impl Clip {
                     backdrop_style: ScrollerBackdrop::Chrome,
                     wall_shape: 0.5,
                     wall_strength: 0.6,
+                    wall_waves: 0.0,
+                    ripples: Vec::new(),
                     backdrop: walls
                         .iter()
                         .map(|(_, image)| {
@@ -449,9 +458,13 @@ impl Clip {
             pcm.extend(music.render(SAMPLE_RATE as usize * 4));
             None
         };
+        let audio = audio_cues(&pcm);
+        if let (Some(scroll), Some(cut)) = (&mut scroller_preview, &transition) {
+            scroll.ripples = ripple_schedule(&audio, cut.start_tick as f64 / FRAME_RATE as f64);
+        }
         Ok(Self {
             frames,
-            audio: audio_cues(&pcm),
+            audio,
             pcm,
             logo_at: logo_at.ok_or("Intro never reached the logo")?,
             logo_ready_at,
@@ -525,6 +538,108 @@ pub fn oscillator_lead_in(start: [[i16; 2]; 2], frames: usize) -> Vec<[[i16; 2];
         *slot = state;
     }
     lead_in
+}
+
+/// One ripple in the bump wall's authored waves, set off by a hit in the
+/// music. The original's wall is flat; nothing here is recovered.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ripple {
+    /// Clip time of the hit, in seconds.
+    pub time: f64,
+    /// Where it starts on screen: x as a fraction of the half-width, y of
+    /// the half-height, upwards.
+    pub at: [f32; 2],
+    /// Relative size, 0 to 1.
+    pub strength: f32,
+}
+
+/// Ripples the wall shader sums at once (`u.ripples`).
+pub const RIPPLE_SLOTS: usize = 4;
+/// Seconds a ripple moves before it has settled; scroller.wgsl repeats it.
+pub const RIPPLE_LIFE: f64 = 3.0;
+/// Fewest seconds between ripples, so that every ripple still moving has a
+/// slot.
+pub const RIPPLE_GAP: f64 = 0.8;
+/// The scroller's bass cue rising through this counts as a hit.
+const RIPPLE_HIT: f32 = 0.75;
+/// Seconds over which the waves settle before part 2's fade.
+const WAVE_SETTLE: f64 = 1.5;
+
+/// Authored: when and where the wall's ripples start, from the clip's audio
+/// cues ([`audio_cues`]), not from tracker events. A hit is the scroller's
+/// bass cue rising through [`RIPPLE_HIT`], at the moment its window has
+/// played, as the lighting reads it. Hits count from `from` seconds, at
+/// least [`RIPPLE_GAP`] after the previous ripple. Strength grows with the
+/// relative level and the intro's accent cue, so the music's big downbeats
+/// make the largest rings. Origins step through a low-discrepancy sequence
+/// across the middle of the screen, so successive ripples start apart. The
+/// same cues always give the same schedule.
+pub fn ripple_schedule(cues: &[AudioCues], from: f64) -> Vec<Ripple> {
+    let mut ripples: Vec<Ripple> = Vec::new();
+    for (i, pair) in cues.windows(2).enumerate() {
+        // Window i + 1 is known once it has played; see `Clip::audio_at`.
+        let time = (i + 2) as f64 / FRAME_RATE as f64;
+        let (before, cue) = (pair[0].scroller[1], pair[1]);
+        if time < from
+            || before >= RIPPLE_HIT
+            || cue.scroller[1] < RIPPLE_HIT
+            || ripples.last().is_some_and(|r| time - r.time < RIPPLE_GAP)
+        {
+            continue;
+        }
+        // The R2 sequence, from the plastic number.
+        let n = ripples.len() as f64;
+        let at = [0.754_877_666, 0.569_840_291].map(|a| ((0.5 + n * a).fract() * 1.6 - 0.8) as f32);
+        let accent = cue.intro[3].max(cue.scroller[0]).clamp(0.0, 1.0);
+        ripples.push(Ripple {
+            time,
+            at,
+            strength: 0.25 + 0.75 * accent,
+        });
+    }
+    ripples
+}
+
+/// Authored ease for the wall waves, 0 to 1: in from `reveal`, when the
+/// laser cut starts to open, until `start`, when the text begins; then out
+/// over [`WAVE_SETTLE`] seconds until `end`, when part 2 fades. In seconds.
+pub fn wave_envelope(time: f64, reveal: f64, start: f64, end: f64) -> f32 {
+    let ease = |x: f64| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    let rise = ease((time - reveal) / (start - reveal).max(1e-3));
+    (rise * ease((end - time) / WAVE_SETTLE)) as f32
+}
+
+impl ScrollerPreview {
+    /// The wall waves at a clip time, as `u.waves.x` and `u.ripples` take
+    /// them: the amplitude, `wall_waves` times [`wave_envelope`], and, newest
+    /// first, each moving ripple's origin, age in seconds and strength.
+    /// Unused slots are zero. `reveal` is the laser cut's first tick.
+    pub fn waves_at(&self, time: f64, reveal: usize) -> (f32, [[f32; 4]; RIPPLE_SLOTS]) {
+        let mut slots = [[0.0; 4]; RIPPLE_SLOTS];
+        if self.wall_waves <= 0.0 {
+            return (0.0, slots);
+        }
+        let seconds = |tick: usize| tick as f64 / FRAME_RATE as f64;
+        let ease = wave_envelope(
+            time,
+            seconds(reveal),
+            seconds(self.start_tick),
+            seconds(self.end_tick),
+        );
+        let moving = self
+            .ripples
+            .iter()
+            .rev()
+            .skip_while(|r| r.time > time)
+            .take_while(|r| time - r.time < RIPPLE_LIFE);
+        for (slot, r) in slots.iter_mut().zip(moving) {
+            *slot = [r.at[0], r.at[1], (time - r.time) as f32, r.strength];
+        }
+        (self.wall_waves * ease, slots)
+    }
 }
 
 /// 6-bit VGA DAC value to linear light, as the reference scanout expands it.
@@ -1240,6 +1355,133 @@ mod tests {
         assert!("balls".parse::<ScrollerBackdrop>().is_err());
     }
 
+    /// Synthetic cues: the bass cue jumps to 1 at each hit's window and then
+    /// decays as the analysis holds it; the hit can carry an accent.
+    fn bass_hits(windows: usize, hits: &[(usize, f32)]) -> Vec<AudioCues> {
+        let mut cues = vec![AudioCues::default(); windows];
+        for &(at, accent) in hits {
+            for (k, cue) in cues[at..].iter_mut().take(20).enumerate() {
+                cue.scroller[1] = cue.scroller[1].max(0.88_f32.powi(k as i32));
+            }
+            cues[at].intro[3] = accent;
+        }
+        cues
+    }
+
+    #[test]
+    fn ripples_start_on_bass_hits_at_most_one_per_gap() {
+        // Hits every 0.3 s from 1 s, an accent at about 4 s, and one hit
+        // before the reveal at 0.5 s.
+        let mut hits: Vec<(usize, f32)> = (0..30).map(|k| (70 + 21 * k, 0.0)).collect();
+        hits[6].1 = 1.0;
+        hits.insert(0, (14, 0.0));
+        let cues = bass_hits(800, &hits);
+        let ripples = ripple_schedule(&cues, 0.5);
+        assert_eq!(ripples, ripple_schedule(&cues, 0.5), "deterministic");
+        // Each starts when its hit's window has played.
+        let starts: Vec<f64> = hits.iter().map(|&(w, _)| (w + 1) as f64 / 70.0).collect();
+        assert!((ripples[0].time - 71.0 / 70.0).abs() < 1e-9);
+        let mut taken = 0;
+        for start in starts.iter().filter(|&&t| t >= 0.5) {
+            match ripples.get(taken) {
+                Some(r) if (r.time - start).abs() < 1e-9 => taken += 1,
+                // A hit is skipped only within the gap after a ripple.
+                _ => assert!(start - ripples[taken - 1].time < RIPPLE_GAP),
+            }
+        }
+        assert_eq!(taken, ripples.len());
+        assert!(ripples.len() > 5);
+        for pair in ripples.windows(2) {
+            assert!(pair[1].time - pair[0].time >= RIPPLE_GAP - 1e-9);
+            assert!(pair[0].at != pair[1].at);
+        }
+        for r in &ripples {
+            assert!(r.at.iter().all(|v| v.abs() <= 0.8));
+            let accent = (r.time - 197.0 / 70.0).abs() < 1e-9;
+            assert_eq!(r.strength, if accent { 1.0 } else { 0.25 }, "{r:?}");
+        }
+        assert!(ripples.iter().any(|r| r.strength == 1.0));
+        // A held cue is one hit, not one per window.
+        let mut held = vec![AudioCues::default(); 300];
+        for cue in &mut held[100..] {
+            cue.scroller[1] = 1.0;
+        }
+        assert_eq!(ripple_schedule(&held, 0.0).len(), 1);
+        assert!(ripple_schedule(&[], 0.0).is_empty());
+    }
+
+    #[test]
+    fn wave_envelope_eases_in_with_the_reveal_and_out_before_the_fade() {
+        let at = |t| wave_envelope(t, 18.0, 22.0, 40.0);
+        assert_eq!(at(10.0), 0.0);
+        assert_eq!(at(18.0), 0.0);
+        assert_eq!(at(22.0), 1.0);
+        assert_eq!(at(30.0), 1.0);
+        assert_eq!(at(40.0 - WAVE_SETTLE), 1.0);
+        assert_eq!(at(40.0), 0.0);
+        assert_eq!(at(45.0), 0.0);
+        assert!((at(20.0) - 0.5).abs() < 1e-6);
+        let mut previous = 0.0;
+        for step in 0..=3000 {
+            let t = 17.0 + step as f64 * 0.01;
+            let value = at(t);
+            assert!((value - previous).abs() < 0.011, "jump at {t}");
+            assert!(if t < 30.0 {
+                value >= previous
+            } else {
+                value <= previous
+            });
+            previous = value;
+        }
+    }
+
+    #[test]
+    fn wall_waves_hold_every_moving_ripple_newest_first() {
+        assert!(RIPPLE_SLOTS as f64 * RIPPLE_GAP >= RIPPLE_LIFE);
+        // scroller.wgsl repeats both; the uniform test checks the slots too.
+        let shader = include_str!("scroller.wgsl");
+        assert!(shader.contains(&format!("const RIPPLES={RIPPLE_SLOTS};")));
+        assert!(shader.contains(&format!("const RIPPLE_LIFE={RIPPLE_LIFE:.1};")));
+        let hits: Vec<(usize, f32)> = (0..40).map(|k| (100 + 15 * k, 0.0)).collect();
+        let mut scroll = ScrollerPreview {
+            start_tick: 280,
+            end_tick: 840,
+            lighting: ScrollerLighting::Studio,
+            scroll: Vec::new(),
+            glyphs: ScrollerGlyphs::new(&synthetic_font(), &vec![0; 768]).unwrap(),
+            backdrop_style: ScrollerBackdrop::Chrome,
+            wall_shape: 0.5,
+            wall_strength: 0.6,
+            wall_waves: 0.0,
+            ripples: ripple_schedule(&bass_hits(900, &hits), 1.0),
+            backdrop: Vec::new(),
+            oscillator: Vec::new(),
+        };
+        assert_eq!(scroll.waves_at(6.0, 70), (0.0, [[0.0; 4]; RIPPLE_SLOTS]));
+        scroll.wall_waves = 0.5;
+        for step in 0..1300 {
+            let time = step as f64 * 0.01;
+            let (amplitude, slots) = scroll.waves_at(time, 70);
+            assert_eq!(amplitude, 0.5 * wave_envelope(time, 1.0, 4.0, 12.0));
+            let moving: Vec<_> = scroll
+                .ripples
+                .iter()
+                .rev()
+                .filter(|r| r.time <= time && time - r.time < RIPPLE_LIFE)
+                .collect();
+            assert!(moving.len() <= RIPPLE_SLOTS);
+            for (k, slot) in slots.iter().enumerate() {
+                match moving.get(k) {
+                    Some(r) => assert_eq!(
+                        *slot,
+                        [r.at[0], r.at[1], (time - r.time) as f32, r.strength]
+                    ),
+                    None => assert_eq!(*slot, [0.0; 4]),
+                }
+            }
+        }
+    }
+
     #[test]
     fn scroller_cues_keep_accents_in_a_loud_mix_and_release_to_silence() {
         let pcm: Vec<i16> = (0..SAMPLE_RATE * 4)
@@ -1649,6 +1891,8 @@ mod tests {
             backdrop_style: ScrollerBackdrop::Chamber,
             wall_shape: 0.5,
             wall_strength: 0.4,
+            wall_waves: 0.0,
+            ripples: Vec::new(),
             backdrop: Vec::new(),
             oscillator: Vec::new(),
         });

@@ -168,6 +168,7 @@ uses the original pixels during this transition.
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --scroller-backdrop wall --seek 27
+cargo run --release --locked --features hires --bin panic-hd -- --scroller --wall-waves --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --faithful --seek 27
 ```
 
@@ -229,6 +230,41 @@ shadows fall on the wall as they do in the chamber. The glass letters show
 only the wall's average colour, so they don't look textured. `--wall-strength` (0 to 1,
 default 0.6; **-** and **=** in steps of 0.1) sets how present the wall is.
 All of this is authored, not recovered from the original.
+
+`--wall-waves` adds waves to the `chrome` and `wall` backdrops. They are off
+by default; **W** turns them on and off while playing, and `--wall-waves 0.5`
+sets a strength from 0 to 1 (1 if omitted). The original's wall is flat, an
+image moved by palette changes, so the waves, their timing and their light are
+all authored. A swell about 11 tiles from crest to crest rolls across the wall
+every 4 seconds, varied along its crests by a slower, longer one. Ripples
+spread out in rings at 8 tiles a second and settle within 3 seconds. Each
+starts on a hit in the music: the scroller's bass cue rising through a
+threshold, at most one every 0.8 seconds, read from the same causal analysis
+of the PCM as the musical lighting, once the hit has played. The relative
+level and the intro's accent cue set its size, so the strongest downbeats (in
+the local analysis, at about 22, 29 and 36 seconds) make the largest rings.
+Their origins step through a low-discrepancy sequence across the middle of the
+screen. The waves are anchored to the screen, and the wall's sway carries the
+bumps through them. They ease in from the laser cut's first opening to the
+start of the text, and settle over the 1.5 seconds before part 2's fade. The
+ripple schedule is computed when the clip loads, and the waves depend only on
+the time, so seeking, pausing and captures agree.
+
+Each pixel finds the waves once, at the middle of its exposure, with their
+slope, rate of rise and curvature. Its samples trace the bumps resting rigidly
+on the waves' tangent plane there, each bump on the plane at its own tile's
+centre and tilted with it, so the intersection stays analytic and exact for
+that plane; across the wall the bumps follow the waves' curve. Each sample
+carries the plane to its own time in the 1/100 s exposure, to first order.
+The depth shows mostly through light. Tilted bumps reflect other parts of the
+studio, so highlights travel across the crests and the cool and warm side
+lights fall on opposite slopes. A tile's overall brightness follows the
+studio light its tilt reflects, and troughs, curved in below their crests,
+are darker. The letters' reflections shift with the tilt, and towards the
+sides of the screen raised tiles shift slightly against lower ones. The lamps
+are too frontal, and the slopes too gentle, for the crests to cast shadows.
+The waves add about 0.2 to 0.4 ms per frame at 2560 × 1440 on an Apple M5
+Max.
 
 `--scroller-lighting musical` uses relative loudness and bass/treble
 onsets from the original PCM. Bass pulses the blue/orange lights, their metal
@@ -330,6 +366,7 @@ optical simulation. All fields are generated locally in memory.
 | B | Cycle the scroller backdrop: chamber, wall, chrome |
 | [ / ] | Bump shape for the wall backdrops |
 | - / = | Strength of the wall backdrops |
+| W | Waves on the wall backdrops, on or off |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
