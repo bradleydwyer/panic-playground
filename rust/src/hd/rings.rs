@@ -42,7 +42,7 @@ pub const SYMBOL_SMOOTHING: f32 = 0.85;
 /// Authored outer radius of the neon tubes' glass, in source rows; the
 /// glowing gas fills the middle half of it. The light map is built from the
 /// glass. rings_common.wgsl repeats it as NEON_RADIUS.
-pub const NEON_RADIUS: f32 = 3.0;
+pub const NEON_RADIUS: f32 = 3.8;
 /// The original strokes' half-width, about, in source rows (an
 /// interpretation of the masks). The tubes' runs are measured against it:
 /// what is too short to keep, and the air left between crossing tubes.
@@ -1981,7 +1981,9 @@ mod tests {
             );
             base[(2 * lh + j) * lw + i].to_f32()
         };
-        assert!(at(150, 100) > 0.9 && at(150, 104) == 0.0 && at(20, 20) == 0.0);
+        // Clear of the glass a row beyond its radius.
+        let clear = 100 + NEON_RADIUS.ceil() as i32 + 1;
+        assert!(at(150, 100) > 0.9 && at(150, clear) == 0.0 && at(20, 20) == 0.0);
         let mean = |level: &[f16], w: usize, h: usize| {
             level[2 * w * h..3 * w * h]
                 .iter()
@@ -2038,16 +2040,18 @@ mod tests {
         let horizontal = on_line(154.0, 100.5) && on_line(167.0, 100.5);
         assert!(vertical != horizontal, "exactly one bar runs through");
         // The other bar is cut back on both sides, to new ends: nothing of
-        // it within 4.5 rows of the crossing.
+        // it within 4.5 rows of the crossing, and it carries on a little
+        // beyond the gap (both tubes' glass and a stroke's half-width).
+        let gap = 2.0 * NEON_RADIUS + NEON_STROKE;
         let (near, far) = if vertical {
             (
                 [(155.1, 100.5), (165.9, 100.5)],
-                [(148.5, 100.5), (172.5, 100.5)],
+                [(155.1 - gap, 100.5), (165.9 + gap, 100.5)],
             )
         } else {
             (
                 [(160.5, 96.0), (160.5, 105.0)],
-                [(160.5, 89.5), (160.5, 111.5)],
+                [(160.5, 96.1 - gap), (160.5, 104.9 + gap)],
             )
         };
         for (x, y) in near {
