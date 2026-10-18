@@ -2,12 +2,13 @@
 
 Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
-[![Watch the modern Panic intro and scroller on YouTube](https://img.youtube.com/vi/Tiw6-bga6Qk/maxresdefault.jpg)](https://youtu.be/Tiw6-bga6Qk)
+[![Watch the modern Panic intro, scroller and rings on YouTube](https://img.youtube.com/vi/p4w5MObv9Ho/maxresdefault.jpg)](https://youtu.be/p4w5MObv9Ho)
 
-[▶ Watch the modern intro and scroller on YouTube](https://youtu.be/Tiw6-bga6Qk)
+[▶ Watch the modern intro, scroller and rings on YouTube](https://youtu.be/p4w5MObv9Ho)
 
 So far this covers the opening through the PANIC logo, the square transition,
-and experiments with the following double scroller. The idea is to keep the
+experiments with the following double scroller, and part 6's interference
+rings as a pool of liquid chrome under neon. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
 letters that refract the stars behind them, a mirrored plate that reflects the
 warp, motion blur, a starfield that ramps into warp, a heated metal logo with
@@ -15,7 +16,7 @@ slowly moving surface reflections, and lighting that pulses and breathes with
 the music.
 
 This builds on the [Rust port of Panic](https://github.com/bradleydwyer/panic).
-It's a work in progress, with modern treatments for the intro and scroller. The original
+It's a work in progress, with modern treatments for the intro, scroller and part 6. The original
 player is included as a reference. The new letterforms and block motion are
 authored approximations, not recovered original 3D models.
 
