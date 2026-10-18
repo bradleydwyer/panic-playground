@@ -1,3 +1,4 @@
+use super::rings::RingsPreview;
 use crate::{
     data::Data,
     engine::{FRAME_RATE, SAMPLE_RATE},
@@ -149,8 +150,11 @@ pub struct Clip {
     pub flights: [[f32; 4]; 10],
     /// Lighting cues measured once from `pcm`, one per 70 Hz window; see
     /// [`audio_cues`]. They steer only authored lighting, in the intro and in
-    /// the scroller's musical mode.
+    /// the scroller's musical mode, and are there for the part-6 styles.
     pub audio: Vec<AudioCues>,
+    /// Part 6, after part 2 (`--rings`). Its frames are not in `frames`; see
+    /// [`RingsPreview`].
+    pub rings: Option<RingsPreview>,
 }
 
 /// Authored lighting cues for one 70 Hz window of the clip's PCM, each 0..=1.
@@ -265,17 +269,26 @@ pub struct TileTransition {
 
 impl Clip {
     pub fn load(data: &Data) -> Result<Self, String> {
-        Self::load_mode(data, false, false)
+        Self::load_mode(data, false, false, false)
     }
 
     /// Continue through the tile transition to the next backdrop, with
     /// uninterrupted PCM. The modern renderer draws it as a laser cut.
     pub fn load_transition(data: &Data) -> Result<Self, String> {
-        Self::load_mode(data, true, false)
+        Self::load_mode(data, true, false, false)
     }
 
     pub fn load_scroller(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
-        let mut clip = Self::load_mode(data, true, true)?;
+        let mut clip = Self::load_mode(data, true, true, false)?;
+        clip.scroller.as_mut().unwrap().lighting = lighting;
+        Ok(clip)
+    }
+
+    /// Continue past part 2 through part 6 to the first frame of part 5,
+    /// with uninterrupted PCM. Part 6's frames are kept as compact state;
+    /// see [`RingsPreview`].
+    pub fn load_rings(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
+        let mut clip = Self::load_mode(data, true, true, true)?;
         clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
@@ -293,7 +306,12 @@ impl Clip {
         }))
     }
 
-    fn load_mode(data: &Data, extend: bool, play_scroller: bool) -> Result<Self, String> {
+    fn load_mode(
+        data: &Data,
+        extend: bool,
+        play_scroller: bool,
+        play_rings: bool,
+    ) -> Result<Self, String> {
         let mut vga = Vga::new();
         let mut intro = Intro::new(data, &mut vga)?;
         let mut music = Music::new(data)?;
@@ -328,6 +346,7 @@ impl Clip {
         let logo_ready_at = (frames.len() - 1) as f64 / FRAME_RATE as f64;
         let flights = fit_flights(&frames)?;
         let mut scroller_preview = None;
+        let mut rings = None;
         let transition = if extend {
             // The last intro snapshot is also the first frame of part 2. Replace
             // it, rather than adding an extra frame or restarting the music.
@@ -454,6 +473,17 @@ impl Clip {
                     oscillator: walls.iter().map(|&(position, _)| position).collect(),
                 });
             }
+            if play_rings {
+                // The last scroller step above returned done; the engine makes
+                // part 6 in that same step, so its first frame comes next.
+                rings = Some(RingsPreview::load(
+                    data,
+                    &mut vga,
+                    &mut music,
+                    &mut pcm,
+                    frames.len(),
+                )?);
+            }
             Some(transition)
         } else {
             // Standalone logo preview continues the music through a short hold.
@@ -469,6 +499,7 @@ impl Clip {
             transition,
             scroller: scroller_preview,
             flights,
+            rings,
         })
     }
 
@@ -504,7 +535,14 @@ impl Clip {
     pub fn frame_index(&self, time: f64) -> usize {
         ((time.max(0.0) * FRAME_RATE as f64) as usize).min(self.frames.len() - 1)
     }
+    /// Part-6 frame at a clip time, when the clip has reached part 6.
+    pub fn rings_frame(&self, time: f64) -> Option<usize> {
+        self.rings.as_ref()?.frame_at(time)
+    }
     pub fn label(&self, time: f64) -> &'static str {
+        if let (Some(rings), Some(j)) = (&self.rings, self.rings_frame(time)) {
+            return rings.label(j);
+        }
         match self.frames[self.frame_index(time)].state.phase {
             0 => "Starfield",
             1 => "Future Crew",
@@ -573,7 +611,7 @@ impl ScrollerPreview {
 }
 
 /// 6-bit VGA DAC value to linear light, as the reference scanout expands it.
-fn vga_linear(v: u8) -> f32 {
+pub(super) fn vga_linear(v: u8) -> f32 {
     let v = v & 63;
     let srgb = ((v << 2) | (v >> 4)) as f32 / 255.0;
     if srgb <= 0.04045 {
@@ -1734,6 +1772,7 @@ mod tests {
             scroller: None,
             flights: [[0.0; 4]; 10],
             audio: Vec::new(),
+            rings: None,
         };
         assert_eq!(clip.scroll_at(1.0), None);
         clip.scroller = Some(ScrollerPreview {
@@ -1959,6 +1998,7 @@ mod tests {
             scroller: None,
             flights: [[0.0; 4]; 10],
             audio,
+            rings: None,
         };
         let intro = |time: f64| clip.audio_at(time).intro;
         // Window 0 is known once it has played, at 1/70 s.

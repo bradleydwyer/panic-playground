@@ -5,6 +5,9 @@ use crate::{
     vga::Vga,
 };
 
+// Clone lets the HD preview keep checkpoints and replay reference frames on
+// demand; nothing in the scene depends on it.
+#[derive(Clone)]
 pub struct Rings {
     source: Vec<u8>,
     sine: Vec<i32>,
@@ -21,6 +24,121 @@ pub struct Rings {
     started: bool,
     transition: Option<usize>,
 }
+
+/// What part 6's current scanout shows, for the HD preview, read from the
+/// scene's counters rather than the pixels. See [`Rings::hd_state`].
+#[cfg(feature = "hires")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HdRings {
+    /// 0 while waiting for the music to reach 06:00 (nothing drawn: black),
+    /// 1 while the rings and symbols run, 2 during the PSTART fade.
+    pub phase: u8,
+    /// Ring draw steps so far (`frame`). Step `k` (from 0) drew the rings at
+    /// [`Rings::hd_offsets`]`(k)`.
+    pub frame: usize,
+    /// The ring intensity the displayed palette used, -100..=64. The greys
+    /// are `[0, 48, 32, 0] * intensity / 64` and show only above 0.
+    pub intensity: i32,
+    /// The 8 KB page (0..8) the latest step drew the rings into.
+    pub drawn_page: usize,
+    /// The page the scanout shows: the other page of the pair, drawn one
+    /// step earlier, unless the page has just advanced. 0 outside phase 1.
+    pub shown_page: usize,
+    /// The symbol mask lit on this scanout, `2 * shown_page + plane - 2`: on
+    /// even frames only, and never before 06:00 or during the picture.
+    pub lit: Option<u8>,
+    /// PSTART palette level on screen, in 64ths (0..=63), during its fade.
+    pub picture: Option<u8>,
+}
+
+impl Rings {
+    /// Read-only state of the current scanout for the HD preview. As
+    /// `step` reads it: the palette, page and lit plane come from the step
+    /// just made, the drawn page from before its page flip.
+    #[cfg(feature = "hires")]
+    pub fn hd_state(&self) -> HdRings {
+        let picture = self.transition.map(|level| (level - 1) as u8);
+        let phase = if picture.is_some() {
+            2
+        } else if self.started {
+            1
+        } else {
+            0
+        };
+        // `step` toggles the page after drawing and before the scanout. `new`
+        // shows page 0; the picture replaces the planar scanout.
+        let shown_page = if phase == 1 {
+            self.page as usize / 0x2000
+        } else {
+            0
+        };
+        let lit = (phase == 1 && self.frame > 0 && (self.frame - 1) & 1 == 0)
+            .then(|| (2 * shown_page + usize::from(self.selector)) as u8);
+        HdRings {
+            phase,
+            frame: self.frame,
+            intensity: self.intensity,
+            drawn_page: if phase == 1 { shown_page ^ 1 } else { 0 },
+            shown_page,
+            lit,
+            picture,
+        }
+    }
+
+    /// The window offsets `(x, y)` into M.DAT of plane 0 and plane 1 for draw
+    /// step `step` (from 0; any integer, as the phases only advance by fixed
+    /// amounts): `step` copies M.DAT rows from `y` and columns from `x` into
+    /// the 256 × 184 window at screen (32, 8). Read from `step`: plane 1's
+    /// phase gains 35 and plane 0's loses 28 per step before drawing, and
+    /// plane 0 takes 9/10 of M.SIN's offsets.
+    #[cfg(feature = "hires")]
+    pub fn hd_offsets(&self, step: i64) -> [[i32; 2]; 2] {
+        [(-28, 9, 10), (35, 1, 1)].map(|(speed, numerator, denominator)| {
+            let phase = (speed * (step + 1)).rem_euclid(4096) as usize;
+            let i = phase / 16;
+            [
+                self.sine[i & 255] * numerator / denominator + 50,
+                self.sine[(i + 64) & 255] * numerator / denominator + 50,
+            ]
+        })
+    }
+
+    /// Bank 0 of M.DAT, the ring source, as 152 rows of 424 bits (most
+    /// significant first, as `Vga::ega` reads them). The other banks hold it
+    /// shifted left by 1 to 7 pixels; `step` mirrors rows 152 and beyond.
+    #[cfg(feature = "hires")]
+    pub fn hd_source(&self) -> Vec<bool> {
+        (0..152 * 424)
+            .map(|at| {
+                let (row, column) = (at / 424, at % 424);
+                (self.source[row * 53 + column / 8] >> (7 - column % 8)) & 1 != 0
+            })
+            .collect()
+    }
+
+    /// The PSTART picture (320 × 200 indices) and its 6-bit palette.
+    #[cfg(feature = "hires")]
+    pub fn hd_picture(&self) -> (&[u8], &[u8]) {
+        (&self.image, &self.image_palette)
+    }
+
+    /// Symbol mask `n` (0..16) as 320 × 200 pixels, read from planes 2 and 3
+    /// as the scanout shows them: plane `2 + n % 2` at page `n / 2`. `new`
+    /// decodes M.SUM there and nothing else writes those planes until the
+    /// PSTART picture replaces everything.
+    #[cfg(feature = "hires")]
+    pub fn hd_mask(vga: &Vga, n: usize) -> Vec<bool> {
+        let plane = &vga.planes[2 + n % 2];
+        let page = (n / 2) * 0x2000;
+        (0..320 * 200)
+            .map(|at| {
+                let (y, x) = (at / 320, at % 320);
+                (plane[(page + y * 40 + x / 8) & 65535] >> (7 - x % 8)) & 1 != 0
+            })
+            .collect()
+    }
+}
+
 impl Rings {
     pub fn new(data: &Data, vga: &mut Vga) -> Result<Self, String> {
         let source = data.file("M.DAT")?;
@@ -189,6 +307,96 @@ impl Rings {
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+    /// Invented part-6 files in a temporary directory: blank rings, a
+    /// sine table of amplitude 40, empty masks and a plain picture.
+    #[cfg(feature = "hires")]
+    fn invented_data() -> (std::path::PathBuf, Data) {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!("panic-rings-hd-test-{}", std::process::id()));
+        let files = dir.join("files");
+        fs::create_dir_all(&files).unwrap();
+        fs::write(files.join("P.P"), b"invented test marker").unwrap();
+        fs::write(files.join("M.DAT"), vec![0; 64448]).unwrap();
+        let sine: Vec<u8> = (0..256)
+            .flat_map(|i| {
+                let v = 40.0 * (i as f64 * std::f64::consts::TAU / 256.0).sin();
+                (v.round() as i16).to_le_bytes()
+            })
+            .collect();
+        fs::write(files.join("M.SIN"), sine).unwrap();
+        let mut sum = vec![0; 36];
+        for n in 0..16 {
+            sum[2 + 2 * n..4 + 2 * n].copy_from_slice(&34_u16.to_le_bytes());
+        }
+        fs::write(files.join("M.SUM"), sum).unwrap();
+        fs::write(files.join("PSTART.U"), vec![1; 64000]).unwrap();
+        let palette: Vec<u8> = (0..768).map(|i| (i % 64) as u8).collect();
+        fs::write(files.join("PSTART.PAL"), palette).unwrap();
+        let data = Data::new(&dir).unwrap();
+        (dir, data)
+    }
+
+    #[cfg(feature = "hires")]
+    #[test]
+    fn hd_state_reads_the_counters_on_invented_data() {
+        let (dir, data) = invented_data();
+        let mut vga = Vga::new();
+        let mut scene = Rings::new(&data, &mut vga).unwrap();
+        let waiting = scene.hd_state();
+        assert_eq!((waiting.phase, waiting.frame, waiting.lit), (0, 0, None));
+        assert!(!scene.step(&mut vga, 0x5ff));
+        assert_eq!(scene.hd_state(), waiting);
+        // Rows advance every step: the selector toggles on every even row.
+        let mut lit = Vec::new();
+        for k in 0..16_u16 {
+            assert!(!scene.step(&mut vga, 0x600 + k));
+            let state = scene.hd_state();
+            assert_eq!((state.phase, state.frame), (1, k as usize + 1));
+            assert_eq!(state.shown_page, state.drawn_page ^ 1);
+            assert_eq!(state.intensity, -100);
+            // Lit on alternate frames: exactly the lit plane's entries are yellow.
+            let yellow: Vec<usize> = (0..16)
+                .filter(|&i| vga.palette[i * 3] == 63 && vga.palette[i * 3 + 1] == 63)
+                .collect();
+            match state.lit {
+                Some(n) => {
+                    assert_eq!(n as usize / 2, state.shown_page);
+                    let bit = 4 << (n % 2);
+                    assert_eq!(yellow, (0..16).filter(|i| i & bit != 0).collect::<Vec<_>>());
+                }
+                None => assert!(yellow.is_empty()),
+            }
+            lit.push(state.lit.is_some());
+        }
+        assert_eq!(lit, (0..16).map(|k| k % 2 == 0).collect::<Vec<_>>());
+        // The offsets are a function of the step alone.
+        let sine =
+            |i: usize| (40.0 * (i as f64 * std::f64::consts::TAU / 256.0).sin()).round() as i32;
+        for step in [-3_i64, 0, 1, 15, 200] {
+            let a = ((-28 * (step + 1)).rem_euclid(4096) / 16) as usize;
+            let b = ((35 * (step + 1)).rem_euclid(4096) / 16) as usize;
+            assert_eq!(
+                scene.hd_offsets(step),
+                [
+                    [sine(a) * 9 / 10 + 50, sine(a + 64) * 9 / 10 + 50],
+                    [sine(b) + 50, sine((b + 64) & 255) + 50],
+                ],
+                "step {step}"
+            );
+        }
+        // The PSTART fade: levels 0 to 63, then done.
+        for level in 0..64 {
+            assert!(!scene.step(&mut vga, 0x1001));
+            let state = scene.hd_state();
+            assert_eq!(
+                (state.phase, state.picture, state.lit),
+                (2, Some(level), None)
+            );
+        }
+        assert!(scene.step(&mut vga, 0x1001));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
     fn music_wait_and_strict_exit_threshold() {

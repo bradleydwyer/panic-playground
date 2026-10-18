@@ -68,8 +68,9 @@ the full importer.
 
 ## Experimental HD intro and scroller
 
-The `panic-hd` preview covers the opening through the PANIC logo. Build and run
-it from the repository root after importing your data:
+The `panic-hd` preview covers the opening through the PANIC logo, and with
+`--scroller` and `--rings` continues through parts 2 and 6. Build and run it
+from the repository root after importing your data:
 
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --modern
@@ -394,11 +395,185 @@ optical simulation. All fields are generated locally in memory.
 | W | Waves on the wall backdrops, on or off |
 | , / . | Depth of the waves |
 | ; / ' | Strength of the waves' side light and shadows |
+| 1 to 5 | Part 6 style: faithful-plus, glass, pool, room, volume |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
 | V | Toggle vsync |
 | Escape | Quit |
+
+### Part 6: Rings
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --rings --seek 42
+cargo run --release --locked --features hires --bin panic-hd -- --rings --faithful --seek 50
+cargo run --release --locked --features hires --bin panic-hd -- --rings-style glass --seek 57
+```
+
+`--rings` continues past part 2 through part 6, the interference rings and
+flashing symbols, to the first frame of part 5, with the music unbroken.
+`--rings-style` chooses its style and implies `--rings`; **1** to **5** switch
+styles while playing, and the title shows the one in use. `--faithful` (or
+**M**) shows faithful HD, and `--split` (or **C**) the original on the left,
+as in the earlier parts. Part 5 itself is outside the preview: the clip ends
+on the PSTART picture as part 5 begins, at 81.27 seconds, and holds there.
+
+Read from the port, and checked against the engine on every frame by an
+ignored test, part 6 runs like this (the engine's `SEQUENCE` plays it after
+part 2). It begins at 42.23 seconds, the moment part 2's palette fade ends,
+on a black screen that waits for the music to reach order 6, row 0. The
+first symbol appears at 43.41 seconds. The symbols are 16 hand-drawn masks
+decoded from M.SUM into planes 2 and 3; the lit one changes on the tracker's
+rows, about every 8 frames, and the original lights it in yellow on even
+frames only, a 35 Hz flicker. The rings are two layers of the same concentric
+bands from M.DAT, copied each frame into a 256 by 184 window, circling in
+opposite directions about every 2.09 and 1.67 seconds. Their palette shows
+grey 48 where only the first layer is set, grey 32 where only the second is,
+and black where both or neither are. They fade in over 64 frames from 50.33
+seconds (the fade counter starts at -100 at 07:1F, so the 08:00 downbeat
+lands mid-fade), fade out from 72.99 to 73.89, and the symbols carry on alone
+until the PSTART picture fades in over 64 frames from 80.36.
+
+The preview keeps part 6 as compact state per frame, read from the scene's
+counters through `Rings::hd_state` and `Rings::hd_offsets`, rather than its
+pixels, which would add about 177 MB. The original frames for `--original`
+and `--split` are replayed on demand: the scene and video memory are kept
+every 64 frames (about 20 MB), and the port's own `Rings::step` runs forward
+from the nearest checkpoint, one step per frame during playback. The ignored
+test checks that every replayed frame equals the engine's.
+
+Some of this is interpretation. The rings use an analytic model of M.DAT's
+bands, fitted when the data loads: 7-pixel bands round a centre found from
+the image's symmetry, with the first edge at about 6.7 pixels. It matches
+98.2% of M.DAT's pixels and 98.1% of the ring pixels part 6 shows; the
+misses lie on band edges. The bands are circles in source pixels, so, as in
+the original, they look 1.2 times taller than wide at 4:3. The ring centres
+are exact at each 70 Hz frame and follow a Catmull-Rom curve between them.
+The original shows each frame's rings one frame late (its pages are double
+buffered), and about 6% of its frames, at each page advance, show a page
+drawn one or two seconds earlier. The preview always shows the current
+rings, so it skips that artefact; the ignored test lists those frames. The
+symbols' outlines are smoothed as the scroller's letters are, for faithful
+HD. All of this is built in memory when the preview starts; nothing derived
+from the data is stored.
+
+For the neon, the symbols are redrawn rather than traced: an authored
+recreation that keeps where every stroke, crossing and end lies in the
+original but not its raster wobble. Each stroke's centreline comes from
+thinning the smoothed stroke, with short spurs removed, and is split into
+the separate runs described below. A closed run that is nearly a circle
+becomes a true circle. Any other run is reduced to its key points (wobbles
+under about a row go). A stretch between sharp turns that strays from a
+straight line by less than 2 rows, or a twentieth of its length, is drawn
+dead straight; a curved one that a circle fits closely becomes an exact arc,
+and freehand curves become smooth splines through the key points; and each
+sharp turn becomes a short bend, as glass tube is bent. A short overshoot past a corner at a run's end
+is dropped. The atlas measures distances exactly to these curves.
+
+Faithful HD shows the original's look at display resolution: the analytic
+rings in the original window with its two greys and XOR, antialiased; the
+symbols as smooth strokes at half strength in the original's yellow, which
+is the average of its flicker in linear light (the random blue component
+averaged too); and the PSTART picture smoothly upscaled, fading in DAC units
+as its palette does.
+
+The styles are authored experiments. Faithful-plus, the default, keeps the
+original's moiré exactly, antialiased and blurred over a 1/100 s shutter so
+it doesn't strobe, under a faint print grain. The lit symbol is a yellow neon
+tube along its stroke's centreline, just above the rings, lighting them, and
+the shared HDR bloom makes it glow. Following the owner's direction and
+photographs of neon signs, each tube is a clear glass tube about as wide as
+the original stroke, with a column of glowing gas down its middle: white
+hot along the centre once tonemapped, where a line of sight crosses the most
+gas, and a saturated amber yellow at its edge, warmer than the original's
+lemon. The glass carries a little of that light, gathers a bright line along
+each wall and catches a lamp's highlight, and the rings show through it,
+bent. As in a real sign, each tube is a single run that bends but never
+branches: where the original's strokes meet or cross, the two branches that
+continue each other most nearly straight stay one run, and the others stop
+short of it with a gap of about a tube's radius, glowing to their rounded
+ends (their electrodes bend away behind the sign; `NEON_ELECTRODE` shows
+them instead). Fragments shorter than a tube's width go. A haze of
+scattered light follows the tubes' shape.
+The tubes light the rings and a dark backing behind them, close by and in a
+wide pool. The neon light is an approximation: a prefiltered map of the
+tubes, not traced light. Glass, pool, room and volume
+are placeholders for experiments under way; for now they show faithful-plus
+with a tint, and room shows the bump wall behind it, faintly lit by the
+neon. At 2560 by 1440 on an Apple M5 Max, with other work sharing the GPU,
+faithful-plus took 0.6 to 1.25 ms a frame over repeated runs, including
+bloom and tonemapping, and faithful HD 0.15 to 0.5 ms.
+
+### Adding a part-6 style
+
+Each style is one WGSL file, `src/hd/rings_<name>.wgsl`, which defines two
+functions:
+
+```wgsl
+fn style_color(px:RingsPixel)->vec3f    // linear HDR radiance for this pixel
+fn style_prepass(px:RingsPixel)->vec4f  // optional half-resolution pass
+```
+
+The renderer builds the style's module from the shared controls,
+`rings_common.wgsl`, `wall.wgsl`, the style's file and `rings_style.wgsl`,
+whose entry points call these two functions. The style draws into the modern
+renderer's HDR target; the shared bloom and ACES tonemap follow. Prefix the
+style's own names with its name (`glass_`, `pool_` and so on); the naga test
+validates every style's module. Edit only the style's file and, in
+`src/hd/rings.rs`, the style's own `StyleInfo` constant and controls function.
+Set `prepass: true` there to have `style_prepass` drawn first, at half the
+resolution each way, into a texture that `prepass_at(uv)` reads. Return
+values for `u.rings_style` (four vec4s, zero by default) from the controls
+function, if the style needs anything computed on the CPU at each moment.
+
+`px` gives the pixel in three spaces: `uv` (0 to 1, y down); `xy`, the screen
+(y from -1 to 1, x scaled by the aspect); and `source`, the original's 320 by
+200 pixels, continuing beyond the frame on wide screens. `scene` is the same
+point in source rows on the 4:3 display, y up, centred: an isotropic space
+for 3D, with the default camera (`EYE`, `camera_ray`) as the scroller's,
+which is 100 rows to the scroller's world unit. `pixel` is one target pixel
+in source rows.
+
+The helpers in `rings_common.wgsl` include:
+
+- Timing: `rings_seconds()`, `rings_phase()` (0 waiting, 1 rings, 2 picture),
+  `ring_intensity()`, `picture_level()`, and the symbol windows
+  (`neon_mask()`, `neon_previous()`, `neon_on()`, `neon_previous_on()`,
+  `neon_since()`, `neon_until()`). The symbol switches are the original's
+  own cues, on its tracker rows. Before 43.41 seconds the original is black.
+- Music cues measured from the PCM, as the intro and scroller use them:
+  `cue_energy()`, `cue_onset()`, `cue_low()`, `cue_accent()`, `cue_level()`,
+  `cue_bass()`, `cue_treble()`, and `musical_lighting()` for the viewer's
+  studio or musical choice (**L**).
+- Rings, per layer (0 is the grey-48 layer, 1 the grey-32 one):
+  `ring_centre`, `ring_radius`, `ring_band` (signed distance to the nearest
+  band edge), `ring_cover` (antialiased coverage), `ring_phase`, `ring_dir`,
+  `ring_window` and `ring_xor` (the original's greys). Pass `RING_FAITHFUL`
+  for the original's tall rings or `RING_ROUND` for round ones, and a
+  shutter position from 0 (now) to 1 (1/100 s earlier) for motion blur.
+- Symbols: `symbol_field` (the outline's signed distance, the distance to
+  the centreline, the stroke's half-width and the distance to the stroke's
+  nearest free end), `tube_distance`; the tubes as `NeonGlass` samples
+  (the light they add, how much glass covers the pixel and where the scene
+  behind shows through it) from `neon_tube`, `neon_tube_at` and
+  `neon_glass`, composed over a scene with `neon_over`; `neon_emission`
+  (just their light) and `neon_haze` (the glow in the air round them),
+  `neon_irradiance` (their light on a surface with a normal),
+  `neon_reflection` (their light along a ray, blurred by roughness),
+  `neon_fluence` (light in a volume) and `neon_plane_hit`, with the tubes in
+  a plane `z = height` of the style's choosing. `SYMBOL_YELLOW` is the
+  original's average tint.
+- The PSTART picture (`picture_color`), `tonemap_inverse` to place original
+  colours exactly before adding light, `rings_reference` (a plain modern
+  rendering to start from) and `prepass_at`.
+- From `wall.wgsl`, the scroller's bump wall: `wall_trace` and its
+  helpers. During part 6, `u.backdrop` holds the oscillator as part 2 left it
+  and the wall's shape, `u.backdrop_motion.z` its strength and
+  `u.next_palette` the tile image; the waves are off.
+
+`style_color` returns linear light before tonemapping. After 80.36 seconds
+it should show the PSTART picture, which part 5 opens on. Check a style
+against the others with `tools/look_check.py`, which has a shot of each.
 
 `--fps` starts with the frame-rate counter in the top-left corner, showing
 frames per second and milliseconds per frame. With vsync the rate can't exceed
@@ -431,8 +606,8 @@ uniform block, which `renderer.rs` prepends to each shader, matches the Rust
 `Uniforms` layout field by field. Separate ignored tests check the
 intro's reference pixels and PCM against the existing engine, sampled fly-by
 projection heights, the transition's complete reference frames, audio and
-tile schedule, and the scroller's letters and positions against every part-2
-frame:
+tile schedule, the scroller's letters and positions against every part-2
+frame, and part 6's state, replayed frames and PCM against every part-6 frame:
 
 ```sh
 cargo test --release --locked --features hires
@@ -440,6 +615,7 @@ PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked \
   --features hires reference_timing_audio_and_flyby_projections -- --ignored
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires transition_matches_engine_frames_audio_and_schedule -- --ignored
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires scroller_glyphs_and_positions_rebuild_every_reference_frame -- --ignored
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part6_state_matches_every_engine_frame -- --ignored --nocapture
 ```
 
 The fitted trajectories approximate the reference projection; they do not prove
@@ -475,9 +651,10 @@ here. Don't commit any binary fixtures, including audio.
 and compares them with an earlier set, to catch unintended changes to the look
 while the shaders change. It needs only the Python standard library and your
 imported data, and writes everything under `artifacts/look-check/`, which Git
-ignores. Its 23 shots cover the modern intro letters, the plate and doors, the
-logo, the laser cut, the scroller with each backdrop and lighting mode,
-faithful HD and the original view, at 960 × 540. Their times are authored test
+ignores. Its 35 shots cover the modern intro letters, the plate and doors, the
+logo, the laser cut, the scroller with each backdrop and lighting mode, part 6
+through its phases and in each style, faithful HD and the original view, at
+960 × 540. Their times are authored test
 points, not cues from the original. `list` shows them, and `--only` selects
 shots or groups by name, with wildcards (`--only scroller,laser` or
 `--only 'intro-7*'`).

@@ -142,6 +142,35 @@ wall's own: the letters are lit as before. The waves ease in as the laser cut
 reveals the wall and settle before part 2 fades. They depend only on the
 time, so seeking and captures show the same waves.
 
+### Part 6: Rings
+
+`--rings` carries on past the scroller through part 6, the interference rings
+and flashing symbols, to the picture that opens part 5, with the music
+unbroken:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --rings --seek 42
+```
+
+| Option | Effect |
+| --- | --- |
+| `--rings` | Continue through part 6, in the faithful-plus style |
+| `--rings-style glass` | Choose the part 6 style: `faithful-plus` (the default), `glass`, `pool`, `room` or `volume` |
+
+Part 6 starts at 42.23 seconds, black until its first symbol at 43.41. The
+rings fade in from 50.33 seconds and out from 72.99, and the PSTART picture
+fades in from 80.36; part 5 would begin at 81.27, where the preview ends.
+Faithful-plus keeps the original's two-grey interference pattern, smooth and
+antialiased, and turns the symbols into neon: glowing gas in clear glass
+tubes, bent into separate runs with gaps where lines cross, as signs are
+made, lighting the rings and the dark wall behind them. The other four styles are experiments in progress; for now they
+show faithful-plus with a tint. In the app, **1** to **5** switch styles and
+**M** shows faithful HD, the original's look at display resolution. The
+[renderer notes](rust/README.md#part-6-rings) say what is read from the port,
+what is interpreted and what is authored, and how to add a style.
+
+### Keys
+
 | Key | Action |
 | --- | --- |
 | Space | Pause or resume |
@@ -151,6 +180,7 @@ time, so seeking and captures show the same waves.
 | M | Switch modern 3D / faithful HD |
 | Tab | Toggle the original rendering |
 | C | Toggle the split comparison |
+| 1 to 5 | Part 6 style: faithful-plus, glass, pool, room, volume |
 | F | Toggle fullscreen |
 | S | Save a PNG under `artifacts/` |
 | P | Show or hide the frame-rate counter |
@@ -215,8 +245,9 @@ unpacking helpers; their rights status remains unresolved. The existing scope
 is retained from the Rust port. See [NOTICE](NOTICE), [rust/NOTICE](rust/NOTICE)
 and [the publication notes](docs/publication.md).
 
-The scroller's bump wall uses a ray / rounded box intersection adapted from
-Inigo Quilez's [Rounded Box - intersection](https://www.shadertoy.com/view/WlSXRW),
+The bump wall, which the scroller and part 6 share, uses a ray / rounded box
+intersection adapted from Inigo Quilez's
+[Rounded Box - intersection](https://www.shadertoy.com/view/WlSXRW),
 which he published under the MIT License. His notice is in
 [rust/NOTICE](rust/NOTICE) and beside the code; it covers his code, not the
 rest of `rust/`.

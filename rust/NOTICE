@@ -13,9 +13,10 @@ You must supply or generate them locally, under the terms of the original
 release. Dependencies are fetched by Cargo, not bundled here, and remain under
 their own licences.
 
-Third-party code: the ray / rounded box intersection in src/hd/scroller.wgsl
-(rounded_box() and the box normal in bump_hit()) is adapted from Inigo
-Quilez's "Rounded Box - intersection", https://www.shadertoy.com/view/WlSXRW.
+Third-party code: the ray / rounded box intersection in src/hd/wall.wgsl
+(rounded_box() and the box normal in bump_hit()), part of the bump wall the
+scroller and part 6 share, is adapted from Inigo Quilez's "Rounded Box -
+intersection", https://www.shadertoy.com/view/WlSXRW.
 The same code appears in https://iquilezles.org/articles/intersectors/, which
 states no licence itself; the MIT License below is the notice at the head of
 that shader. It is Quilez's licence for his code. It doesn't extend to the

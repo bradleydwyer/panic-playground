@@ -95,6 +95,21 @@ SHOTS = (
     _shot('faithful-intro', 'faithful', 7.6, '--scroller', '--faithful'),
     _shot('faithful-scroller', 'faithful', 31.0, '--scroller', '--faithful'),
     _shot('original', 'original', 31.0, '--scroller', '--original'),
+    # Part 6 (--rings): the first symbol on black, the rings fading in, rings
+    # and symbols, the fade out, symbols on black again and the PSTART fade.
+    _shot('rings', 'rings', 43.5, '--rings'),
+    _shot('rings', 'rings', 50.8, '--rings'),
+    _shot('rings', 'rings', 57.2, '--rings'),
+    _shot('rings', 'rings', 66.0, '--rings'),
+    _shot('rings', 'rings', 73.4, '--rings'),
+    _shot('rings', 'rings', 80.8, '--rings'),
+    _shot('faithful-rings', 'faithful', 57.2, '--rings', '--faithful'),
+    _shot('original-rings', 'original', 57.2, '--rings', '--original'),
+    # One shot of each part-6 style.
+    _shot('glass', 'styles', 66.0, '--rings-style', 'glass'),
+    _shot('pool', 'styles', 66.0, '--rings-style', 'pool'),
+    _shot('room', 'styles', 66.0, '--rings-style', 'room'),
+    _shot('volume', 'styles', 66.0, '--rings-style', 'volume'),
 )
 CAPTURE_FLAGS = ('--seek', '--headless', '--size', '--data', '--out')
 

@@ -4,3 +4,5 @@
 pub mod clip;
 mod modern;
 pub mod renderer;
+pub mod rings;
+mod rings_render;

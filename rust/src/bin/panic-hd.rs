@@ -4,6 +4,7 @@ use panic_demo::{
     hd::{
         clip::{Clip, ScrollerBackdrop, ScrollerLighting},
         renderer::{Renderer, View},
+        rings::RingsStyle,
     },
 };
 use sdl2::{
@@ -31,6 +32,9 @@ struct Options {
     faithful: bool,
     transition: bool,
     scroller: bool,
+    /// Continue through part 6 (Rings) to part 5's first frame.
+    rings: bool,
+    rings_style: RingsStyle,
     scroller_lighting: ScrollerLighting,
     scroller_backdrop: ScrollerBackdrop,
     wall_shape: f32,
@@ -61,6 +65,8 @@ impl Options {
             faithful: false,
             transition: false,
             scroller: false,
+            rings: false,
+            rings_style: RingsStyle::FaithfulPlus,
             scroller_lighting: ScrollerLighting::Studio,
             scroller_backdrop: ScrollerBackdrop::Chrome,
             wall_shape: 0.5,
@@ -125,6 +131,21 @@ impl Options {
                             "The {style} scroller preset was removed; use --scroller"
                         ));
                     }
+                    o.scroller = true;
+                    o.modern = true;
+                }
+                // Part 6 follows part 2, so it continues the whole show.
+                "--rings" => {
+                    o.rings = true;
+                    o.scroller = true;
+                    o.modern = true;
+                }
+                "--rings-style" => {
+                    o.rings_style = args
+                        .next()
+                        .ok_or("--rings-style needs faithful-plus, glass, pool, room or volume")?
+                        .parse()?;
+                    o.rings = true;
                     o.scroller = true;
                     o.modern = true;
                 }
@@ -202,7 +223,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall, depth 0.1 to 1; default 0.5\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall, depth 0.1 to 1; default 0.5\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings) to part 5's first frame\n  --rings-style S  Part 6 style: faithful-plus (default), glass, pool, room or volume\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light\n1-5: part 6 style (faithful-plus, glass, pool, room, volume)\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6."
                     );
                     std::process::exit(0);
                 }
@@ -268,7 +289,14 @@ fn run() -> Result<(), String> {
     let started = Instant::now();
     let data = Data::new(&o.data)?;
     let mut clip = if o.scroller {
-        let mut clip = Clip::load_scroller(&data, o.scroller_lighting)?;
+        let mut clip = if o.rings {
+            Clip::load_rings(&data, o.scroller_lighting)?
+        } else {
+            Clip::load_scroller(&data, o.scroller_lighting)?
+        };
+        if let Some(rings) = &mut clip.rings {
+            rings.style = o.rings_style;
+        }
         let scroll = clip.scroller.as_mut().unwrap();
         scroll.backdrop_style = o.scroller_backdrop;
         scroll.wall_shape = o.wall_shape;
@@ -348,7 +376,7 @@ fn run() -> Result<(), String> {
     let (mut renderer, format) = pollster::block_on(Renderer::new(&instance, Some(&surface)))?;
     println!("GPU: {}", renderer.adapter_name);
     println!(
-        "Space pause · arrows seek · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength · W wall waves · ,/. wave depth · ;/' wave light"
+        "Space pause · arrows seek · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength · W wall waves · ,/. wave depth · ;/' wave light · 1-5 part 6 style"
     );
     let (width, height) = window.drawable_size();
     let mut config = wgpu::SurfaceConfiguration {
@@ -509,6 +537,23 @@ fn run() -> Result<(), String> {
                             println!("Wave light {:.1}", scroll.wave_light);
                         }
                     }
+                    Keycode::Num1
+                    | Keycode::Num2
+                    | Keycode::Num3
+                    | Keycode::Num4
+                    | Keycode::Num5 => {
+                        if let Some(rings) = &mut clip.rings {
+                            let pick = match key {
+                                Keycode::Num1 => 0,
+                                Keycode::Num2 => 1,
+                                Keycode::Num3 => 2,
+                                Keycode::Num4 => 3,
+                                _ => 4,
+                            };
+                            rings.style = RingsStyle::ALL[pick];
+                            println!("Part 6 style {}", rings.style.name());
+                        }
+                    }
                     Keycode::P => o.fps = !o.fps,
                     Keycode::V => {
                         o.vsync = !o.vsync;
@@ -580,10 +625,14 @@ fn run() -> Result<(), String> {
                     }
                 }
             };
-            let preset = clip
-                .scroller
+            // Part 6 shows its style; the scroller's settings before it.
+            let style = clip
+                .rings
                 .as_ref()
-                .map(|s| {
+                .filter(|_| clip.rings_frame(time).is_some())
+                .map(|r| format!(" · style {}", r.style.name()));
+            let preset = style.or_else(|| {
+                clip.scroller.as_ref().map(|s| {
                     format!(
                         " · {:?} · {:?} {:.1}/{:.1} · waves {} {:.1}/{:.1}",
                         s.lighting,
@@ -595,7 +644,8 @@ fn run() -> Result<(), String> {
                         s.wave_light
                     )
                 })
-                .unwrap_or_default();
+            });
+            let preset = preset.unwrap_or_default();
             window
                 .set_title(&format!(
                     "Panic · {}{preset} · {time:.1}s · {w}×{h} · {mode}{}",

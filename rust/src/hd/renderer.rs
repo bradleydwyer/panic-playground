@@ -1,5 +1,7 @@
 use super::clip::{Clip, HEIGHT, ScrollerLighting, ScrollerPreview, WIDTH, plate_transform};
 use super::modern::Modern;
+use super::rings::{PART6_PHASE, RingsPreview, RingsStyle};
+use super::rings_render::RingsRenderer;
 use bytemuck::{Pod, Zeroable};
 use std::{fs::File, io::BufWriter, path::Path};
 use wgpu::util::DeviceExt;
@@ -44,6 +46,18 @@ struct Uniforms {
     /// Authored wall waves (`ScrollerPreview::waves_at`): depth (0 when off),
     /// the exposure in seconds, the side light's strength, and an unused slot.
     waves: [f32; 4],
+    // Part 6 (`rings::RingsPreview::controls`); all zero before it. The WGSL
+    // declaration below documents each field.
+    rings: [f32; 4],
+    ring_centres: [f32; 4],
+    ring_open: [f32; 4],
+    ring_bands: [f32; 4],
+    ring_fades: [f32; 4],
+    symbol: [f32; 4],
+    symbol_atlas: [f32; 4],
+    neon_map: [f32; 4],
+    /// Spare values for the selected part-6 style (`StyleInfo::controls`).
+    rings_style: [[f32; 4]; 4],
 }
 
 /// The only WGSL declaration of [`Uniforms`] and its binding. [`wgsl`]
@@ -78,6 +92,29 @@ struct Controls {
     // Authored wall waves: depth (0 when off), exposure in seconds, side
     // light strength, unused.
     waves: vec4f,
+    // Part 6 (Rings), all zero before it; rings_common.wgsl reads them.
+    // During part 6 the scroller's fields are reused for the bump wall:
+    // backdrop holds the oscillator as part 2 left it and the wall shape,
+    // backdrop_motion.z the wall strength, next_palette the tile image.
+    // Shown (1), seconds since part 6 began, style (0 faithful-plus, 1 glass,
+    // 2 pool, 3 room, 4 volume), phase (0 waiting, 1 rings, 2 picture).
+    rings: vec4f,
+    // Ring centres in source pixels, layer 0 xy then layer 1 xy: now, and
+    // at the shutter's opening.
+    ring_centres: vec4f,
+    ring_open: vec4f,
+    // Band width, first edge radius, the model's match with M.DAT, unused.
+    ring_bands: vec4f,
+    // Ring intensity 0..1, PSTART level 0..1, unused, unused.
+    ring_fades: vec4f,
+    // Lit mask (-1 none), previous mask, seconds since the lit window began
+    // (or since the last ended), seconds until it ends (-1 none lit).
+    symbol: vec4f,
+    // Symbol atlas and neon light map: origin and size in source pixels.
+    symbol_atlas: vec4f,
+    neon_map: vec4f,
+    // Spare values for the selected style, from its StyleInfo::controls.
+    rings_style: array<vec4f,4>,
 }
 @group(0) @binding(0) var<uniform> u: Controls;
 ";
@@ -85,6 +122,23 @@ struct Controls {
 /// A shader module's complete source: the shared controls, then its body.
 pub(super) fn wgsl(body: &str) -> String {
     [CONTROLS_WGSL, body].concat()
+}
+
+/// A module built from several files, after the shared controls. WGSL
+/// declarations may come in any order, so a file can use another's.
+pub(super) fn wgsl_parts(parts: &[&str]) -> String {
+    let mut source = CONTROLS_WGSL.to_owned();
+    for part in parts {
+        source.push_str(part);
+        source.push('\n');
+    }
+    source
+}
+
+/// The scroller's module: scroller.wgsl and the bump wall it shares with
+/// part 6.
+pub(super) fn scroller_source() -> String {
+    wgsl_parts(&[include_str!("scroller.wgsl"), include_str!("wall.wgsl")])
 }
 
 /// Authored exposure for the bump wall's motion blur, in 70 Hz ticks: about
@@ -137,10 +191,16 @@ pub struct Renderer {
     hud: wgpu::RenderPipeline,
     hud_visible: bool,
     srgb: bool,
+    output_format: wgpu::TextureFormat,
     modern_renderer: Modern,
     modern_view: bool,
     tile_transition: bool,
     scroller: bool,
+    /// Part 6's textures and pipelines, made when a clip with part 6 is first
+    /// prepared; and whether the prepared moment is in part 6, in which style.
+    rings: Option<RingsRenderer>,
+    part6: bool,
+    rings_style: RingsStyle,
 }
 
 impl Renderer {
@@ -286,7 +346,7 @@ impl Renderer {
         );
         let scroller_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Scroller distance fields"),
-            source: wgpu::ShaderSource::Wgsl(wgsl(include_str!("scroller.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl(scroller_source().into()),
         });
         let field_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Scroller fields"),
@@ -390,10 +450,14 @@ impl Renderer {
                 hud,
                 hud_visible: false,
                 srgb: format.is_srgb(),
+                output_format: format,
                 modern_renderer,
                 modern_view: false,
                 tile_transition: false,
                 scroller: false,
+                rings: None,
+                part6: false,
+                rings_style: RingsStyle::FaithfulPlus,
             },
             format,
         ))
@@ -409,6 +473,23 @@ impl Renderer {
         } = view;
         self.hud_visible = hud.is_some();
         self.modern_view = modern;
+        self.part6 = false;
+        if let Some(rings) = &clip.rings {
+            if self.rings.as_ref().is_none_or(|r| !r.holds(rings)) {
+                self.rings = Some(RingsRenderer::new(
+                    &self.device,
+                    &self.queue,
+                    &self.uniform,
+                    &self.reference,
+                    self.output_format,
+                    rings,
+                ));
+            }
+            if let Some(j) = rings.frame_at(time) {
+                self.prepare_rings(clip, rings, j, view);
+                return;
+            }
+        }
         // The scroller scene is first seen through the laser cut.
         self.scroller = clip.scroller.is_some()
             && clip
@@ -618,7 +699,94 @@ impl Renderer {
             backdrop,
             backdrop_motion,
             waves,
+            ..Uniforms::zeroed()
         };
+        self.queue
+            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+    }
+
+    /// Part 6: the shared controls for this moment, and the original frame
+    /// when a comparison shows it, replayed on demand
+    /// ([`RingsPreview::original`]) rather than stored.
+    fn prepare_rings(&mut self, clip: &Clip, rings: &RingsPreview, j: usize, view: View) {
+        let View {
+            time,
+            size,
+            comparison,
+            modern,
+            hud: _,
+        } = view;
+        self.part6 = true;
+        self.rings_style = rings.style;
+        self.glyphs_active = false;
+        self.scroller = false;
+        self.tile_transition = false;
+        if modern {
+            self.modern_renderer
+                .resize(&self.device, &self.uniform, &self.reference, size);
+            if let Some(renderer) = &mut self.rings {
+                renderer.resize(&self.device, rings.style, size);
+            }
+        }
+        let index = rings.start + j;
+        if comparison != 0 && self.reference_index != Some(index) {
+            self.queue.write_texture(
+                self.reference.as_image_copy(),
+                &rings.original_rgba(j),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(WIDTH as u32 * 4),
+                    rows_per_image: Some(HEIGHT as u32),
+                },
+                wgpu::Extent3d {
+                    width: WIDTH as u32,
+                    height: HEIGHT as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+            self.reference_index = Some(index);
+        }
+        let controls = rings.controls(time);
+        let audio = clip.audio_at(time);
+        let mut u = Uniforms::zeroed();
+        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
+        u.state = [PART6_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
+        u.misc = [
+            4.0 / 3.0,
+            if self.srgb { 1.0 } else { 0.0 },
+            clip.logo_at as f32,
+            if modern { 1.0 } else { 0.0 },
+        ];
+        u.audio = audio.intro;
+        if let Some(scroll) = &clip.scroller {
+            let [level, bass, treble] = audio.scroller;
+            let musical = scroll.lighting == ScrollerLighting::Musical;
+            u.scroll_light = [level, if musical { 1.0 } else { 0.0 }, bass, treble];
+            // The bump wall as part 2 left it, for styles that use wall.wgsl:
+            // the oscillator's last position, the tile image at full strength
+            // (as during the text) and the wall's settings.
+            let last = *scroll.oscillator.last().unwrap_or(&[0.0; 2]);
+            u.backdrop = [
+                last[0],
+                last[1],
+                scroll.backdrop_style as u32 as f32,
+                scroll.wall_shape,
+            ];
+            u.backdrop_motion = [0.0, 0.0, scroll.wall_strength, 0.0];
+            if let Some(image) = scroll.backdrop.get(scroll.end_tick.saturating_sub(1)) {
+                u.next_palette = *image;
+            }
+        }
+        u.waves = [0.0, (WALL_SHUTTER_TICKS / 70.0) as f32, 0.0, 0.0];
+        u.rings = controls.rings;
+        u.ring_centres = controls.ring_centres;
+        u.ring_open = controls.ring_open;
+        u.ring_bands = controls.ring_bands;
+        u.ring_fades = controls.ring_fades;
+        u.symbol = controls.symbol;
+        u.symbol_atlas = controls.symbol_atlas;
+        u.neon_map = controls.neon_map;
+        u.rings_style = controls.rings_style;
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
     }
@@ -693,6 +861,16 @@ impl Renderer {
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        if let (true, Some(rings)) = (self.part6, &self.rings) {
+            if self.modern_view {
+                rings.draw_style(encoder, self.modern_renderer.hdr_target(), self.rings_style);
+                self.modern_renderer.post(encoder, view);
+            } else {
+                rings.draw_faithful(encoder, view);
+            }
+            self.draw_hud(encoder, view);
+            return;
+        }
         if self.glyphs_active {
             let field = self.glyph_field.create_view(&Default::default());
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -723,6 +901,10 @@ impl Renderer {
         } else {
             self.draw_faithful(encoder, view);
         }
+        self.draw_hud(encoder, view);
+    }
+
+    fn draw_hud(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         if self.hud_visible {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Frame-rate counter"),
@@ -1026,11 +1208,11 @@ mod tests {
     use super::*;
     use std::mem::{offset_of, size_of};
 
-    /// Every shader module body in this directory. Reading the directory
-    /// means a new module is checked without being listed here.
-    fn modules() -> Vec<(String, String)> {
+    /// Every shader file in this directory. Reading the directory means a
+    /// new file is checked without being listed here.
+    fn files() -> Vec<(String, String)> {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/hd");
-        let mut modules: Vec<_> = std::fs::read_dir(&dir)
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().path())
             .filter(|path| path.extension().is_some_and(|e| e == "wgsl"))
@@ -1039,38 +1221,82 @@ mod tests {
                 (path.file_name().unwrap().to_string_lossy().into(), body)
             })
             .collect();
-        modules.sort();
+        files.sort();
+        files
+    }
+
+    /// Every module the renderers build, as they build it.
+    fn modules() -> Vec<(String, String)> {
+        let mut modules: Vec<(String, String)> = [
+            ("intro", include_str!("intro.wgsl")),
+            ("modern", include_str!("modern.wgsl")),
+            ("post", include_str!("post.wgsl")),
+            ("transition", include_str!("transition.wgsl")),
+        ]
+        .into_iter()
+        .map(|(name, body)| (name.to_owned(), wgsl(body)))
+        .collect();
+        modules.push(("scroller".into(), scroller_source()));
+        modules.push((
+            "part 6 faithful HD".into(),
+            super::super::rings_render::faithful_source(),
+        ));
+        for style in RingsStyle::ALL {
+            modules.push((
+                format!("part 6 style {}", style.name()),
+                super::super::rings_render::style_source(style.info()),
+            ));
+        }
         modules
     }
 
     #[test]
     fn every_shader_validates_with_the_one_controls_declaration() {
+        let files = files();
         let modules = modules();
-        let names: Vec<_> = modules.iter().map(|m| m.0.as_str()).collect();
+        for (name, body) in &files {
+            assert!(
+                !body.contains("struct Controls") && !body.contains("@binding(0)"),
+                "{name} must not declare its own controls; renderer::wgsl prepends them"
+            );
+            assert!(
+                modules
+                    .iter()
+                    .any(|(_, source)| source.contains(body.as_str())),
+                "{name} is in no module the renderers build"
+            );
+        }
         for expected in [
             "intro.wgsl",
             "modern.wgsl",
             "post.wgsl",
             "scroller.wgsl",
             "transition.wgsl",
+            "wall.wgsl",
+            "rings_common.wgsl",
+            "rings_style.wgsl",
+            "rings_faithful.wgsl",
+            "rings_plus.wgsl",
+            "rings_glass.wgsl",
+            "rings_pool.wgsl",
+            "rings_room.wgsl",
+            "rings_volume.wgsl",
         ] {
-            assert!(names.contains(&expected), "{expected} not found");
+            assert!(
+                files.iter().any(|f| f.0 == expected),
+                "{expected} not found"
+            );
         }
         let expected: Vec<(&str, usize)> = rust_fields();
-        for (name, body) in &modules {
-            assert!(
-                !body.contains("struct Controls") && !body.contains("@binding(0)"),
-                "{name} must not declare its own controls; renderer::wgsl prepends them"
-            );
-            let source = wgsl(body);
-            let module = naga::front::wgsl::parse_str(&source)
-                .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(&source)));
+        for (name, source) in &modules {
+            let module = naga::front::wgsl::parse_str(source)
+                .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
             naga::valid::Validator::new(
                 naga::valid::ValidationFlags::all(),
                 naga::valid::Capabilities::default(),
             )
             .validate(&module)
-            .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(&source)));
+            .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
             let controls = module
                 .types
                 .iter()
@@ -1086,6 +1312,39 @@ mod tests {
                 .collect();
             assert_eq!(layout, expected, "{name}: field names and offsets");
         }
+    }
+
+    /// The constants the part-6 shaders repeat from hd/rings.rs and clip.rs.
+    #[test]
+    fn part6_shaders_repeat_the_rust_constants() {
+        use super::super::rings::{NEON_RADIUS, RING_WINDOW, SYMBOL_LIMIT, SYMBOL_SCALE};
+        let common = include_str!("rings_common.wgsl");
+        for constant in [
+            format!("const SYMBOL_SCALE={SYMBOL_SCALE}.0;"),
+            format!("const SYMBOL_LIMIT={SYMBOL_LIMIT:.1};"),
+            format!("const NEON_RADIUS={NEON_RADIUS};"),
+            format!(
+                "const RING_WINDOW=vec4f({},{},{},{});",
+                RING_WINDOW[0], RING_WINDOW[1], RING_WINDOW[2], RING_WINDOW[3]
+            ),
+            "const COLUMN=5.0/6.0;".to_owned(),
+        ] {
+            assert!(
+                common.contains(&constant),
+                "rings_common.wgsl lacks {constant}"
+            );
+        }
+        assert_eq!(super::super::clip::PIXEL_ASPECT, 5.0 / 6.0);
+        // The original's mean symbol blue in linear light.
+        let mean = (0..32)
+            .map(|b| super::super::clip::vga_linear(b as u8))
+            .sum::<f32>()
+            / 32.0;
+        assert!(
+            common.contains(
+                &format!("const SYMBOL_YELLOW=vec3f(1,1,{:.4});", mean).replace("0.", ".")
+            )
+        );
     }
 
     /// Rust field names and byte offsets, in declaration order.
@@ -1115,9 +1374,18 @@ mod tests {
             backdrop,
             backdrop_motion,
             waves,
+            rings,
+            ring_centres,
+            ring_open,
+            ring_bands,
+            ring_fades,
+            symbol,
+            symbol_atlas,
+            neon_map,
+            rings_style,
         ];
         // A field missing from this list leaves bytes unaccounted for.
-        let last = size_of::<[f32; 4]>();
+        let last = size_of::<[[f32; 4]; 4]>();
         assert_eq!(fields.last().unwrap().1 + last, size_of::<Uniforms>());
         fields
     }

@@ -1,5 +1,5 @@
 //! HDR rendering and bloom for the procedural 3D remake.
-use super::renderer::wgsl;
+use super::renderer::{scroller_source, wgsl};
 use wgpu::*;
 
 struct Targets {
@@ -56,7 +56,7 @@ impl Modern {
         });
         let scroll_shader = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("Glass scroller"),
-            source: ShaderSource::Wgsl(wgsl(include_str!("scroller.wgsl")).into()),
+            source: ShaderSource::Wgsl(scroller_source().into()),
         });
         let texture = |binding| BindGroupLayoutEntry {
             binding,
@@ -534,6 +534,18 @@ impl Modern {
             pass.set_pipeline(&self.sparks);
             pass.draw(0..6, 0..3200);
         }
+        self.post(encoder, output);
+    }
+
+    /// The HDR target the shared bloom and tonemap read. A part-6 style draws
+    /// into it, then [`Modern::post`] finishes the frame.
+    pub fn hdr_target(&self) -> &TextureView {
+        &self.targets.cut_scene
+    }
+
+    /// Bloom, tonemap and the comparison overlay, from the HDR target to the
+    /// output.
+    pub fn post(&self, encoder: &mut CommandEncoder, output: &TextureView) {
         for (pipeline, target, binding) in [
             (
                 &self.blur_x,
