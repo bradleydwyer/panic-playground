@@ -4,8 +4,9 @@ affiliated with Future Crew.
 
 The MIT License in LICENSE applies only to the standalone resource tools, their
 synthetic tests and the documentation. It does not cover rust/,
-tools/import_panic.py, tools/unpack_panic.py or the port they support; their
-rights status is still under review (see rust/NOTICE). It also does not license
+tools/import_panic.py, tools/unpack_panic.py, tools/look_check.py and its tests,
+or the port they support; their rights status is still under review (see
+rust/NOTICE). It also does not license
 any Future Crew material: the executable, artwork, music, text, fonts or
 anything else you supply or extract.
 
