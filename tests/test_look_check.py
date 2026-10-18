@@ -128,13 +128,24 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(self.status(edit(moved, [(399, 249)], 60)), 'changed')
         self.assertEqual(self.status(moved, max_changed=0.001), 'changed')
 
-    def test_scattered_steps_within_tolerance_are_noise(self):
+    def test_a_few_steps_within_tolerance_are_noise(self):
+        plain = plain_image(400, 250)
+        self.image = plain
+        moved = edit(plain, [(8 * i, i) for i in range(50)], 2)  # 0.05% of the pixels
+        diff = L.diff_images(plain, moved)
+        self.assertEqual((diff.peak, diff.beyond, diff.differing), (2, 0, 50))
+        self.assertEqual(self.status(moved), 'noise')
+
+    def test_broad_faint_change_is_a_change(self):
+        # 10% of the frame moves by 2/255: within the tolerance, and the mean
+        # is only 0.2/255, but it covers far more than a few stray pixels.
         plain = plain_image(400, 250)
         self.image = plain
         moved = edit(plain, [(x, y) for y in range(250) for x in range(0, 400, 10)], 2)
         diff = L.diff_images(plain, moved)
         self.assertEqual((diff.peak, diff.beyond, diff.differing), (2, 0, 10000))
-        self.assertEqual(self.status(moved), 'noise')
+        self.assertEqual(self.status(moved), 'changed')
+        self.assertEqual(self.status(moved, max_differing=100), 'noise')
 
     def test_uniform_shift_within_tolerance_is_a_change(self):
         plain = plain_image(400, 250)
@@ -199,17 +210,19 @@ sys.path.insert(0, {tools!r})
 import look_check
 
 args = sys.argv[1:]
+mode = os.environ.get('FAKE_MODE', '')
 if args == ['--help']:
     print('Usage: fake [options]')
     for flag in ('--data', '--size', '--seek', '--headless', '--out', '--scroller',
                  '--transition', '--faithful', '--original', '--scroller-backdrop',
                  '--wall-strength'):
         print('  ' + flag)
+    if mode == 'lighting':
+        print('  --scroller-lighting')
     sys.exit(0)
 value = lambda flag: args[args.index(flag) + 1]
 width, height = map(int, value('--size').split('x'))
 seek = float(value('--seek'))
-mode = os.environ.get('FAKE_MODE', '')
 if mode == 'fail' and seek > 20:
     sys.exit('fake: cannot render')
 rows = []
@@ -317,6 +330,59 @@ class EndToEndTests(unittest.TestCase):
         manifest = json.loads((self.root / 'look/sets/strong/manifest.json').read_text())
         self.assertEqual(manifest['extra'], ['--wall-strength', '0.8'])
         self.assertIn('0.8', manifest['shots'][0]['command'])
+
+    def test_never_replaces_a_directory_that_is_not_a_set(self):
+        victim = self.root / 'victim'
+        (victim / 'sub').mkdir(parents=True)
+        (victim / 'notes.txt').write_text('keep me')
+        (victim / 'sub' / 'file.bin').write_bytes(b'\0\1')
+        self.assertEqual(self.run_tool('render', 'base', *self.options, '--size', '64x36',
+                                       '--only', 'logo')[0], 0)
+        for args in (('check', 'base', '--name', str(victim)),
+                     ('render', str(victim), '--force', '--only', 'logo')):
+            with self.subTest(args[0]):
+                code, output = self.run_tool(*args, *self.options)
+                self.assertEqual(code, 2)
+                self.assertIn('not a look check set', output)
+                self.assertEqual(sorted(p.name for p in victim.rglob('*')),
+                                 ['file.bin', 'notes.txt', 'sub'])
+
+    def test_check_will_not_render_over_its_base_given_by_path(self):
+        self.assertEqual(self.run_tool('render', 'base', *self.options, '--size', '64x36',
+                                       '--only', 'logo')[0], 0)
+        manifest = self.root / 'look/sets/base/manifest.json'
+        before = manifest.read_text()
+        # A relative path, as typed, names the same directory as the base.
+        path = os.path.join('.', os.path.relpath(manifest.parent))
+        code, output = self.run_tool('check', 'base', '--name', path, *self.options,
+                                     '--extra=--wall-strength 0.9')
+        self.assertEqual(code, 2)
+        self.assertIn('different set', output)
+        self.assertEqual(manifest.read_text(), before)
+
+    def test_a_shot_the_new_build_skips_fails_the_check(self):
+        code, _ = self.run_tool('render', 'base', *self.options, '--size', '64x36',
+                                '--only', 'scroller-31,musical-31', mode='lighting')
+        self.assertEqual(code, 0)
+        code, output = self.run_tool('check', 'base', *self.options, '--jobs', '1')
+        self.assertEqual(code, 1)
+        shots = {s['name']: s for s in self.report('base', 'current')['shots']}
+        self.assertEqual((shots['scroller-31']['status'], shots['musical-31']['status']),
+                         ('identical', 'skipped'))
+        self.assertIn('--scroller-lighting', shots['musical-31']['detail'])
+
+    def test_check_keeps_the_base_sets_extra_flags(self):
+        code, _ = self.run_tool('render', 'base', *self.options, '--size', '64x36',
+                                '--only', 'logo', '--extra=--wall-strength 0.8')
+        self.assertEqual(code, 0)
+        code, output = self.run_tool('check', 'base', *self.options)
+        self.assertEqual(code, 0)
+        self.assertIn('--wall-strength 0.8', output)
+        current = json.loads((self.root / 'look/sets/current/manifest.json').read_text())
+        self.assertEqual(current['extra'], ['--wall-strength', '0.8'])
+        # An explicit --extra replaces them; the stand-in's frame depends on its arguments.
+        code, _ = self.run_tool('check', 'base', *self.options, '--extra=')
+        self.assertEqual(code, 1)
 
     def test_missing_base_is_explained(self):
         code, output = self.run_tool('check', 'nothing', *self.options)

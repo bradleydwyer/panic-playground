@@ -176,7 +176,8 @@ python3 tools/look_check.py check baseline
 ```
 
 `check` renders the same shots with `target/release/panic-hd` and compares
-them pixel by pixel. If anything changes beyond a few stray pixels, it says
+them pixel by pixel. If more than a few stray pixels change (by default more
+than 0.1% of a frame, however faintly), or a shot no longer renders, it says
 which shots and exits with an error. Heatmaps and a before, after and
 difference sheet go under `artifacts/look-check/`. The
 [look check notes](rust/README.md#look-check) cover the options.

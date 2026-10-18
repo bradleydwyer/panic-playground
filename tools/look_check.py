@@ -44,11 +44,15 @@ DEFAULT_DATA = ROOT / 'artifacts' / 'local-data'
 DEFAULT_SIZE = (960, 540)
 # Differences are in 1/255 steps of a colour channel. Shader compiler
 # reordering can move a handful of pixels by a few steps; a shot counts as
-# noise while few pixels go beyond TOLERANCE and the mean stays tiny.
+# noise while only a few stray pixels differ, few of them go beyond
+# TOLERANCE and the mean stays tiny. A faint change over a broad area is a
+# change, however small its steps.
 TOLERANCE = 2
+MAX_DIFFERING = 0.1  # percent of pixels that differ at all
 MAX_CHANGED = 0.01  # percent of pixels beyond the tolerance
 MAX_MEAN = 0.25  # mean RGB difference over the frame
-FAILING = ('changed', 'size', 'failed')
+# A shot the new set skipped or failed to render counts as a failure too.
+FAILING = ('changed', 'size', 'failed', 'skipped')
 
 
 class LookError(Exception):
@@ -278,10 +282,13 @@ def diff_images(a, b, tolerance=TOLERANCE):
     return Diff(rows, peak, total, beyond, differing)
 
 
-def classify(diff, pixels, max_changed=MAX_CHANGED, max_mean=MAX_MEAN):
+def classify(diff, pixels, max_changed=MAX_CHANGED, max_mean=MAX_MEAN,
+             max_differing=MAX_DIFFERING):
     if diff.peak == 0:
         return 'identical'
-    if diff.beyond <= pixels * max_changed / 100 and diff.total / (3 * pixels) <= max_mean:
+    if (diff.differing <= pixels * max_differing / 100
+            and diff.beyond <= pixels * max_changed / 100
+            and diff.total / (3 * pixels) <= max_mean):
         return 'noise'
     return 'changed'
 
@@ -363,7 +370,7 @@ def compare_shot(job):
         return result
     pixels = before.width * before.height
     diff = diff_images(before, after, job['tolerance'])
-    status = classify(diff, pixels, job['max_changed'], job['max_mean'])
+    status = classify(diff, pixels, job['max_changed'], job['max_mean'], job['max_differing'])
     result.update(status=status, max=diff.peak, mean=diff.total / (3 * pixels),
                   beyond=diff.beyond, differing=diff.differing, pixels=pixels)
     if status == 'identical':
@@ -460,7 +467,16 @@ def _set_path(ref, sets_dir):
         return Path(ref).resolve()
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', ref):
         raise LookError(f'Invalid set name {ref!r}: use letters, digits, ".", "_" and "-"')
-    return Path(sets_dir) / ref
+    return (Path(sets_dir) / ref).resolve()
+
+
+def _is_set(path):
+    """Whether path holds a set this tool wrote, so it may be replaced."""
+    try:
+        manifest = json.loads((path / 'manifest.json').read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(manifest, dict) and 'format' in manifest
 
 
 def load_set(ref, sets_dir):
@@ -508,8 +524,13 @@ def render_set(name, shots, *, binary=DEFAULT_BIN, data=None, size=DEFAULT_SIZE,
         raise LookError(f'No data directory at {data}; import it first (rust/README.md#setup) '
                         'or pass --data')
     target = _set_path(name, sets_dir)
-    if target.exists() and not force:
-        raise LookError(f'Set {target} already exists; use --force to replace it')
+    if target.exists():
+        # Replacing deletes the old directory, so only ever replace a set.
+        if not (target.is_dir() and (_is_set(target) or not any(target.iterdir()))):
+            raise LookError(f'{target} is not a look check set (it has no manifest.json from '
+                            'this tool); refusing to replace it')
+        if not force:
+            raise LookError(f'Set {target} already exists; use --force to replace it')
     flags = help_flags(binary)
     missing = [f for f in CAPTURE_FLAGS if f not in flags]
     if missing:
@@ -598,9 +619,14 @@ class _Named(NamedTuple):
 
 def compare_sets(base_ref, new_ref, *, sets_dir=DEFAULT_DIR / 'sets',
                  reports_dir=DEFAULT_DIR / 'reports', patterns=(), tolerance=TOLERANCE,
-                 max_changed=MAX_CHANGED, max_mean=MAX_MEAN, jobs=None, panel_width=640,
-                 log=print):
-    """Compare two sets, write heatmaps and a sheet, and return (failed, report dir)."""
+                 max_changed=MAX_CHANGED, max_mean=MAX_MEAN, max_differing=MAX_DIFFERING,
+                 require_all=False, jobs=None, panel_width=640, log=print):
+    """Compare two sets, write heatmaps and a sheet, and return (failed, report dir).
+
+    With require_all, a base shot missing from the new set also fails, as
+    check renders every base shot into it.
+    """
+    failing = FAILING + (('not rendered',) if require_all else ())
     base_dir, base = load_set(base_ref, sets_dir)
     new_dir, new = load_set(new_ref, sets_dir)
     report = Path(reports_dir) / f'{base_dir.name}--{new_dir.name}'
@@ -634,7 +660,8 @@ def compare_sets(base_ref, new_ref, *, sets_dir=DEFAULT_DIR / 'sets',
                               'after': str(new_dir / new_shots[name]['file']),
                               'heatmap': str(report / 'diff' / f'{name}.png'),
                               'tolerance': tolerance, 'max_changed': max_changed,
-                              'max_mean': max_mean, 'panel_width': panel_width})
+                              'max_mean': max_mean, 'max_differing': max_differing,
+                              'panel_width': panel_width})
     jobs = jobs or min(8, os.cpu_count() or 1)
     if jobs > 1 and len(jobs_todo) > 1:
         with ProcessPoolExecutor(min(jobs, len(jobs_todo))) as pool:
@@ -643,7 +670,7 @@ def compare_sets(base_ref, new_ref, *, sets_dir=DEFAULT_DIR / 'sets',
         done = [compare_shot(job) for job in jobs_todo]
     results.update((r['name'], r) for r in done)
     results = [results[name] for name in order]
-    if not any(r['status'] in ('identical', 'noise', 'changed', *FAILING) for r in results):
+    if not any(r['status'] in ('identical', 'noise', *failing) for r in results):
         raise LookError('Nothing to compare: the sets share no rendered shots')
 
     lines = []
@@ -654,13 +681,14 @@ def compare_sets(base_ref, new_ref, *, sets_dir=DEFAULT_DIR / 'sets',
                      f'{m.get("adapter") or "unknown GPU"}{extra}')
     if base.get('adapter') != new.get('adapter'):
         lines.append('Note: the sets come from different GPUs; small differences are expected.')
-    lines.append(f'{"shot":<22} {"status":<12} {"max":>4} {"mean":>7} {"differ":>8} '
-                 f'{f"beyond {tolerance}/255":>17}')
+    lines.append(f'{"shot":<22} {"status":<12} {"max":>4} {"mean":>7} {"differing":>16} '
+                 f'{f"beyond {tolerance}/255":>16}')
     for r in results:
         if 'max' in r:
-            pct = 100 * r['beyond'] / r['pixels'] if r.get('pixels') else 0.0
+            share = 100 / r['pixels'] if r.get('pixels') else 0.0
             lines.append(f'{r["name"]:<22} {r["status"]:<12} {r["max"]:>4} {r["mean"]:>7.3f} '
-                         f'{r["differing"]:>8} {r["beyond"]:>9} {pct:>6.2f}%')
+                         f'{r["differing"]:>8} {r["differing"] * share:>6.2f}% '
+                         f'{r["beyond"]:>8} {r["beyond"] * share:>6.2f}%')
         elif r['status'] not in ('not rendered', 'no base'):
             lines.append(f'{r["name"]:<22} {r["status"]:<12} {r.get("detail", "")}'.rstrip())
     for status, where in (('not rendered', f'Not rendered in {new_dir.name}'),
@@ -672,8 +700,8 @@ def compare_sets(base_ref, new_ref, *, sets_dir=DEFAULT_DIR / 'sets',
     for r in results:
         counts[r['status']] = counts.get(r['status'], 0) + 1
     lines.append(f'{len(results)} shots: ' + ', '.join(f'{n} {s}' for s, n in counts.items())
-                 + f'. Limits: {max_changed}% of pixels beyond {tolerance}/255, '
-                 f'mean {max_mean}/255.')
+                 + f'. Noise limits: {max_differing}% of pixels differing, {max_changed}% '
+                 f'beyond {tolerance}/255, mean {max_mean}/255.')
 
     changed = [r for r in results if r.get('panels')]
     if changed:
@@ -691,9 +719,10 @@ def compare_sets(base_ref, new_ref, *, sets_dir=DEFAULT_DIR / 'sets',
     plain = [{k: v for k, v in r.items() if k != 'panels'} for r in results]
     (report / 'report.json').write_text(json.dumps({
         'base': str(base_dir), 'new': str(new_dir), 'tolerance': tolerance,
-        'max_changed_percent': max_changed, 'max_mean': max_mean, 'shots': plain}, indent=1) + '\n')
+        'max_differing_percent': max_differing, 'max_changed_percent': max_changed,
+        'max_mean': max_mean, 'shots': plain}, indent=1) + '\n')
     log(text)
-    failed = [r for r in results if r['status'] in FAILING]
+    failed = [r for r in results if r['status'] in failing]
     return failed, report
 
 
@@ -722,13 +751,18 @@ def main(argv=None):
     rendering.add_argument('--data', type=Path,
                            help='Imported data (default PANIC_DATA or artifacts/local-data)')
     rendering.add_argument('--size', type=_size, help='Capture size (default 960x540)')
-    rendering.add_argument('--extra', default='', metavar='ARGS',
-                           help="Flags added to every shot, e.g. --extra='--wall-strength 0.8'")
+    rendering.add_argument('--extra', metavar='ARGS',
+                           help="Flags added to every shot, e.g. --extra='--wall-strength 0.8'; "
+                                "check reuses the base set's unless given")
     rendering.add_argument('--timeout', type=float, default=300, help='Seconds per shot')
     comparing = argparse.ArgumentParser(add_help=False)
     comparing.add_argument('--tolerance', type=int, default=TOLERANCE,
                            help='Ignore channel differences up to this, in 1/255 '
                                 f'(default {TOLERANCE})')
+    comparing.add_argument('--max-differing', type=float, default=MAX_DIFFERING,
+                           metavar='PERCENT',
+                           help=f'Noise allows this share of pixels to differ at all '
+                                f'(default {MAX_DIFFERING}%%)')
     comparing.add_argument('--max-changed', type=float, default=MAX_CHANGED, metavar='PERCENT',
                            help=f'Noise allows this share of pixels beyond the tolerance '
                                 f'(default {MAX_CHANGED}%%)')
@@ -760,15 +794,21 @@ def main(argv=None):
                 print(f'{shot.name:<22} {shot.group:<9} --seek {shot.seek:<5g} {flags}')
             return 0
         if args.command in ('render', 'check'):
-            extra = shlex.split(args.extra)
+            extra = shlex.split(args.extra or '')
             if args.command == 'render':
                 shots, size, name = select(SHOTS, patterns), args.size or DEFAULT_SIZE, args.name
             else:
                 base_path, base = load_set(args.base, sets_dir)
-                if _set_path(args.name, sets_dir) == base_path:
-                    raise LookError('Render the check into a different set from its base')
+                target = _set_path(args.name, sets_dir)
+                if target == base_path or target in base_path.parents:
+                    raise LookError('Render the check into a different set from its base, '
+                                    'not into the base or a directory holding it')
                 shots = select(manifest_shots(base), patterns)
                 size, name = args.size or tuple(base['size']), args.name
+                if args.extra is None and base.get('extra'):
+                    extra = list(base['extra'])
+                    print(f"Using the base set's extra flags {shlex.join(extra)}; "
+                          "pass --extra= to drop them")
             _, manifest = render_set(name, shots, binary=args.bin, data=args.data, size=size,
                                      extra=extra, sets_dir=sets_dir,
                                      force=args.force if args.command == 'render' else True,
@@ -781,7 +821,8 @@ def main(argv=None):
         failed, _ = compare_sets(compare_base, name, sets_dir=sets_dir, reports_dir=reports_dir,
                                  patterns=patterns, tolerance=args.tolerance,
                                  max_changed=args.max_changed, max_mean=args.max_mean,
-                                 jobs=args.jobs)
+                                 max_differing=args.max_differing,
+                                 require_all=args.command == 'check', jobs=args.jobs)
         return 1 if failed else 0
     except (LookError, OSError, ValueError) as error:
         print(f'look_check: {error}', file=sys.stderr)
