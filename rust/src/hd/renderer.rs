@@ -947,6 +947,7 @@ impl Renderer {
         let mut block = field.controls(time);
         if modern {
             block.fluid = renderer.advance_fluid(&self.device, &self.queue, field, time);
+            renderer.advance_zoom(&self.device, &self.queue, &block, size);
         }
         let audio = clip.audio_at(time);
         let mut u = Uniforms::zeroed();
@@ -1643,8 +1644,9 @@ mod tests {
 
     /// Each part-5 entry point uses only the bindings its pipeline layout
     /// gives it (field_render.rs): faithful HD group 0; the modern view and
-    /// the prepasses group 0 and the fluid's latest and previous states; the
-    /// fluid step group 0, the state before it, its controls and its output.
+    /// the prepasses group 0, the fluid's latest and previous states and the
+    /// zoom's group 2 (its shown level and view); the fluid step group 0, the
+    /// state before it, its controls and its output.
     /// An author's helper that reaches for the wrong one fails here, not on
     /// the GPU.
     #[test]
@@ -1671,8 +1673,10 @@ mod tests {
                     let (Some(binding), false) = (&global.binding, uses[handle].is_empty()) else {
                         continue;
                     };
+                    let zoom = binding.group == 2 && allowed == drawn;
                     assert!(
                         binding.group == 0
+                            || zoom
                             || (binding.group == 1 && allowed.contains(&binding.binding)),
                         "{name}: {} uses {:?} (group {}, binding {})",
                         entry.name,

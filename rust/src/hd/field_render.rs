@@ -8,8 +8,14 @@
 //! with its own GPU state, kept states for seeking back and lighting. This
 //! file brings it to each moment shown and binds its two light layers for
 //! the fragments.
+//!
+//! The zoom hook is the zoom author's [`ZoomLevels`] (field_zoom.rs): the
+//! deep zoom's reference orbit, tables and level kernel, and the levels it
+//! builds in bands, one per doubling. This file brings it to each moment
+//! shown and binds the shown level for the fragments as group 2.
 use super::field::{
-    BUFFER_SIZE, COARSE_CELLS, FieldPreview, FrameFluid, MAP_SIZE, authors, frame_shape,
+    BUFFER_SIZE, COARSE_CELLS, FieldBlock, FieldPreview, FrameFluid, MAP_SIZE, ZoomLevels, authors,
+    frame_shape,
 };
 use super::renderer::wgsl_parts;
 use wgpu::*;
@@ -92,6 +98,7 @@ pub(super) struct FieldRenderer {
     style: RenderPipeline,
     prepasses: [Option<RenderPipeline>; 3],
     fluid: FrameFluid,
+    zoom: ZoomLevels,
 }
 
 fn texture(
@@ -287,7 +294,9 @@ impl FieldRenderer {
                 immediate_size: 0,
             })
         };
-        let drawn = layout_of(&[&inputs.layout, &fragment_fluid]);
+        // The fragments' group 2: the zoom author's shown level.
+        let zoom_drawn = ZoomLevels::layout(device);
+        let drawn = layout_of(&[&inputs.layout, &fragment_fluid, &zoom_drawn]);
         let pipeline = |layout: &PipelineLayout, module: &ShaderModule, fragment: &str, format| {
             device.create_render_pipeline(&RenderPipelineDescriptor {
                 label: Some(fragment),
@@ -342,6 +351,7 @@ impl FieldRenderer {
             })
         });
         let fluid = FrameFluid::new(device, queue, preview, &frame, &relief, &fragment_fluid);
+        let zoom = ZoomLevels::new(device, preview, zoom_drawn);
         Self {
             key: key(preview),
             palette,
@@ -355,6 +365,7 @@ impl FieldRenderer {
             style,
             prepasses,
             fluid,
+            zoom,
         }
     }
 
@@ -420,6 +431,18 @@ impl FieldRenderer {
         self.fluid.advance(device, queue, preview, time)
     }
 
+    /// Bring the zoom's levels to the moment `block` shows on a drawable of
+    /// `size` pixels: the shown level complete, a band of the next built.
+    pub fn advance_zoom(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        block: &FieldBlock,
+        size: (u32, u32),
+    ) {
+        self.zoom.advance(device, queue, block, size);
+    }
+
     /// A hash of the fluid's latest state, and its number.
     #[cfg(test)]
     pub(super) fn read_fluid(&self, device: &Device, queue: &Queue) -> (u64, usize) {
@@ -458,6 +481,7 @@ impl FieldRenderer {
         pass.set_bind_group(0, inputs, &[]);
         if fluid {
             pass.set_bind_group(1, self.fluid_shown(), &[]);
+            pass.set_bind_group(2, self.zoom.drawn(), &[]);
         }
         pass.draw(0..3, 0..1);
     }

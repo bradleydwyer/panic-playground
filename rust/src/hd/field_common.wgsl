@@ -151,7 +151,8 @@ fn field_phase()->f32 {return fc.part.z;}
 fn field_frame()->f32 {return fc.part.w;}
 // The zoom. The original resamples its 256 x 200 buffer at a scale of 1 to
 // 2 buffer pixels per window pixel, lowering it each frame by the speed
-// (from 16 to 1024 in 65536ths, at full speed one level every 64 frames);
+// (from 16 to 1024 in 65536ths, at full speed one level every 63 frames, as
+// the frame that swaps lowers it a second time);
 // when it passes 1 the buffers swap to the next level, twice as fine. The
 // scale is in the shown buffer's pixels, interpolated between frames: below
 // 1 when the next frame swaps (field_zoom_ahead), where the next level shows at

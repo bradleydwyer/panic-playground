@@ -40,7 +40,7 @@ mod mountain;
 mod zoom;
 pub use frame::{FLUID, FRAME, FRAME_TAKES_PART6_FADE, FrameFluid, FrameShape, frame_shape};
 pub use mountain::{MOUNTAIN, RELIEF_SIZE};
-pub use zoom::ZOOM;
+pub use zoom::{ZOOM, ZoomLevels};
 
 /// `u.state.x` during part 5. The intro uses 0..=5, part 2 6..=9 and part 6
 /// 10.
@@ -86,7 +86,8 @@ pub struct FieldFrame {
 /// frames when the preview loads (the thresholds are the port's).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FieldEvents {
-    /// The zoom reaches full speed (1024): one level every 64 frames.
+    /// The zoom reaches full speed (1024): one level every 63 frames (the
+    /// frame that swaps lowers the scale a second time).
     pub full_speed: f64,
     /// The zoom starts to brake.
     pub braking: f64,

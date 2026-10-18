@@ -724,10 +724,11 @@ buffers swap to the next level, which `expand` builds two rows a frame as a
 smoothed enlargement of the centre, twice as fine, and `perturb` adds noise
 to the new level's centre. WELLPAL makes the field dark at 64 and bright at
 both ends. The speed rises by 16 a frame to 1024 by 82.17 seconds, one level
-every 64 frames (0.91 seconds). It dips to 1008 at 95.13, when the music's
-position passes 0x1400, and from 96.06, when the position is 0x400 past
-where the part began, it falls by 16 a frame, so the zoom stops at 96.96
-after 17 swaps, a magnification of about 81,000.
+every 63 frames (0.90 seconds): the frame that swaps lowers the scale a
+second time. It dips to 1008 at 95.13, when the music's position passes
+0x1400, and from 96.06, when the position is 0x400 past where the part
+began, it falls by 16 a frame, so the zoom stops at 96.96 after 17 swaps,
+a magnification of about 81,000.
 
 The terrain then begins: a voxel height field of DEP.U's heights and MAP.U's
 colours as `prepare` makes them, in MAP.PAL's fire colours, drawn by 160 rays
@@ -801,9 +802,8 @@ during the terrain, as `--bench` measures it, CPU and waiting for the GPU
 included (it gives part 6's faithful HD 0.7 ms).
 
 The modern view is three authors' work, each in their own files; see
-"Adding to part 5" below. The metal frame, its smoke and the mountain are
-in. Until the zoom's author fills theirs in, the window draws a plain
-stand-in, faithful HD's.
+"Adding to part 5" below: the metal frame and its smoke, the window's deep
+zoom and the mountain.
 
 The frame is dark polished gunmetal. It is drawn exactly where the PSTART
 picture has it, as nothing is displaced, and is lit by what is round it.
@@ -906,6 +906,109 @@ driver. Seeking and memory, for `Volume`:
 The renderer asks the GPU for its full number of storage buffers per
 shader stage, as the smoke's solver binds more than wgpu's default of 8.
 
+The modern window is a deep zoom into the Mandelbrot set, from a view
+3.3e-50 high to one 4.0e-55 high. It lands on a minibrot of period 3341,
+in the set's usual orientation and filling 78% of the window's height. It
+stays deep the whole way, so the window never shows the whole set: rings
+of lace round the copy close in on it, doubling by doubling, until it
+fills the window.
+
+- Read from the port: the timing. The depth is the port's own
+  magnification, `field_zoom_level()`: log2 of 2^swaps over the scale,
+  interpolated between the original's frames as faithful HD has it. So the
+  16.3 doublings, the 63-frame rhythm, the dip at 95.13, the brake and the
+  stop at 96.96 fall on the original's frames; the zoom counts no frames
+  or seconds of its own. The window then holds the landed view behind the
+  rising mountain until the port clears it at 98.11, and is dark from then
+  on. Through part 6's fade and part 5's first frame, where the original
+  still shows PSTART's window, it shows the zoom's first view.
+- Authored: the target, its framing, the method and the look. The target is
+  the end of a chain of nested minibrots out of the seahorse valley
+  (periods 32, 250, 1030 and 3341), found by a local search; nothing about
+  it comes from the demo. It is a constant in `field_zoom.rs`, the nucleus
+  and the window's centre as decimal strings, read when the renderer
+  loads. The window is centred on the copy's body and turned by a
+  constant 128.2 degrees so that the copy lands in the set's usual
+  orientation.
+
+The method parallels the original's. Field shows one level buffer,
+resampled at 1 to 2 buffer pixels per window pixel, while it builds the
+next one, twice as fine, two rows a frame, and swaps at each doubling. Here
+level k is the exact view at depth k, at 2 texels per window pixel at its
+own depth (`LEVEL_SCALE`). A compute kernel builds it in bands while the
+doubling before it plays, due by 0.8 of the way (`BUILD_BY`), and the
+window resamples the level of the current doubling, 1 to 2 times
+magnified, with four samples a pixel. Unlike the original's, a level is
+computed afresh, not enlarged from the one before. Three levels are kept on
+the GPU: the one shown, the next and one for stepping back.
+
+A level is a pure function of its depth and size, so playing, seeking,
+scrubbing and a one-frame export show the same image. An ignored test
+checks that byte for byte against a fresh renderer, across a doubling and
+at five moments reached by seeking. A level that isn't complete when it is
+needed is finished at once, rather than shown partly built or blank. That
+is a one-off hitch when seeking: at 2560 x 1440 a level takes about 18 to
+40 ms, at 3840 x 2160 40 to 80 ms (the deeper, the longer), and a seek can
+need two.
+
+Each texel is computed by perturbation from one reference orbit, at the
+minibrot's nucleus. That orbit is exactly periodic (Z_3341 = 0 = Z_0), so
+its 3341 points serve every iteration and no texel needs a second
+reference. The orbit is computed in 376-bit fixed point when the renderer
+loads (`field_zoom.rs`'s own, no crate; 0.5 ms), with bilinear
+approximation (BLA) tables over it and their radii for each level (3 ms
+more). The GPU works in f32 only:
+
+- The deltas from the reference are plain f32 down to 2^-45 and floatexp
+  below that: an f32 mantissa pair with a shared exponent.
+- BLA skips runs of iterations, with a tolerance of 2^-12, which the
+  prototype measured moving the smooth iteration count by about 0.001.
+- Zhuoran's rebasing keeps the deltas small without another reference.
+- A periodicity test finds the minibrot's inside, and the distance
+  estimate shades the outside.
+- A texel takes at most 1500 steps. Those that reach the cap, 0.5% at the
+  stop, lie on the boundary and are drawn as it.
+
+A local prototype, outside the repository, checked the kernel's method
+against a direct 376-bit render and mpmath at the deepest view.
+
+The look is cool blues in linear HDR, into the shared bloom and tonemap.
+The outside is shaded by the distance estimate on a log scale, so that
+dense lace doesn't saturate: navy far from the set, through the original
+window's deep blue and azure to cyan. A white-cyan boundary line blooms.
+It is divided by its own density nearby, so lone filaments glow and dense
+lace stays textured. Faint smooth iteration bands lie far out, and the
+inside is near black. Distances are in pixels of a 4K window, so the look
+is the same at every size, and the whole is held at 0.45 (`ZOOM_GAIN`) so
+that the window doesn't overpower the dark frame. The look's constants are
+together at the top of `field_zoom.wgsl`, and the method's at the top of
+`field_zoom.rs`.
+
+The window's light for the frame and smoke (`fc.zoom_style[0]`) is
+authored from measurements:
+
+- It is the window's mean colour times an intensity of 2.
+- At each whole depth, it is scaled by the window's mean luminance there
+  against depth 0, raised to 0.75 so that the smoke swings less than the
+  window does. That takes it from 1 to 1.6 times over the zoom, linear
+  between depths.
+- It rises with part 6's fade and goes out over 0.12 seconds when the
+  window is cleared.
+
+The colour and luminances were measured from captures of the window's
+middle with the current look; they should be measured again if the look
+changes.
+
+At 2560 x 1440 on an Apple M5 Max a frame takes about 5.7 to 6.0 ms during
+the zoom, against 5.3 to 5.7 ms with the stand-in it replaced (at 82, 88
+and 94 seconds, medians of `--bench 150`): 0.3 to 0.5 ms more, for the
+shading and the level built in the background. After the stop, while the
+mountain rises and no level is built, frames take 10 to 11 ms, as with the
+stand-in. At 3840 x 2160 the zoom costs 0.8 to 1.3 ms a frame more than
+the stand-in. The levels take 8 bytes a texel: three of 1583 x 1484 at 2560
+x 1440 are 56 MB, three of 2374 x 2225 at 3840 x 2160 127 MB; the tables
+are a few MB.
+
 The modern mountain is a molten Mandelbrot: dark cooled crust with lava
 running down its slopes in channels and cracks, and on the plateau, the set
 itself, a lava lake with plates of crust drifting and cracking on it.
@@ -980,7 +1083,7 @@ file of their own in `src/hd/`:
 | Author | Files | Draws |
 | --- | --- | --- |
 | Frame | `field_frame.wgsl`, `field_frame.rs`, and the smoke's `field_frame_smoke.rs` and `field_frame_smoke/*.wgsl` | The metal frame and the smoke behind and round it, with the fluid hook |
-| Zoom | `field_zoom.wgsl`, `field_zoom.rs` | What the window shows |
+| Zoom | `field_zoom.wgsl`, `field_zoom.rs` | What the window shows, with the level hook |
 | Mountain | `field_mountain.wgsl`, `field_mountain.rs` | The mountain |
 
 The renderer builds one module from the shared controls,
@@ -1007,7 +1110,8 @@ past the window's edge, where the frame hides it. Prefix your own names with
 `frame_`, `zoom_` or `mountain_`: the shared code leaves those prefixes to
 you but for the prepass readers, and a default test checks it. The naga
 test validates the module and checks that each entry point uses only the
-bindings its pipeline has. Edit only your two files.
+bindings its pipeline has; the zoom's levels are group 2 of the drawn
+pipelines. Edit only your two files.
 
 Each Rust file holds its author's `AuthorInfo`: set `prepass: true` to have
 `<name>_prepass` drawn first, at half the resolution each way, into a
@@ -1026,8 +1130,9 @@ given once any of its four components is non-zero, so w can mark a dark
 light as given; until then the frame draws a stand-in:
 
 - `fc.zoom_style[0]`: the window's light, rgb, its average colour times its
-  intensity, as linear HDR radiance. The stand-in is a cool blue that goes
-  out when the window is cleared.
+  intensity, as linear HDR radiance. The zoom now gives it, with w 1
+  throughout part 5. The stand-in, a cool blue that goes out when the
+  window is cleared, remains in the frame's code.
 - `fc.mountain_style[0]`: the lava's light, x and y in source pixels, scene
   z, and its spread (the glow's radius in rows).
 - `fc.mountain_style[1]`: the lava's radiance, rgb, linear HDR; this one
@@ -1116,6 +1221,26 @@ and the seconds since the fluid's start. The groundwork's single-texture
 step, `frame_fluid` and `frame_fluid_init` with `field_style.wgsl`'s
 `field_fluid`, remains but is unused, as do the helpers for it
 (`fluid_load`, `fluid_blend`, `fluid_cell` and the step's own).
+
+The zoom hook is the zoom author's `ZoomLevels` (`field_zoom.rs`), which
+`field_render.rs` creates beside the fluid, with the zoom's stop as the
+preview measures it, and brings to each moment shown (`advance_zoom`, after
+the fluid). It owns the reference orbit, the BLA tables and radii, the level
+kernel and `LEVEL_SLOTS` level textures, and decides which level is shown
+and how much of the next to build. The kernel, `KERNEL_WGSL`, is a compute
+module of its own. It is kept in the Rust file because every `.wgsl` file
+in `src/hd` goes into the renderers' modules with the shared controls.
+Group 2 of the modern module's fragments is the zoom's:
+
+- Binding 1, `zoom_level`: the shown level, rgba16float. Each texel holds
+  its band phase, log2 of its distance estimate in texels, and its class:
+  outside, inside, or at the step cap.
+- Binding 2, `zoom_view`: the level's depth, its texels per window height,
+  its size, and whether a complete level is bound.
+
+Binding 0 is left unused: the shader test reserves `@binding(0)` for the
+shared controls. Once the window is cleared no level is bound, and the
+window draws what faithful HD does: colour 129, near black.
 
 Two hand-overs frame the part. Part 6 ends on the PSTART picture, and its
 look is part 6's own. Setting `FRAME_TAKES_PART6_FADE`, as the frame now
