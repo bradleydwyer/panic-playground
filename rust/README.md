@@ -329,7 +329,7 @@ optical simulation. All fields are generated locally in memory.
 | L | Scroller lighting: studio or musical |
 | B | Cycle the scroller backdrop: chamber, wall, chrome |
 | [ / ] | Bump shape for the wall backdrops |
-| - / = | Strength of the wall backdrops |
+| - / = (keypad - / +) | Strength of the wall backdrops |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
