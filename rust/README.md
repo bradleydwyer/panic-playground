@@ -535,7 +535,9 @@ original's 256 by 184 window. A low lamp hangs over each source, cool over
 the first and warm over the second, so each source's waves catch its colour
 and their crests shade the waves beyond. The neon symbols hover just above
 the surface, and each wave mirrors the tubes themselves, traced to where
-its reflection meets them. Until the rings first fade in there is no pool,
+its reflection meets them, with a soft glow round them from the chrome's
+sheen; both are twice as strong as the chrome alone would give, an authored
+boost so the neon holds its own against the lamps. Until the rings first fade in there is no pool,
 only the neon on black; the pool comes up with the fade, waves, lamps and
 reflections together. When the rings fade out the lamps go out, but the
 waves stay, seen only by the neon they reflect. (`POOL_DARK_WAVES` at 0 lets

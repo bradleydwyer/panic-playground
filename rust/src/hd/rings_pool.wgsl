@@ -97,6 +97,12 @@ const POOL_SOFTBOX_AT=vec3f(-.50,.62,.60);
 const POOL_ROOM=.10;
 // The neon tubes' height above the level surface, in rows.
 const POOL_NEON_HEIGHT=8.0;
+// How strongly the surface mirrors the neon: the sharp image of the tubes
+// (1 is the chrome's own reflectance; more is authored, so the neon holds
+// its own against the lamps), and the soft glow round it from the chrome's
+// sheen (0 none, 1 the sheen's own share).
+const POOL_NEON_GLINT=2.0;
+const POOL_NEON_GLOW=2.0;
 // How the exposure's samples, each at its own point in the pixel, resolve
 // the neon's reflection: the share of a pixel each antialiases the tubes'
 // image over, and the share of the pixel's spread of normals that still
@@ -222,7 +228,7 @@ fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
     let window=pool_window(s,px.pixel*1.5);
     // Level: a black mirror showing only the neon (and, faintly, the room).
     if pool_amp()<=0.0 || window<=0.0 {
-        return f0*(pool_neon(flat_p,flat_r,px.pixel,POOL_ROUGH*.6)
+        return f0*(pool_neon(flat_p,flat_r,px.pixel,POOL_ROUGH*.6)*POOL_NEON_GLINT
             +pool_room(flat_r,POOL_ROUGH)*pool_power());
     }
     let mid=pool_wave(s,.5*POOL_EXPOSURE,window);
@@ -243,6 +249,11 @@ fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
     let sheen_alpha=max(alpha,POOL_SHEEN.y);
     var c=(cool*pool_lamp_light(mid_n,v,here,pool_lamp(0u,.5*POOL_EXPOSURE),sheen_alpha)
         +warm*pool_lamp_light(mid_n,v,here,pool_lamp(1u,.5*POOL_EXPOSURE),sheen_alpha))*POOL_SHEEN.x*f32(POOL_SHUTTER);
+    // The neon in the sheen too: a soft glow round its sharp reflection.
+    let mid_r=reflect(ray,mid_n);
+    let mid_f=POOL_METAL+(1.0-POOL_METAL)*pow(1.0-max(dot(mid_n,v),0.0),5.0);
+    c+=mid_f*neon_reflection(here,mid_r,POOL_NEON_HEIGHT,sheen_alpha/max(mid_r.z,.05))*ring_peak()
+        *POOL_SHEEN.x*POOL_NEON_GLOW*f32(POOL_SHUTTER);
     for(var i=0;i<POOL_SHUTTER;i++) {
         let t=(f32(i)+.5)/f32(POOL_SHUTTER)*POOL_EXPOSURE;
         // Each sample at its own point in the pixel too (an R2 sequence), so
@@ -257,7 +268,7 @@ fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
         // The neon reflected, blurred by the chrome's roughness and by what
         // is left of the pixel's spread of normals between the samples.
         let neon=pool_neon(p,r,px.pixel*POOL_NEON_SHARP.x,POOL_ROUGH*.6+POOL_NEON_SHARP.y*turn);
-        c+=f*(neon+pool_room(r,alpha)*power);
+        c+=f*(neon*POOL_NEON_GLINT+pool_room(r,alpha)*power);
         let sharp=1.0-POOL_SHEEN.x;
         c+=cool*pool_lamp_light(n,v,p,pool_lamp(0u,t),alpha)*sharp;
         c+=warm*pool_lamp_light(n,v,p,pool_lamp(1u,t),alpha)*sharp;
