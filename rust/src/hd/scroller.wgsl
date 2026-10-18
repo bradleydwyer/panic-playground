@@ -258,9 +258,10 @@ fn on_arc(p:vec3f)->vec2f {
     let rho=length(c);
     return vec2f(rho-r,c.x*r/max(rho,1e-4));
 }
+const BEVEL=.018; // The letters' rounded edge; the faces are flat inside it.
 fn letter_shape(p:vec3f)->f32 {
     let a=on_arc(p);
-    return extrusion(-fields(vec2f(a.y,p.y)).x*ROW,a.x+.075,.12,.018);
+    return extrusion(-fields(vec2f(a.y,p.y)).x*ROW,a.x+.075,.12,BEVEL);
 }
 fn filament_shape(p:vec3f)->f32 {
     // Authored depth fixes the overlay's layering relative to the rows.
@@ -500,6 +501,14 @@ fn reflected(p:vec3f,r:vec3f)->vec3f {
     }
     return env;
 }
+// Light from a bump with normal n, before it is pulled towards the level.
+fn bump_light(n:vec3f,p:vec3f,ray:vec3f,metal:vec3f)->vec3f {
+    let r=reflect(ray,n);
+    let fresnel=metal+(1.0-metal)*pow(1.0-max(dot(n,-ray),0.0),5.0)*.5;
+    let c=fresnel*studio(r,p.x)+wall_glint(p,n,-ray,metal);
+    // Faint occlusion where a bump meets the backing.
+    return c*mix(.55,1.0,smoothstep(.0,.5,n.z));
+}
 // Shading of one wall sample, without the letter reflections.
 fn wall_surface(hit:WallHit,p:vec3f,ray:vec3f)->vec3f {
     let metal=wall_metal(hit.at);
@@ -507,12 +516,7 @@ fn wall_surface(hit:WallHit,p:vec3f,ray:vec3f)->vec3f {
     // towards it, for roughly the original's subtle relief.
     let level=metal*studio(vec3f(0,0,1),p.x);
     if !hit.bump {return level*.45;}
-    let n=hit.n;let r=reflect(ray,n);
-    let fresnel=metal+(1.0-metal)*pow(1.0-max(dot(n,-ray),0.0),5.0)*.5;
-    var c=fresnel*studio(r,p.x)+wall_glint(p,n,-ray,metal);
-    // Faint occlusion where a bump meets the backing.
-    c*=mix(.55,1.0,smoothstep(.0,.5,n.z));
-    return mix(level,c,.6);
+    return mix(level,bump_light(hit.n,p,ray,metal),.6);
 }
 // Soft contact shadow of the letters on the chamber or wall point p: the
 // letters seen straight on (the cached field is indexed by surface x on the
@@ -523,16 +527,21 @@ fn letter_shadow(p:vec3f)->f32 {
     let at=p.xy+vec2f(.045,-.065);
     return smoothstep(-9.0,4.0,letter_field(at))*field_coverage(at)*arrival();
 }
+// How far the letters' soft shadow darkens the bump wall and the chamber, and
+// the same backdrop seen through a letter, lit through that glass (authored).
+const WALL_SHADOW=.7;
+const CHAMBER_SHADOW=.65;
+const GLASS_SHADOW=.25;
 // Overall presence: the strength control, a gentle corner vignette and the
 // letters' shade. No horizontal banding: darkening the text rows, or an
 // ellipse stretched across the wide frame, read as a bright stripe.
-fn wall_presence(p:vec3f)->f32 {
+fn wall_presence(p:vec3f,darken:f32)->f32 {
     let xy=p.xy*(5.5/6.4); // Back to screen units: x in +-aspect, y in +-1.
     let corner=length(vec2f(xy.x/aspect(),xy.y))*.7071;
     let vignette=mix(.6,1.0,1.0-smoothstep(.75,1.05,corner));
     let entrance=smoothstep(-1.7,1.2,u.scroller.y);
     // .58: the calm level the row bands used to give, now applied evenly.
-    return u.backdrop_motion.z*.9*.58*vignette*mix(.55,1.0,entrance)*(1.0-letter_shadow(p)*.7);
+    return u.backdrop_motion.z*.9*.58*vignette*mix(.55,1.0,entrance)*(1.0-letter_shadow(p)*darken);
 }
 fn wall_point(ray:vec3f)->vec3f {return vec3f(0,0,5.5)+ray*(6.4/-ray.z);}
 // Eight samples per pixel spread over a small defocus disc (about a tenth of
@@ -562,21 +571,28 @@ fn wall_pixel(xy:vec2f)->vec3f {
         c+=(reflected(p,r)-studio(r,p.x))*metal*.35;
     }
     wall_shift=vec2f(0);
-    return max(c,vec3f(0))*wall_presence(wall_point(ray));
+    return max(c,vec3f(0))*wall_presence(wall_point(ray),WALL_SHADOW);
 }
-// The wall as seen through the glass letters: no detail at all, just its
-// average tint and level, so the glass doesn't look textured.
+// The wall as seen through the glass letters: never its tile detail, only its
+// light at low frequency, so the glass doesn't look textured. A few bump
+// normals stand in for a tile's spread of them, so the studio and lamp light
+// the wall carries shows through, blurred.
+const SOFT_TILT=array<vec2f,5>(vec2f(0),vec2f(.5,.5),vec2f(-.5,.5),vec2f(.5,-.5),vec2f(-.5,-.5));
 fn wall_soft(ray:vec3f)->vec3f {
     let p=wall_point(ray);
     let metal=wall_metal(vec3f(.5,.5,0));
-    return metal*studio(reflect(ray,vec3f(0,0,1)),p.x)*.8*wall_presence(p);
+    let level=metal*studio(vec3f(0,0,1),p.x);
+    var bumps=vec3f(0);
+    for(var i=0;i<5;i++) {bumps+=bump_light(normalize(vec3f(SOFT_TILT[i],1)),p,ray,metal);}
+    // About a quarter of a tile is the dimmer backing between bumps.
+    return mix(mix(level,bumps*.2,.6),level*.45,.3)*wall_presence(p,GLASS_SHADOW);
 }
 fn ripple(p:vec2f)->f32 {
     let t=clock();
     return sin(p.x*4.0+p.y*2.0-t*.7)*.014
         +sin(length(p-vec2f(.2,-.1))*9.0-t*1.5)*.006;
 }
-fn chamber(ray:vec3f)->vec3f {
+fn chamber(ray:vec3f,darken:f32)->vec3f {
     let p=vec3f(0,0,5.5)+ray*(6.4/-ray.z);
     let e=.012;
     let n=normalize(vec3f((ripple(p.xy-vec2f(e,0))-ripple(p.xy+vec2f(e,0)))/(2.0*e),
@@ -594,7 +610,7 @@ fn chamber(ray:vec3f)->vec3f {
         // the letters on the arc, as on the bump wall.
         // These are analytic approximations, not traced indirect lighting.
         let present=arrival();
-        color*=1.0-letter_shadow(p)*.65;
+        color*=1.0-letter_shadow(p)*darken;
         let reflection_at=p.xy+vec2f(-.035,.12);
         let reflected=halo(letter_field(reflection_at),.20)*field_coverage(reflection_at);
         color+=heat(p.x)*reflected*.022*present;
@@ -607,7 +623,7 @@ fn chamber(ray:vec3f)->vec3f {
 }
 fn backdrop(ray:vec3f)->vec3f {
     if u.backdrop.z>.5 {return wall_soft(ray);}
-    return chamber(ray);
+    return chamber(ray,GLASS_SHADOW);
 }
 fn shadow(p:vec3f,light:vec3f)->f32 {
     let direction=normalize(light-p);var shade=1.0;var t=.035;
@@ -633,6 +649,14 @@ fn lamp(p:vec3f,n:vec3f,v:vec3f,position:vec3f,color:vec3f,f0:vec3f,rough:f32)->
     let spec=d*g*fresnel/max(4.0*nv*nl,.001);
     return (spec+vec3f(.055))*color*nl*shadow(p+n*.008,position);
 }
+// Glass letters (authored): the share of the backdrop's light that passes
+// through, the lamp light a face gathers and lets out in a band just inside
+// its bevel, that band's width (source rows), and the filament's light
+// spreading through the glass as it passes.
+const GLASS_LIGHT=1.6;
+const GLASS_RIM=.08;
+const GLASS_EDGE_ROWS=2.5;
+const FILAMENT_IN_GLASS=.25;
 fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
     let eye=-ray;let energy=musical();
     if material>.5 {
@@ -647,10 +671,13 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
     let rough=mix(.15,.30,smoothstep(.6,.98,face));
     let f0=mix(vec3f(.61,.70,.78),vec3f(.75,.62,.49),warm(p.x)*.3);
     let sweep=clock()*.23*u.scroll_light.y;
+    let key=vec3f(.8,1.3,2.2)*lighting(1.098,.08+energy*.12+bass()*4.0);
+    let warm_lamp=vec3f(2.4,.9,.30)*lighting(1.168,.08+energy*.15+bass()*4.8);
+    let top=vec3f(1.0,1.1,1.2)*lighting(1.0,.08+attack()*1.8);
     var color=f0*lighting(.07,.025);
-    color+=lamp(p,n,eye,vec3f(-2.5,2.1,3.8),vec3f(.8,1.3,2.2)*lighting(1.098,.08+energy*.12+bass()*4.0),f0,rough);
-    color+=lamp(p,n,eye,vec3f(2.5,-1.3,3.2),vec3f(2.4,.9,.30)*lighting(1.168,.08+energy*.15+bass()*4.8),f0,rough);
-    color+=lamp(p,n,eye,vec3f(sin(sweep)*2.0,1.4,3.0),vec3f(1.0,1.1,1.2)*lighting(1.0,.08+attack()*1.8),f0,.36);
+    color+=lamp(p,n,eye,vec3f(-2.5,2.1,3.8),key,f0,rough);
+    color+=lamp(p,n,eye,vec3f(2.5,-1.3,3.2),warm_lamp,f0,rough);
+    color+=lamp(p,n,eye,vec3f(sin(sweep)*2.0,1.4,3.0),top,f0,.36);
     let r=reflect(ray,n);
     let softbox=exp(-pow((r.y-.32)*4.8,2.0));
     let edgebox=exp(-pow((r.x+.6)*11.0,2.0));
@@ -669,21 +696,37 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
     // full multi-bounce trace. The bump wall is fine detail: refract it
     // through the smooth surface, without the brushed grain.
     let seen=backdrop(normalize(ray+select(n,n0,u.backdrop.z>.5)*.085));
-    let transmitted=seen*mix(vec3f(.55,.83,.96),vec3f(.96,.65,.36),warm(p.x));
-    color=mix(transmitted*1.35,color,.065+fresnel*.75);
+    // Lamp light gathered through the face crosses the body, tinted twice by
+    // the long path, and leaves where the glass ends: a band just inside the
+    // bevel, so the crisp bevel line stays dark. The letter's field gives the
+    // distance from the outline in rows. Not traced light transport.
+    let tint=mix(vec3f(.55,.83,.96),vec3f(.96,.65,.36),warm(p.x));
+    let a=on_arc(p);
+    let inset=fields(vec2f(a.y,p.y)).x-BEVEL/ROW;
+    let rim=smoothstep(-.5,.5,inset)*exp(-max(inset,0.0)/GLASS_EDGE_ROWS);
+    let gathered=(key+warm_lamp+top)*tint*tint*rim*GLASS_RIM;
+    let transmitted=seen*tint*GLASS_LIGHT+gathered;
+    color=mix(transmitted,color,.065+fresnel*.75);
     let transmitted_xy=p.xy+n.xy*.025;
     let behind=sine_at(transmitted_xy);
     if filament_z(transmitted_xy)<p.z-.02 {
         color+=heat(p.x)*smoothstep(-.5,.8,behind)*.55;
     }
+    // The filament's light spreads through the glass on either side of it.
+    // Added after the mix, so undamped, it must be gone by 8 rows: from there
+    // the sine field holds a lower bound per blank row, which steps line by
+    // line and would draw stripes across every letter.
+    color+=heat(p.x)*tint*halo(behind,.25)*(1.0-smoothstep(5.0,8.0,abs(behind)))*FILAMENT_IN_GLASS;
     color+=heat(p.x)*pow(1.0-face,2.0)*lighting(.462,.20+energy*.25+bass()*.85+attack()*.7);
     return color;
 }
+// Authored exposure of part 2's whole scene, before the shared tonemap.
+const SCROLLER_EXPOSURE=1.2;
 @fragment fn scroller(v:Vertex)->@location(0) vec4f {
     let xy=(v.uv-.5)*vec2f(2.0*aspect(),-2.0);
     let ray=normalize(vec3f(xy,-5.5));
     var color=vec3f(0);
-    if u.backdrop.z>.5 {color=wall_pixel(xy);} else {color=chamber(ray);}
+    if u.backdrop.z>.5 {color=wall_pixel(xy);} else {color=chamber(ray,CHAMBER_SHADOW);}
     if u.state.x>=8.0 {
         let eye=vec3f(0,0,5.5);var t=5.05/-ray.z;var hit=false;var material=0.0;
         var p=eye+ray*t;
@@ -715,5 +758,5 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
     let mist=noise(xy*3.0+vec2f(clock()*.07,-clock()*.045));
     let edge_haze=smoothstep(.35,1.5,abs(xy.x));
     color+=heat(xy.x)*pow(mist,3.0)*edge_haze*.025*smoothstep(-1.0,1.0,u.scroller.y);
-    return vec4f(color*u.scroller.w,1);
+    return vec4f(color*SCROLLER_EXPOSURE*u.scroller.w,1);
 }

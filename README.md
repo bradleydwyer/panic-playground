@@ -109,9 +109,11 @@ scroller runs off the top and bottom of the screen, passing in front of the
 lower row and behind the upper row, where it remains visible through the glass.
 
 Depth, extrusion, the arc, materials and lighting are authored experiments.
-Glass transmission, reflections, haze and contact shadows are analytic
-approximations, not a full optical simulation. Letters and the sine text
-fade in as part 2 begins, and the scene fades out with its end.
+The glass glows just inside each letter's bevel and, over the bump wall, lets
+through a blurred view of the wall's light behind it. Glass transmission,
+reflections, haze and contact shadows are analytic approximations, not a full
+optical simulation. Letters and the sine text fade in as part 2 begins, and
+the scene fades out with its end.
 
 A ring layout, with one whole ring of letters per row, was tried and
 archived in favour of the rows on their arc. It was removed from the code
