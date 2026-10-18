@@ -26,8 +26,8 @@ pub const NEW_SET_FIRST_WINDOW: usize = 2 * PATTERN_WINDOWS;
 /// centred on the screen's centre; across, a unit is the same length on the
 /// display, so 6/5 as many columns. Authored, to match the originals' size:
 /// their masks are 43 to 157 rows tall, 123 at the median (measured from the
-/// local data), and the drawings span 20 to 99 units, 80 at the median, so
-/// at 155 rows they stand 31 to 153 rows tall, 124 at the median. The
+/// local data), and the drawings span 28 to 98 units, 84 at the median, so
+/// at 155 rows they stand 43 to 152 rows tall, 130 at the median. The
 /// tallest still clears the 4:3 frame by more than a tube's radius (a
 /// default test checks every drawing).
 pub const AUTHORED_BOX: f32 = 155.0;
@@ -258,8 +258,22 @@ fn distance(a: [f32; 2], b: [f32; 2]) -> f32 {
 
 /// The drawn runs as neon tubes; see the rules above.
 fn neon_runs(runs: Vec<Run>) -> Vec<Run> {
-    // Dots stay as drawn; the rest are resampled every STEP rows.
-    let (dots, runs): (Vec<Run>, Vec<Run>) = runs.into_iter().partition(|r| r.points.len() < 2);
+    // Dots stay as drawn (a run under half a row long is a dot, at its
+    // first point: the kit draws a dot as two points a hair apart); the rest
+    // are resampled every STEP rows.
+    let (dots, runs): (Vec<Run>, Vec<Run>) = runs
+        .into_iter()
+        .map(|r| {
+            if r.points.len() > 1 && arc_lengths(&r).last().copied().unwrap_or(0.0) < 0.5 {
+                Run {
+                    points: vec![r.points[0]],
+                    closed: false,
+                }
+            } else {
+                r
+            }
+        })
+        .partition(|r| r.points.len() < 2);
     let mut runs: Vec<Run> = runs.into_iter().map(resample).collect();
     join_ends(&mut runs);
     cut_ends(&mut runs);
@@ -806,10 +820,13 @@ mod tests {
             "open at the bottom"
         );
         assert!(to_tubes(&ring, [140.0, 70.0]) < 0.3, "whole at the top");
-        // A dot stays a dot.
+        // A dot stays a dot, as does a run a hair long, as the kit draws one.
         let dot = neon_runs(rows(&[&[[150.0, 150.0]]]));
         assert_eq!(dot.len(), 1);
         assert_eq!(dot[0].points, [[150.0, 150.0]]);
+        let hair = neon_runs(rows(&[&[[150.0, 150.0], [150.1, 150.0]]]));
+        assert_eq!(hair.len(), 1);
+        assert_eq!(hair[0].points, [[150.0, 150.0]]);
     }
 
     #[test]
@@ -1092,7 +1109,9 @@ mod tests {
     /// How alike each symbol is to the next one the music shows: the
     /// overlap (intersection over union) of their tubes' glass on screen,
     /// for the authored sets and, as a baseline, for the original symbols in
-    /// the same windows. Prints the sets' means and their most alike pairs.
+    /// the same windows. Prints the sets' means and their most alike pairs,
+    /// and checks each set's mean is under 0.15 and every flip under 0.3
+    /// (the originals average about 0.11).
     #[test]
     #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
     fn consecutive_symbols_contrast() {
@@ -1170,6 +1189,14 @@ mod tests {
             );
             let mut alike: Vec<_> = pairs.into_iter().collect();
             alike.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
+            // Each symbol unlike the next: about as the originals are.
+            let worst = alike.first().map_or(0.0, |p| p.1.0);
+            assert!(
+                mean(&new) < 0.15 && worst < 0.3,
+                "set {} too alike: mean {:.2}, worst {worst:.2}",
+                k + 1,
+                mean(&new)
+            );
             for ((a, b), (o, times)) in alike.into_iter().take(4) {
                 println!("    {o:.2}  {} / {} ({times} flips)", label(a), label(b));
             }

@@ -157,11 +157,12 @@ for y in (68, 82):
     for x in (40, 50, 60):
         brick.dot((x, y))
 
-# 1: smartphone: a slim rounded slab in the same place, camera dot, home bar.
+# 1: smartphone: a wide rounded slab, its sides clear of the brick phone's so
+# the flash reads (no shared outline), camera dot and home bar.
 phone = Shape()
-phone.rect((31, 6), (69, 96), r=10)
-phone.dot((50, 16))
-phone.line((43, 86), (57, 86))
+phone.rect((23, 4), (77, 92), r=11)
+phone.dot((50, 14))
+phone.line((43, 82), (57, 82))
 
 # 2: cassette player with its headphones resting above.
 walkman = Shape()
@@ -295,16 +296,22 @@ dollar.arc((50, 61), 11, 270, 510)
 dollar.line((50, 17), (50, 27))
 dollar.line((50, 73), (50, 83))
 
-# 9: the Bitcoin logo: the same coin with its B, two strokes above and below,
-# tilted as the logo is.
+# 9: the Bitcoin sign: its B with two strokes above and below, tilted as the
+# logo is, large and without the coin, so it shares no outline with the coins
+# either side of it in the music.
 btc = Shape()
-btc.circle((50, 50), 44)
 b_pts = [(40, 28), (58, 28)] + _arc_pts((58, 39), 11, 270, 450, 14) + [(40, 50), (60, 50)] \
     + _arc_pts((60, 61), 11, 270, 450, 14) + [(40, 72), (40, 28)]
-btc.poly(_rot(b_pts, (50, 50), 14))
+
+
+def _big(pts, k=1.45):
+    return [(48 + (x - 48) * k, 50 + (y - 50) * k) for x, y in pts]
+
+
+btc.poly(_rot(_big(b_pts), (50, 50), 14))
 for x in (45, 56):
-    btc.poly(_rot([(x, 18), (x, 28)], (50, 50), 14))
-    btc.poly(_rot([(x, 72), (x, 82)], (50, 50), 14))
+    btc.poly(_rot(_big([(x, 18), (x, 28)]), (50, 50), 14))
+    btc.poly(_rot(_big([(x, 72), (x, 82)]), (50, 50), 14))
 
 # 15: the Claude logo: a sunburst of rounded rays of uneven length.
 claude = Shape()

@@ -1,8 +1,12 @@
 """Pattern 7, "AI": the last pattern before the original symbols return (authored).
 
-New line art for the remake, not recovered from the original demo. Each pair
-is a two-frame flip: B is A with one clear change, or what A turns into, and
-is drawn at A's size and place so the change reads.
+New line art for the remake, not recovered from the original demo. Fourteen
+separate pictures of thinking machines and what they stand for: a light bulb,
+a brain, a chat bubble, a gear, a neural network, a crystal ball, a magnifying
+glass, sparkles, a calculator, a padlock, an eye, a voice waveform, a hand
+reaching out and an industrial robot arm. Each is its own subject, drawn with
+its own outline, size and place so that the flips the music plays between
+them read as a change of picture.
 """
 import math
 
@@ -26,32 +30,47 @@ def _bez(p0, p1, p2, p3, n=16):
             for t in [k / n for k in range(n + 1)]]
 
 
-def _xf(pts, at, deg, mirror=False):
-    """Local points turned `deg` degrees and moved so the local origin is `at`.
-    `mirror` flips local x first."""
+def _turn(pts, deg):
+    """Points turned `deg` degrees (clockwise on screen) about the origin."""
     t = math.radians(deg)
-    out = []
-    for x, y in pts:
-        if mirror:
-            x = -x
-        out.append((at[0] + x * math.cos(t) - y * math.sin(t), at[1] + x * math.sin(t) + y * math.cos(t)))
-    return out
+    return [(x * math.cos(t) - y * math.sin(t), x * math.sin(t) + y * math.cos(t)) for x, y in pts]
 
 
-def sparkle(s, c, rx, ry, pinch=0.16):
-    """A four-point star whose sides curve in towards the centre."""
+def _polar(c, r, a):
+    return (c[0] + r * math.cos(math.radians(a)), c[1] + r * math.sin(math.radians(a)))
+
+
+def _trim(pts, length, from_end=False):
+    """The polyline with `length` of it cut off its start (or end)."""
+    if from_end:
+        return _trim(pts[::-1], length)[::-1]
+    for i in range(1, len(pts)):
+        d = math.dist(pts[i - 1], pts[i])
+        if d >= length:
+            f = length / d
+            a, b = pts[i - 1], pts[i]
+            return [(a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f)] + pts[i:]
+        length -= d
+    return pts[-1:]
+
+
+def sparkle(s, c, rx, ry, pinch=0.2, gap=6.5):
+    """A four-point star whose sides curve in towards the centre, as one open
+    tube that starts and ends `gap` apart about the middle of its lower-left
+    side, so the neon's gap sits on a side rather than at a tip."""
     cx, cy = c
     tips = [(cx, cy - ry), (cx + rx, cy), (cx, cy + ry), (cx - rx, cy)]
-    pts = []
-    for i in range(4):
+    loop = []
+    for i in (2, 3, 0, 1):  # from the bottom tip round to it again
         a, b = tips[i], tips[(i + 1) % 4]
         k = (cx + (a[0] + b[0] - 2 * cx) * pinch, cy + (a[1] + b[1] - 2 * cy) * pinch)
-        for j in range(24 if i < 3 else 25):
+        for j in range(24):
             t = j / 24
             u = 1 - t
-            pts.append((u * u * a[0] + 2 * u * t * k[0] + t * t * b[0],
-                        u * u * a[1] + 2 * u * t * k[1] + t * t * b[1]))
-    return s.poly(pts)
+            loop.append((u * u * a[0] + 2 * u * t * k[0] + t * t * b[0],
+                         u * u * a[1] + 2 * u * t * k[1] + t * t * b[1]))
+    ring = loop[12:] + loop[:13]  # from the lower-left side's middle round to it
+    return s.poly(_trim(_trim(ring, gap / 2), gap / 2, from_end=True))
 
 
 def scallop(c, rx, ry, a0, a1, bumps, depth):
@@ -85,16 +104,14 @@ def bubble(x0, y0, x1, y1, r, tail):
 # 0: light bulb: the glass and its neck in one run, closed by the top of the
 # screw base, two more base lines and a few rays.
 bulb = Shape()
-G, GR = (50, 40), 26
-bulb.poly([(39, 74)] + _bez((39, 74), (39, 68), (36, 64), (G[0] + GR * math.cos(math.radians(125)),
-                                                          G[1] + GR * math.sin(math.radians(125))), 6)[1:]
+G, GR = (50, 43), 25
+bulb.poly([(39, 75)] + _bez((39, 75), (39, 69), (36, 66), _polar(G, GR, 125), 6)[1:]
           + _arc_pts(G, GR, 125, 415)[1:]
-          + _bez((G[0] + GR * math.cos(math.radians(55)), G[1] + GR * math.sin(math.radians(55))),
-                 (64, 64), (61, 68), (61, 74), 6)[1:] + [(39, 74)])
-bulb.line((41, 84), (59, 84))
-bulb.line((46, 94), (54, 94))
+          + _bez(_polar(G, GR, 55), (64, 66), (61, 69), (61, 75), 6)[1:] + [(39, 75)])
+bulb.line((41, 85), (59, 85))
+bulb.line((46, 95), (54, 95))
 for a in (180, 225, 270, 315, 0):
-    bulb.line(_arc_pts(G, GR + 10, a, a, 1)[0], _arc_pts(G, GR + 19, a, a, 1)[0])
+    bulb.line(_polar(G, GR + 9, a), _polar(G, GR + 17, a))
 
 # 1: brain, side view facing left: a lobed outline, the cerebellum tucked
 # under the back, the brain stem, and three folds.
@@ -112,58 +129,60 @@ brain.poly(_bez((24, 30), (30, 28), (34, 34), (32, 42), 10))
 chat = Shape()
 chat.poly(bubble(8, 12, 92, 72, 16, (24, 40, (18, 92))))
 
-# 3: the same bubble with three typing dots.
-typing = Shape()
-typing.poly(bubble(8, 12, 92, 72, 16, (24, 40, (18, 92))))
-for x in (31, 50, 69):
-    typing.circle((x, 42), 3)
 
-# 4 and 5: a small neural network, 3 - 3 - 2 nodes, every node joined to
-# every node in the next column. In 5 one path, bottom left to top right,
-# fires: its nodes grow and light at the core, and only its links stay lit.
-NET = [[(12, 20), (12, 50), (12, 80)], [(50, 20), (50, 50), (50, 80)], [(88, 35), (88, 65)]]
-NODE_R = 6.5
-LIT_R = 7.5
-LIT = [(0, 2), (1, 1), (2, 0)]  # the lit path in 5: (column, row)
+# 3: gear: eight tapered teeth round one outline, and the hub hole. A tooth
+# points straight down, so the loop opens on its flat top.
+def _gear(c, root, tip, teeth, root_half, tip_half):
+    pts = []
+    for i in range(teeth):
+        a = 90 + 360 * i / teeth
+        pts += _arc_pts(c, tip, a - tip_half, a + tip_half, 4)
+        pts += _arc_pts(c, root, a + root_half, a + 360 / teeth - root_half, 6)
+    return pts + [pts[0]]
 
 
-def _net(lit=False):
-    s = Shape()
+gear = Shape()
+gear.poly(_gear((50, 50), 32, 45, 8, 12, 8.5))
+gear.circle((50, 50), 13)
 
-    def r(c, k):
-        return LIT_R if lit and (c, k) in LIT else NODE_R
+# 4: neural network, 2 - 3 - 2 nodes. Only the links that don't cross are
+# drawn (each node to its neighbours in the next column), so no link is
+# broken in two; they stop short of the nodes.
+NET = [[(12, 32), (12, 68)], [(50, 14), (50, 50), (50, 86)], [(88, 32), (88, 68)]]
+NET_LINKS = [((0, 0), (1, 0)), ((0, 0), (1, 1)), ((0, 1), (1, 1)), ((0, 1), (1, 2)),
+             ((1, 0), (2, 0)), ((1, 1), (2, 0)), ((1, 1), (2, 1)), ((1, 2), (2, 1))]
+NODE_R = 7.5
+net = Shape()
+for (ca, ia), (cb, ib) in NET_LINKS:
+    a, b = NET[ca][ia], NET[cb][ib]
+    d = math.hypot(b[0] - a[0], b[1] - a[1])
+    ux, uy = (b[0] - a[0]) / d, (b[1] - a[1]) / d
+    gap = NODE_R + 7
+    net.line((a[0] + ux * gap, a[1] + uy * gap), (b[0] - ux * gap, b[1] - uy * gap))
+for col in NET:
+    for p in col:
+        net.circle(p, NODE_R)
 
-    for c in range(2):
-        for i, a in enumerate(NET[c]):
-            for j, b in enumerate(NET[c + 1]):
-                if lit and not ((c, i) in LIT and (c + 1, j) in LIT):
-                    continue
-                d = math.hypot(b[0] - a[0], b[1] - a[1])
-                ux, uy = (b[0] - a[0]) / d, (b[1] - a[1]) / d
-                ra, rb = r(c, i), r(c + 1, j)
-                s.line((a[0] + ux * ra, a[1] + uy * ra), (b[0] - ux * rb, b[1] - uy * rb))
-    for c, col in enumerate(NET):
-        for k, p in enumerate(col):
-            s.circle(p, r(c, k))
-            if lit and (c, k) in LIT:
-                s.dot(p)
-    return s
+# 5: crystal ball on its stand: the ball, a glint and a wisp of mist inside,
+# and a flared stand whose sides stop short of the ball.
+ball = Shape()
+BALL, BALL_R = (50, 38), 32
+ball.circle(BALL, BALL_R)
+ball.arc(BALL, 22, 280, 335)
+ball.poly(_bez((28, 50), (36, 40), (46, 58), (56, 46), 12) + _bez((56, 46), (62, 39), (68, 44), (70, 50), 8)[1:])
+ball.poly([_polar(BALL, BALL_R, 116), (22, 94), (78, 94), _polar(BALL, BALL_R, 64)])
 
-
-net = _net()
-net_lit = _net(lit=True)
-
-# 8: magnifying glass, searching: the lens, a glint and the handle.
+# 8: magnifying glass: the lens, a glint and the handle.
 mag = Shape()
 mag.circle((42, 42), 30)
 mag.arc((42, 42), 19, 195, 255)
 mag.line((63.2, 63.2), (88, 88))
 
-# 9: asking: a round chat bubble in the lens's place, its tail where the
-# handle was, with a four-point sparkle inside.
-ask = Shape()
-ask.poly(_arc_pts((42, 42), 30, 62, 388)[:-1] + [(84, 86)] + [_arc_pts((42, 42), 30, 62, 62, 1)[0]])
-sparkle(ask, (42, 42), 15, 19)
+# 9: sparkles: a big four-point sparkle low on the left and two small ones.
+spark = Shape()
+sparkle(spark, (40, 60), 30, 37, pinch=0.2)
+sparkle(spark, (78, 24), 12, 16, pinch=0.2)
+sparkle(spark, (84, 70), 8, 11, pinch=0.22)
 
 # 10: pocket calculator: body, display and a grid of keys.
 calc = Shape()
@@ -173,115 +192,137 @@ for y in (46, 59, 72, 85):
     for x in (36, 50, 64):
         calc.dot((x, y))
 
-# 11: AI chip: a square package with legs on every side and a small brain
-# outline inside.
-chip = Shape()
-chip.rect((18, 18), (82, 82), r=5)
-for p in (32, 50, 68):
-    chip.line((p, 18), (p, 5))
-    chip.line((p, 82), (p, 95))
-    chip.line((18, p), (5, p))
-    chip.line((82, p), (95, p))
-mini = scallop((50, 50), 19, 15, 160, 380, 4, 0.14)
-chip.poly(mini + _bez(mini[-1], (62, 66), (38, 66), mini[0], 12)[1:])
-chip.line((50, 38), (50, 58))
+# 11: padlock: a wide body, the shackle (its legs stop at the body) and a
+# keyhole, a ring with the slot below it.
+lock = Shape()
+lock.rect((12, 44), (88, 92), r=7)
+lock.poly([(28, 44)] + _arc_pts((50, 30), 22, 180, 360) + [(72, 44)])
+lock.circle((50, 62), 6.5)
+lock.line((50, 68.5), (50, 82))
 
-# 12: an eye: almond lids, iris and pupil.
+# 12: an eye: almond lids, the iris and a dot of a pupil.
 LID_C, LID_R = 64.1, 48.1
-
-
-def _lids(s):
-    a = math.degrees(math.asin(46 / LID_R))
-    s.poly(_arc_pts((50, LID_C), LID_R, 270 - a, 270 + a) + _arc_pts((50, 100 - LID_C), LID_R, 90 - a, 90 + a)[1:])
-    return s
-
-
-eye = _lids(Shape())
+eye = Shape()
+_a = math.degrees(math.asin(46 / LID_R))
+eye.poly(_arc_pts((50, LID_C), LID_R, 270 - _a, 270 + _a) + _arc_pts((50, 100 - LID_C), LID_R, 90 - _a, 90 + _a)[1:])
 eye.circle((50, 50), 23)
-eye.circle((50, 50), 4)
+eye.dot((50, 50))
 
-# 13: the eye as a camera lens: two iris rings and a glint.
-lens = _lids(Shape())
-lens.circle((50, 50), 23)
-lens.circle((50, 50), 12.5)
-lens.dot((48, 48))
-
-# 14 and 15: the reaching hands (hero), after the Creation of Adam. A hand is
-# drawn pointing along local +x, fingertip at the local origin, palm down: the
-# index finger out, the other three fingers curled under it as stacked lobes,
-# and a cuff at the wrist. The robot hand is the same pose made mechanical
-# (square lobes and fingertip, two joints across the finger, a square wrist
-# band) and mirrored, so it reaches in from the right as the human hand
-# reaches up from the left. Both are drawn at 0.94 scale about the centre so
-# the pair fits the box with the fingertips about 12 apart. The human hand in
-# 14 sits where it is in 15, so the robot hand is what the flip adds.
-FR = 5.5           # finger half-width
-FIST = -22         # where the index finger leaves the fist
-WRIST = FIST - 13
-CUFF = 10.5        # cuff and wrist band width
-LOBES = [(FIST, 2 * FR), (FIST - 1, 4 * FR), (FIST - 3, 6 * FR)]
-PALM = LOBES[-1][1] + FR  # bottom of the last lobe
+# 13: voice waveform: a row of bars of a spoken word's loudness, centred on
+# one line.
+wave = Shape()
+for i, h in enumerate((12, 30, 56, 82, 60, 36, 66, 22)):
+    x = 10 + i * 80 / 7
+    wave.line((x, 50 - h / 2), (x, 50 + h / 2))
 
 
-def human_hand():
-    pts = ([(WRIST, -6)] + _bez((WRIST, -6), (WRIST + 3, -11), (WRIST + 8, -11.5), (FIST - 6, -FR), 8)[1:]
-           + [(-FR, -FR)] + _arc_pts((-FR, 0), FR, -90, 90, 10)[1:] + [(FIST, FR)])
-    for c in LOBES:
-        pts += _arc_pts(c, FR, -90, 90, 10)[1:]
-    pts += _bez((LOBES[-1][0], PALM), (FIST - 7, PALM + 1), (WRIST + 6, PALM), (WRIST, PALM - 5), 8)[1:]
-    runs = [pts]
-    runs.append(_rrect(WRIST - CUFF, -10, WRIST, PALM - 3, 3))
-    return runs
+# 14: a hand reaching out, palm open and fingers spread, on its forearm, up
+# towards the top right. Drawn in local units with the wrist at the origin and
+# the fingers up (-y), as one open outline: up the forearm's thumb side, round
+# the thumb and the four fingers, and back down the other side. The fingers
+# fan out from one point so the V between two of them opens wide enough
+# (over 20 degrees) that its sides' tubes stay apart and none is broken.
+def _finger(base_l, base_r, ang, length, tip_w):
+    """A finger from its base edge along `ang` (degrees from up, clockwise),
+    tapering to `tip_w` and rounded at the tip: its outline from base_l to
+    base_r."""
+    t = math.radians(ang)
+    ux, uy = math.sin(t), -math.cos(t)  # along the finger
+    nx, ny = math.cos(t), math.sin(t)  # across it, left to right
+    tc = ((base_l[0] + base_r[0]) / 2 + ux * length, (base_l[1] + base_r[1]) / 2 + uy * length)
+    a0 = math.degrees(math.atan2(-ny, -nx))
+    return [base_l] + _arc_pts(tc, tip_w / 2, a0, a0 + 180, 10) + [base_r]
 
 
-def robot_hand():
-    pts = [(WRIST, -6), (WRIST + 3, -11), (WRIST + 9, -11), (FIST - 6, -FR),
-           (-2, -FR), (0, -FR + 2), (0, FR - 2), (-2, FR), (FIST, FR)]
-    for cx, cy in LOBES:
-        pts += [(cx + FR - 1, cy - FR), (cx + FR, cy - FR + 1), (cx + FR, cy + FR - 1), (cx + FR - 1, cy + FR), (cx, cy + FR)]
-    pts += [(WRIST + 4, PALM), (WRIST, PALM - 6)]
-    runs = [pts]
-    runs += [[(x, -FR), (x, FR)] for x in (-9.5, -20)]  # finger joints
-    runs.append(_rrect(WRIST - CUFF, -8, WRIST, PALM - 5, 0.5))
-    return runs
+def reaching_hand(forearm=40):
+    fan, knuckle, half = (0, 14), 48, 6.4  # fingers radiate from `fan`; bases `half` wide each side
+    fingers = [(-28.5, 31, 10), (-9.5, 34, 10.5), (9.5, 31, 10), (28.5, 23, 9)]  # angle, length, tip width
+    pts = [(-17, forearm), (-17, 4)]
+    thumb = ((-27, -4), (-19, -18))
+    pts += _bez((-17, 4), (-18, 0), (-22, -2), thumb[0], 6)[1:]
+    pts += _finger(*thumb, -66, 25, 10.5)[1:]
+    for i, (ang, length, tip_w) in enumerate(fingers):
+        c = _polar(fan, knuckle - (4 if i == 3 else 0), ang - 90)
+        nx, ny = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+        pts += _finger((c[0] - nx * half, c[1] - ny * half), (c[0] + nx * half, c[1] + ny * half),
+                       ang, length, tip_w)
+    end = pts[-1]
+    pts += _bez(end, (end[0] + 1, end[1] + 10), (18, -4), (18, 4), 6)[1:] + [(18, forearm)]
+    return pts
 
 
-def _rrect(x0, y0, x1, y1, r):
-    pts = []
-    for cx, cy, a in [(x1 - r, y0 + r, -90), (x1 - r, y1 - r, 0), (x0 + r, y1 - r, 90), (x0 + r, y0 + r, 180)]:
-        pts += _arc_pts((cx, cy), r, a, a + 90, 6)
+def _fit(pts, turn, lo=3, hi=97):
+    """Points turned `turn` degrees and scaled to fill lo..hi, centred."""
+    q = _turn(pts, turn)
+    xs, ys = [x for x, _ in q], [y for _, y in q]
+    k = (hi - lo) / max(max(xs) - min(xs), max(ys) - min(ys))
+    cx, cy = (max(xs) + min(xs)) / 2, (max(ys) + min(ys)) / 2
+    return [(50 + (x - cx) * k, 50 + (y - cy) * k) for x, y in q]
+
+
+hand = Shape()
+hand.poly(_fit(reaching_hand(), 35))
+
+
+# 15: industrial robot arm: a base, the lower arm up from the shoulder to the
+# elbow, the upper arm out and down to the wrist, a pin at each joint and a
+# two-jaw gripper under the wrist. Each arm is a rounded link; the upper arm
+# passes behind the lower one, its sides stopping at the lower arm's outline
+# (where the neon rules leave their gap).
+def _seg_dist(q, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    t = max(0, min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / (dx * dx + dy * dy)))
+    return math.hypot(q[0] - a[0] - t * dx, q[1] - a[1] - t * dy)
+
+
+def _link(a, b, r):
+    """A rounded link round the segment a -> b, `r` wide each side, as a loop."""
+    ang = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+    pts = _arc_pts(b, r, ang - 90, ang + 90, 12) + _arc_pts(a, r, ang + 90, ang + 270, 12)
     return pts + [pts[0]]
 
 
-HAND_K = 0.94
-HUMAN_AT, HUMAN_TURN = (44.4, 36.65), -10
-ROBOT_AT, ROBOT_TURN = (56.19, 31.52), 0
+def _link_behind(a, b, r, front, front_r):
+    """A link from a to b, rounded round b, whose sides run back towards a
+    until they meet the outline of the link `front` (a pair of points) of
+    half-width `front_r`."""
+    ang = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+    ux, uy = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+
+    def side(sgn):
+        t = 0.0
+        while True:
+            q = (b[0] - ux * t - sgn * uy * r, b[1] - uy * t + sgn * ux * r)
+            if _seg_dist(q, *front) <= front_r:
+                return q
+            t += 0.25
+
+    return [side(-1)] + _arc_pts(b, r, ang - 90, ang + 90, 12) + [side(1)]
 
 
-def _place(s, runs, at, turn, mirror=False):
-    for r in runs:
-        s.poly([(50 + (x - 50) * HAND_K, 50 + (y - 50) * HAND_K) for x, y in _xf(r, at, turn, mirror)])
-    return s
-
-
-hand = _place(Shape(), human_hand(), HUMAN_AT, HUMAN_TURN)
-touch = _place(Shape(), human_hand(), HUMAN_AT, HUMAN_TURN)
-_place(touch, robot_hand(), ROBOT_AT, ROBOT_TURN, mirror=True)
+arm = Shape()
+SH, EL, WR = (75, 64), (57, 20), (22, 42)
+arm.poly([(60, 94), (64, 82), (86, 82), (90, 94)], closed=True)
+arm.poly(_link(SH, EL, 9))
+arm.poly(_link_behind(EL, WR, 7, (SH, EL), 9))
+for q in (SH, EL, WR):
+    arm.dot(q)
+arm.poly([(18, 80), (9, 70), (13, 58), (31, 58), (35, 70), (26, 80)])
 
 
 SHAPES = {
     0: ("light bulb", bulb),
     1: ("brain", brain),
     2: ("chat bubble", chat),
-    3: ("typing", typing),
+    3: ("gear", gear),
     4: ("neural network", net),
-    5: ("network, path lit", net_lit),
-    8: ("searching", mag),
-    9: ("asking", ask),
+    5: ("crystal ball", ball),
+    8: ("magnifying glass", mag),
+    9: ("sparkles", spark),
     10: ("calculator", calc),
-    11: ("AI chip", chip),
+    11: ("padlock", lock),
     12: ("eye", eye),
-    13: ("camera-lens eye", lens),
+    13: ("voice waveform", wave),
     14: ("reaching hand", hand),
-    15: ("human meets robot", touch),
+    15: ("robot arm", arm),
 }

@@ -86,8 +86,8 @@ tv.poly([(36, 4), (56, 22), (78, 4)])
 
 # 1: YouTube: the bulging rounded rectangle with the play triangle.
 yt = Shape()
-squircle(yt, (50, 52), 44, 31, n=5)
-yt.poly([(41, 38), (41, 66), (65, 52)], closed=True)
+squircle(yt, (50, 52), 38, 27, n=5)
+yt.poly([(42, 40), (42, 64), (63, 52)], closed=True)
 
 # 2: Polaroid instant camera: body, big lens, viewfinder and flash, and a print
 # coming out of the slot, its picture above the wide bottom margin (hero).
@@ -100,11 +100,13 @@ pol.line((72, 20), (83, 20))
 pol.poly([(24, 60), (24, 95), (76, 95), (76, 60)])
 pol.poly([(35, 60), (35, 81), (65, 81), (65, 60)])
 
-# 3: Instagram: rounded square, lens circle, dot top right (hero).
+# 3: Instagram: rounded square, lens circle, dot top right (hero), drawn a
+# little smaller than the boxes the music shows either side of it, so their
+# outlines don't coincide.
 ig = Shape()
-ig.rect((8, 8), (92, 92), r=22)
-ig.circle((50, 50), 19.5)
-ig.dot((73, 27))
+ig.rect((17, 17), (83, 83), r=18)
+ig.circle((50, 50), 15.5)
+ig.dot((68, 32))
 
 # 4: folded newspaper: front page with a headline, a picture and columns, the
 # inner pages folded behind on the left (hero).

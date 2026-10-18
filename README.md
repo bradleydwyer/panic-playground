@@ -178,10 +178,12 @@ what is interpreted and what is authored, and how to add a style.
 In the middle of the part the neon shows new symbols. Each of the seven
 patterns of the tune from 50.79 to 76.64 seconds has its own set of 16
 drawings in place of the original's: water; the elements and alchemy;
-machines of 1992; faces; things of the 1990s and what replaced them; social
-media then and now; and AI. The music still picks which symbol lights and
-when, so each set follows the original's order and pairs, and the original
-symbols play before and after. They are bent into neon signs as the
+machines of 1992; classic emoji; things of the 1990s and what replaced them;
+social media then and now; and AI. Every drawing is a different subject, and
+each looks unlike the one the music shows next, so the flashes keep time as
+the original's do. The music still picks which symbol lights and when, so
+each set follows the original's order and pairs, and the original symbols
+play before and after. They are bent into neon signs as the
 originals are: each tube is a single run, loops open where the tube would
 turn back into the sign, and where strokes meet or cross, one stops short of
 the other with an air gap. The new symbols were drawn for this remake;

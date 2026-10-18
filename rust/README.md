@@ -488,7 +488,7 @@ music's order and pairs are kept:
 | 1 | 64 to 95 | 50.79 s | Water |
 | 2 | 96 to 127 | 54.50 s | The elements and alchemy |
 | 3 | 128 to 159 | 58.16 s | Machines of 1992 |
-| 4 | 160 to 191 | 61.87 s | Faces |
+| 4 | 160 to 191 | 61.87 s | Classic emoji |
 | 5 | 192 to 223 | 65.56 s | Then and now: brick phone to smartphone, and so on |
 | 6 | 224 to 255 | 69.24 s | Social media then and now |
 | 7 | 256 to 287 | 72.93 s | AI |
@@ -517,7 +517,7 @@ implies no affiliation or endorsement.
 The drawings' runs are made into neon tubes directly, in a box 155 rows
 high on the screen's centre (`AUTHORED_BOX`), round on the 4:3 display.
 That stands them about as tall as the originals, whose masks are 43 to 157
-rows tall, 123 at the median; the drawings come to 31 to 153, 124 at the
+rows tall, 123 at the median; the drawings come to 43 to 152, 130 at the
 median, and every one stays inside the 4:3 frame with its tubes' glass,
 which a default test checks. The originals' thinning, tracing and redrawing
 don't apply, but the same neon rules do (authored, after the owner's
@@ -531,16 +531,22 @@ gap either side (a run's later pass, where it crosses itself). A loop opens
 at the middle of its lowest stretch, its new ends that gap apart, or keeps
 half of itself if it is too small for that. A run of one point is a dot.
 What the cuts leave is kept however short, so pins, crossbars and links
-remain as short tubes; only runs too short to keep the gap at both ends can
-go, which happens to the crossbar of the A on the two keys of set 3. The
+remain as short tubes; only a run too short to keep the gap at both ends
+could go, and none of the drawings has one. A run under half a row long is
+a dot, as the drawing kit draws dots. The
 atlas measures the distances to the tubes and their free ends, and the light
 map is made from them, as for the originals; default tests check that no
 loop is left, no glass touches, and nothing longer than two gaps is lost.
 
-How alike each symbol is to the next one the music shows decides how well
-the flashes keep time: the ignored test `consecutive_symbols_contrast`
-prints the overlap of their glass on screen, set by set, against the
-original symbols' (about 0.11 on average).
+Every drawing is a different subject, none repeated across the sets, and
+each looks unlike the one the music shows next: how alike they are decides
+how well the flashes keep time. The ignored test
+`consecutive_symbols_contrast` prints the overlap of their glass on screen
+(intersection over union) for every flip the music plays, set by set,
+against the original symbols', which average about 0.11, and checks that
+each set's mean is under 0.15 and every flip under 0.3. The sets come to
+0.11 to 0.13, the most alike flip to 0.25. The emoji in set 4 are our own
+line drawings of the emoji ideas, not any vendor's emoji artwork.
 
 The neon alone draws them, so their 112 layers keep only the two fields the
 tubes use, the centreline and free-end distances, over their own rectangle,
