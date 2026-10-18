@@ -237,11 +237,12 @@ pub struct ScrollerPreview {
     pub wall_shape: f32,
     /// Authored presence of the bump wall, 0 to 1: its overall brightness.
     pub wall_strength: f32,
-    /// Authored waves across the bump wall, lit by a grazing side light; off
+    /// Authored waves across the bump wall, lit by a grazing side light; on
     /// by default. The original's wall is flat; see
-    /// [`ScrollerPreview::waves_at`].
+    /// [`ScrollerPreview::waves_at`] and [`ScrollerPreview::wave_swing`].
     pub waves: bool,
-    /// The swell's depth, 0.1 (barely visible) to 1 (far too deep).
+    /// The swell's depth, 0.1 (barely visible) to 1 (far too deep): how far
+    /// its height swings each way.
     pub wave_depth: f32,
     /// The side light's strength, and so its shadows', 0 (none) to 1.
     pub wave_light: f32,
@@ -459,7 +460,7 @@ impl Clip {
                     backdrop_style: ScrollerBackdrop::Chrome,
                     wall_shape: 0.5,
                     wall_strength: 0.6,
-                    waves: false,
+                    waves: true,
                     wave_depth: 0.5,
                     wave_light: 0.5,
                     backdrop: walls
@@ -578,6 +579,11 @@ pub fn oscillator_lead_in(start: [[i16; 2]; 2], frames: usize) -> Vec<[[i16; 2];
 
 /// Seconds over which the waves settle before part 2's fade.
 const WAVE_SETTLE: f64 = 1.5;
+/// Authored: seconds for the swell's height to swing from its set depth to
+/// the opposite (crests turning into troughs) and back. About two of the
+/// tune's patterns at their pace in part 6 (06:00 at 43.41 s, 08:00 at
+/// 50.77 s), but not timed to them.
+pub const WAVE_TURN: f64 = 7.36;
 
 /// Authored ease for the wall waves, 0 to 1: in from `reveal`, when the
 /// laser cut starts to open, until `start`, when the text begins; then out
@@ -607,6 +613,15 @@ impl ScrollerPreview {
             seconds(self.end_tick),
         );
         [self.wave_depth * ease, self.wave_light * ease]
+    }
+
+    /// The swell's swing at a clip time, as `u.waves.w` takes it: 1 at the
+    /// set depth, through 0 (flat) to -1 (crests and troughs swapped) and
+    /// back, every [`WAVE_TURN`] seconds from the laser cut's first tick,
+    /// `reveal`. A pure function of the time, like the waves themselves.
+    pub fn wave_swing(&self, time: f64, reveal: usize) -> f32 {
+        let since = time - reveal as f64 / FRAME_RATE as f64;
+        (since * std::f64::consts::TAU / WAVE_TURN).cos() as f32
     }
 }
 
@@ -1377,6 +1392,39 @@ mod tests {
         }
         assert_eq!(scroll.waves_at(6.0, 70), [0.7, 0.3]);
         assert_eq!(scroll.waves_at(0.5, 70), [0.0; 2]);
+    }
+
+    #[test]
+    fn wall_waves_swing_from_their_depth_to_the_opposite_and_back() {
+        let scroll = ScrollerPreview {
+            start_tick: 280,
+            end_tick: 840,
+            lighting: ScrollerLighting::Studio,
+            scroll: Vec::new(),
+            glyphs: ScrollerGlyphs::new(&synthetic_font(), &vec![0; 768]).unwrap(),
+            backdrop_style: ScrollerBackdrop::Chrome,
+            wall_shape: 0.5,
+            wall_strength: 0.6,
+            waves: true,
+            wave_depth: 0.7,
+            wave_light: 0.3,
+            backdrop: Vec::new(),
+            oscillator: Vec::new(),
+        };
+        // From the reveal at tick 70 (1 s): full, flat, turned over, flat,
+        // full again.
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        assert!(close(scroll.wave_swing(1.0, 70), 1.0));
+        assert!(close(scroll.wave_swing(1.0 + WAVE_TURN / 4.0, 70), 0.0));
+        assert!(close(scroll.wave_swing(1.0 + WAVE_TURN / 2.0, 70), -1.0));
+        assert!(close(scroll.wave_swing(1.0 + WAVE_TURN * 0.75, 70), 0.0));
+        assert!(close(scroll.wave_swing(1.0 + WAVE_TURN, 70), 1.0));
+        // Smooth: no step between nearby moments.
+        for step in 0..2000 {
+            let time = step as f64 * 0.01;
+            let d = scroll.wave_swing(time + 0.01, 70) - scroll.wave_swing(time, 70);
+            assert!(d.abs() < 0.01);
+        }
     }
 
     #[test]

@@ -50,7 +50,10 @@ fn world_normal(n:vec3f)->vec3f {return normalize(vec3f(n.x*15.0,-n.y*12.5,n.z*1
 // They are anchored to the screen, and the wall's sway carries the bumps
 // through them. Heights and positions are in tile widths from the screen
 // centre, y up. u.waves.x: the depth, eased in with the reveal, 0 when off;
-// .y: the exposure in seconds; .z: the side light's strength, eased likewise.
+// .y: the exposure in seconds; .z: the side light's strength, eased likewise;
+// .w: the swing, 1 to -1 and back (clip::WAVE_TURN): the height is the depth
+// times the swing, so the crests sink into troughs and rise again. The
+// slow swing's own rate of change is left out of the waves' rate.
 // At depth 1 (far too deep) a swell 2.6 tile widths high, about 15 tiles from
 // crest to crest, rolls to the right every 5.5 seconds; a slow one, 32 tiles
 // long, varies it along its crests. The default depth is 0.5.
@@ -64,7 +67,7 @@ struct Wave { h:f32, slope:vec2f, rate:f32 }
 // One long-crested travelling wave.
 fn swell(m:vec2f,t:f32,w:vec4f)->Wave {
     let phase=dot(w.xy,m)-w.z*t;
-    let a=w.w*u.waves.x;
+    let a=w.w*u.waves.x*u.waves.w;
     let c=a*cos(phase);
     return Wave(a*sin(phase),w.xy*c,-w.z*c);
 }
@@ -78,7 +81,7 @@ fn wave_field(m:vec2f,lag:f32)->Wave {
 fn wave_height(m:vec2f,lag:f32)->f32 {
     let t=u.screen.z-lag;
     let phase=vec2f(dot(SWELL.xy,m)-SWELL.z*t,dot(DRIFT.xy,m)-DRIFT.z*t);
-    return (SWELL.w*sin(phase.x)+DRIFT.w*sin(phase.y))*u.waves.x;
+    return (SWELL.w*sin(phase.x)+DRIFT.w*sin(phase.y))*u.waves.x*u.waves.w;
 }
 // The waves at this pixel, found once at the middle of its exposure
 // (find_waves): the field at wave_m, its world normal there and how much of
