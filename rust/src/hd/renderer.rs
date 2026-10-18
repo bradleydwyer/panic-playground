@@ -1,4 +1,6 @@
 use super::clip::{Clip, HEIGHT, ScrollerLighting, ScrollerPreview, WIDTH, plate_transform};
+use super::field::{FRAME_TAKES_PART6_FADE, FieldBlock, FieldPreview, PART5_PHASE};
+use super::field_render::FieldRenderer;
 use super::modern::Modern;
 use super::rings::{PART6_PHASE, RingsPreview, RingsStyle};
 use super::rings_render::RingsRenderer;
@@ -61,12 +63,54 @@ struct Uniforms {
     neon_map: [f32; 4],
     /// Spare values for the selected part-6 style (`StyleInfo::controls`).
     rings_style: [[f32; 4]; 4],
+    /// Part 5 (`field::FieldPreview::controls`); all zero before it.
+    field: FieldBlock,
 }
 
 /// The only WGSL declaration of [`Uniforms`] and its binding. [`wgsl`]
 /// prepends it to every shader module, so no module can declare a stale or
 /// partial copy that silently shifts later fields.
 const CONTROLS_WGSL: &str = "\
+// Part 5's share of the controls (hd/field.rs, FieldBlock), in u.field and
+// in each fluid step's own block.
+struct FieldBlock {
+    // Shown (1), seconds since part 5 began (negative before), phase (0
+    // zoom, 1 terrain), part-5 frame (continuous).
+    part: vec4f,
+    // Zoom scale in the shown buffer's pixels per window pixel (below 1 while
+    // the next level is due), 1 when the next frame swaps, level (log2 of
+    // the magnification since the first zoom frame), the shown buffer's swaps.
+    zoom: vec4f,
+    // Speed / 1024, rows of the next level built, running, shown.
+    zoom_state: vec4f,
+    // Camera: map x and y, height, angle (1024ths of a turn, unwrapped).
+    camera: vec4f,
+    // Sine and cosine of the angle (amplitude 256), orbit radius, distance
+    // from the map centre.
+    view: vec4f,
+    // Terrain level, projection q (0 flat to 248), terrain frame, terrain.
+    mountain: vec4f,
+    // Window cleared, seconds since, PSTART level, terrain pixels shown.
+    window: vec4f,
+    // Mandelbrot fit: c at map (100, 100), map units per unit of c along map
+    // x, aspect; base, slope, plateau IoU, slopes' rms.
+    mandel: vec4f,
+    mandel_fit: vec4f,
+    // Relief: texels a side, map units a texel, highest height, plateau DEP.
+    relief: vec4f,
+    // Part-5 seconds: full speed, braking, terrain, cleared; risen, sinking,
+    // last terrain pixel, end.
+    events: vec4f,
+    events_late: vec4f,
+    // Fluid: steps done, fraction to the latest, seconds a step, seconds
+    // since its start; the source rectangle its grid covers.
+    fluid: vec4f,
+    fluid_region: vec4f,
+    // Spare values from each author's controls hook.
+    frame_style: array<vec4f,4>,
+    zoom_style: array<vec4f,4>,
+    mountain_style: array<vec4f,4>,
+}
 struct Controls {
     screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode
     state: vec4f,  // reference phase, sequence frame, door, temporal shape interpolation
@@ -128,6 +172,8 @@ struct Controls {
     neon_map: vec4f,
     // Spare values for the selected style, from its StyleInfo::controls.
     rings_style: array<vec4f,4>,
+    // Part 5 (Field), all zero before it; field_common.wgsl reads it.
+    field: FieldBlock,
 }
 @group(0) @binding(0) var<uniform> u: Controls;
 ";
@@ -214,6 +260,9 @@ pub struct Renderer {
     rings: Option<RingsRenderer>,
     part6: bool,
     rings_style: RingsStyle,
+    /// Part 5's, likewise, and whether the prepared moment is drawn by it.
+    field: Option<FieldRenderer>,
+    part5: bool,
 }
 
 impl Renderer {
@@ -471,6 +520,8 @@ impl Renderer {
                 rings: None,
                 part6: false,
                 rings_style: RingsStyle::Pool,
+                field: None,
+                part5: false,
             },
             format,
         ))
@@ -487,6 +538,31 @@ impl Renderer {
         self.hud_visible = hud.is_some();
         self.modern_view = modern;
         self.part6 = false;
+        self.part5 = false;
+        if let Some(field) = &clip.field {
+            if self.field.as_ref().is_none_or(|r| !r.holds(field)) {
+                self.field = Some(FieldRenderer::new(
+                    &self.device,
+                    &self.queue,
+                    &self.uniform,
+                    &self.reference,
+                    self.output_format,
+                    field,
+                ));
+            }
+            // Part 6's PSTART fade, when the frame author's modern view
+            // takes it over (field::FRAME_TAKES_PART6_FADE).
+            let fade = FRAME_TAKES_PART6_FADE
+                && modern
+                && clip.rings.as_ref().is_some_and(|r| {
+                    r.frame_at(time)
+                        .is_some_and(|j| r.frames[j].state.phase == 2)
+                });
+            if field.frame_at(time).is_some() || fade {
+                self.prepare_field(clip, field, view);
+                return;
+            }
+        }
         if let Some(rings) = &clip.rings {
             if self.rings.as_ref().is_none_or(|r| !r.holds(rings)) {
                 self.rings = Some(RingsRenderer::new(
@@ -807,6 +883,79 @@ impl Renderer {
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
     }
 
+    /// Part 5: the shared controls for this moment, its palette and zoom
+    /// buffers, the fluid brought to this moment, and the original frame
+    /// when a comparison shows it, replayed on demand
+    /// ([`FieldPreview::original`]).
+    fn prepare_field(&mut self, clip: &Clip, field: &FieldPreview, view: View) {
+        let View {
+            time,
+            size,
+            comparison,
+            modern,
+            hud: _,
+        } = view;
+        self.part5 = true;
+        self.glyphs_active = false;
+        self.scroller = false;
+        self.tile_transition = false;
+        let j = field.frame_at(time).unwrap_or(0);
+        let renderer = self.field.as_mut().unwrap();
+        if modern {
+            self.modern_renderer
+                .resize(&self.device, &self.uniform, &self.reference, size);
+            renderer.resize(&self.device, size);
+        }
+        renderer.update(&self.queue, field, j);
+        // Before part 5, when its view draws part 6's fade, the original is
+        // part 6's frame.
+        let before = clip
+            .rings
+            .as_ref()
+            .filter(|_| field.frame_at(time).is_none())
+            .and_then(|r| Some((r, r.frame_at(time)?)));
+        let index = before.map_or(field.start + j, |(r, k)| r.start + k);
+        if comparison != 0 && self.reference_index != Some(index) {
+            let original = match before {
+                Some((rings, k)) => rings.original_rgba(k),
+                None => field.original_rgba(j),
+            };
+            self.queue.write_texture(
+                self.reference.as_image_copy(),
+                &original,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(WIDTH as u32 * 4),
+                    rows_per_image: Some(HEIGHT as u32),
+                },
+                wgpu::Extent3d {
+                    width: WIDTH as u32,
+                    height: HEIGHT as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+            self.reference_index = Some(index);
+        }
+        let mut block = field.controls(time);
+        if modern {
+            block.fluid = renderer.advance_fluid(&self.device, &self.queue, field, time);
+        }
+        let audio = clip.audio_at(time);
+        let mut u = Uniforms::zeroed();
+        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
+        u.state = [PART5_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
+        u.misc = [
+            4.0 / 3.0,
+            if self.srgb { 1.0 } else { 0.0 },
+            clip.logo_at as f32,
+            if modern { 1.0 } else { 0.0 },
+        ];
+        u.audio = audio.intro;
+        u.field = block;
+        self.queue
+            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+    }
+
     /// Upload a scroller clip's glyph atlas and tables once, on first use.
     fn upload_glyphs(&mut self, scroll: &ScrollerPreview) {
         let glyphs = &scroll.glyphs;
@@ -877,6 +1026,16 @@ impl Renderer {
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        if let (true, Some(field)) = (self.part5, &self.field) {
+            if self.modern_view {
+                field.draw_style(encoder, self.modern_renderer.hdr_target());
+                self.modern_renderer.post(encoder, view);
+            } else {
+                field.draw_faithful(encoder, view);
+            }
+            self.draw_hud(encoder, view);
+            return;
+        }
         if let (true, Some(rings)) = (self.part6, &self.rings) {
             if self.modern_view {
                 rings.draw_style(encoder, self.modern_renderer.hdr_target(), self.rings_style);
@@ -1263,6 +1422,14 @@ mod tests {
                 super::super::rings_render::style_source(style.info()),
             ));
         }
+        modules.push((
+            "part 5 faithful HD".into(),
+            super::super::field_render::faithful_source(),
+        ));
+        modules.push((
+            "part 5 modern".into(),
+            super::super::field_render::style_source(),
+        ));
         modules
     }
 
@@ -1293,6 +1460,12 @@ mod tests {
             "rings_style.wgsl",
             "rings_faithful.wgsl",
             "rings_pool.wgsl",
+            "field_common.wgsl",
+            "field_style.wgsl",
+            "field_faithful.wgsl",
+            "field_frame.wgsl",
+            "field_zoom.wgsl",
+            "field_mountain.wgsl",
         ] {
             assert!(
                 files.iter().any(|f| f.0 == expected),
@@ -1368,6 +1541,208 @@ mod tests {
         );
     }
 
+    /// Parse and validate one module.
+    fn validated(name: &str, source: &str) -> (naga::Module, naga::valid::ModuleInfo) {
+        let module = naga::front::wgsl::parse_str(source)
+            .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
+        (module, info)
+    }
+
+    /// Member names and offsets of a struct type in a module.
+    fn wgsl_members(module: &naga::Module, name: &str) -> (Vec<(String, usize)>, usize) {
+        let (_, ty) = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("no {name}"));
+        let naga::TypeInner::Struct { members, span } = &ty.inner else {
+            panic!("{name} is not a struct");
+        };
+        let members = members
+            .iter()
+            .map(|m| (m.name.clone().unwrap(), m.offset as usize))
+            .collect();
+        (members, *span as usize)
+    }
+
+    #[test]
+    fn part5_block_matches_its_wgsl_declaration() {
+        use super::super::field_render::FluidStep;
+        macro_rules! fields {
+            ($($field:ident),* $(,)?) => {
+                vec![$((stringify!($field).to_owned(), offset_of!(FieldBlock, $field))),*]
+            };
+        }
+        let expected = fields![
+            part,
+            zoom,
+            zoom_state,
+            camera,
+            view,
+            mountain,
+            window,
+            mandel,
+            mandel_fit,
+            relief,
+            events,
+            events_late,
+            fluid,
+            fluid_region,
+            frame_style,
+            zoom_style,
+            mountain_style,
+        ];
+        assert_eq!(
+            expected.last().unwrap().1 + size_of::<[[f32; 4]; 4]>(),
+            size_of::<FieldBlock>()
+        );
+        let (module, _) = validated("part 5 modern", &super::super::field_render::style_source());
+        let (members, span) = wgsl_members(&module, "FieldBlock");
+        assert_eq!(members, expected);
+        assert_eq!(span, size_of::<FieldBlock>());
+        let (step, span) = wgsl_members(&module, "FluidStep");
+        assert_eq!(
+            step,
+            [
+                ("block".to_owned(), offset_of!(FluidStep, block)),
+                ("step".to_owned(), offset_of!(FluidStep, step))
+            ]
+        );
+        assert_eq!(span, size_of::<FluidStep>());
+        assert!(
+            size_of::<FluidStep>() <= 512,
+            "a fluid step's controls fit their slot"
+        );
+    }
+
+    /// The constants the part-5 shaders repeat from hd/field.rs and clip.rs.
+    #[test]
+    fn part5_shaders_repeat_the_rust_constants() {
+        use super::super::field::{
+            BAILOUT, CLEAR_INDEX, COARSE_CELL, FIELD_WINDOW, MAP_SIZE, POTENTIAL_ITERATIONS,
+            SET_ITERATIONS,
+        };
+        let common = include_str!("field_common.wgsl");
+        let [x0, y0, x1, y1] = FIELD_WINDOW;
+        for constant in [
+            format!("const FIELD_WINDOW=vec4f({x0},{y0},{x1},{y1});"),
+            format!("const CLEAR_INDEX={CLEAR_INDEX};"),
+            format!("const MAP_SIZE={MAP_SIZE}.0;"),
+            format!("const COARSE_CELL={COARSE_CELL}.0;"),
+            format!("const SET_ITERATIONS={SET_ITERATIONS};"),
+            format!("const POTENTIAL_ITERATIONS={POTENTIAL_ITERATIONS};"),
+            format!("const BAILOUT={BAILOUT:e};"),
+            "const COLUMN=5.0/6.0;".to_owned(),
+        ] {
+            assert!(
+                common.contains(&constant),
+                "field_common.wgsl lacks {constant}"
+            );
+        }
+    }
+
+    /// Each part-5 entry point uses only the bindings its pipeline layout
+    /// gives it (field_render.rs): faithful HD group 0; the modern view and
+    /// the prepasses group 0 and the fluid's latest and previous states; the
+    /// fluid step group 0, the state before it, its controls and its output.
+    /// An author's helper that reaches for the wrong one fails here, not on
+    /// the GPU.
+    #[test]
+    fn part5_entry_points_use_only_their_bindings() {
+        let drawn = [1, 2];
+        let step = [1, 3, 4];
+        for (name, source) in [
+            (
+                "part 5 faithful HD",
+                super::super::field_render::faithful_source(),
+            ),
+            ("part 5 modern", super::super::field_render::style_source()),
+        ] {
+            let (module, info) = validated(name, &source);
+            for (index, entry) in module.entry_points.iter().enumerate() {
+                let allowed: &[u32] = match entry.name.as_str() {
+                    "fullscreen" | "faithful" => &[],
+                    "field_fluid" => &step,
+                    n if n.starts_with("field_") => &drawn,
+                    n => panic!("unexpected entry point {n}"),
+                };
+                let uses = info.get_entry_point(index);
+                for (handle, global) in module.global_variables.iter() {
+                    let (Some(binding), false) = (&global.binding, uses[handle].is_empty()) else {
+                        continue;
+                    };
+                    assert!(
+                        binding.group == 0
+                            || (binding.group == 1 && allowed.contains(&binding.binding)),
+                        "{name}: {} uses {:?} (group {}, binding {})",
+                        entry.name,
+                        global.name,
+                        binding.group,
+                        binding.binding
+                    );
+                }
+            }
+        }
+    }
+
+    /// The fluid hook reaches the same state whether the clip plays on,
+    /// seeks back to a kept state or starts afresh at a moment, as video
+    /// export does: each moment's latest state and the one before match a
+    /// new renderer's byte for byte, and the stand-in's step counter shows
+    /// the steps the moment needs.
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
+    fn part5_fluid_is_the_same_however_it_is_reached() {
+        use super::super::field::{FLUID, FluidStart};
+        let data = crate::test_support::data();
+        let clip = Clip::load_field(&data, ScrollerLighting::Studio).unwrap();
+        let field = clip.field.as_ref().unwrap();
+        let start = match FLUID.start {
+            FluidStart::Part5 => field.seconds(0),
+            FluidStart::PictureFade => field.picture_fade.unwrap(),
+        };
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let renderer = || {
+            pollster::block_on(Renderer::new(&instance, None))
+                .unwrap()
+                .0
+        };
+        let read = |r: &mut Renderer, time: f64| {
+            r.prepare(
+                &clip,
+                View {
+                    time,
+                    size: (320, 200),
+                    comparison: 0,
+                    modern: true,
+                    hud: None,
+                },
+            );
+            r.field.as_ref().unwrap().read_fluid(&r.device, &r.queue)
+        };
+        let w = |bytes: &[u8]| half::f16::from_le_bytes([bytes[6], bytes[7]]).to_f32();
+        let mut playing = renderer();
+        let end = field.seconds(field.frames.len());
+        for offset in [0.5, 5.0, 30.0, 3.0, 4.0, 47.0, 20.0, 0.01, 47.5] {
+            let time = (start + offset).min(end);
+            let states = read(&mut playing, time);
+            assert!(states == read(&mut renderer(), time), "fluid at {time}");
+            let steps = ((time - start) * FLUID.rate).floor() as usize + 1;
+            for (k, state) in states.iter().enumerate() {
+                let want = ((steps - k) % 1000) as f32;
+                for texel in state.chunks(8) {
+                    assert_eq!(w(texel), want, "step counter at {time}");
+                }
+            }
+        }
+    }
+
     /// Rust field names and byte offsets, in declaration order.
     fn rust_fields() -> Vec<(&'static str, usize)> {
         macro_rules! fields {
@@ -1406,9 +1781,10 @@ mod tests {
             authored_atlas,
             neon_map,
             rings_style,
+            field,
         ];
         // A field missing from this list leaves bytes unaccounted for.
-        let last = size_of::<[[f32; 4]; 4]>();
+        let last = size_of::<FieldBlock>();
         assert_eq!(fields.last().unwrap().1 + last, size_of::<Uniforms>());
         fields
     }

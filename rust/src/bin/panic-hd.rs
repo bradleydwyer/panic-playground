@@ -33,6 +33,8 @@ struct Options {
     scroller: bool,
     /// Continue through part 6 (Rings) to part 5's first frame.
     rings: bool,
+    /// Continue through part 5 (Field) to part 3's first frame.
+    field: bool,
     /// Part 6's original symbols throughout, instead of the authored sets
     /// in its middle (N).
     original_symbols: bool,
@@ -47,6 +49,9 @@ struct Options {
     fps: bool,
     vsync: bool,
     seconds: Option<f64>,
+    /// Headless: draw this many frames from the seek time, at 60 a second,
+    /// and print the time each took.
+    bench: Option<usize>,
 }
 impl Options {
     fn parse() -> Result<Self, String> {
@@ -67,6 +72,7 @@ impl Options {
             transition: false,
             scroller: false,
             rings: false,
+            field: false,
             original_symbols: false,
             scroller_lighting: ScrollerLighting::Studio,
             scroller_backdrop: ScrollerBackdrop::Chrome,
@@ -78,6 +84,7 @@ impl Options {
             fps: false,
             vsync: true,
             seconds: None,
+            bench: None,
         };
         let mut args = std::env::args().skip(1).peekable();
         while let Some(arg) = args.next() {
@@ -140,6 +147,24 @@ impl Options {
                     o.rings = true;
                     o.scroller = true;
                     o.modern = true;
+                }
+                // Part 5 follows part 6.
+                "--field" => {
+                    o.field = true;
+                    o.rings = true;
+                    o.scroller = true;
+                    o.modern = true;
+                }
+                "--bench" => {
+                    o.bench = Some(
+                        args.next()
+                            .ok_or("--bench needs a number of frames")?
+                            .parse()
+                            .ok()
+                            .filter(|&n: &usize| n > 0)
+                            .ok_or("Use --bench with a number of frames")?,
+                    );
+                    o.headless = true;
                 }
                 "--original-symbols" => {
                     o.original_symbols = true;
@@ -226,7 +251,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings), as a liquid-chrome pool, to part 5's first frame\n  --original-symbols  Part 6 with the original symbols throughout, not the new sets in its middle\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: step 1s, hold to scrub · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light · N: part 6's new or original symbols\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings), as a liquid-chrome pool, to part 5's first frame\n  --field          Continue through part 5 (Field), the zoom and the mountain, to part 3's first frame\n  --original-symbols  Part 6 with the original symbols throughout, not the new sets in its middle\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --bench N        Headless: draw N frames from --seek at 60 a second and print the time each takes\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: step 1s, hold to scrub · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light · N: part 6's new or original symbols\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6, --field through part 5."
                     );
                     std::process::exit(0);
                 }
@@ -299,7 +324,9 @@ fn run() -> Result<(), String> {
     let started = Instant::now();
     let data = Data::new(&o.data)?;
     let mut clip = if o.scroller {
-        let mut clip = if o.rings {
+        let mut clip = if o.field {
+            Clip::load_field(&data, o.scroller_lighting)?
+        } else if o.rings {
             Clip::load_rings(&data, o.scroller_lighting)?
         } else {
             Clip::load_scroller(&data, o.scroller_lighting)?
@@ -332,6 +359,60 @@ fn run() -> Result<(), String> {
         started.elapsed().as_secs_f32()
     );
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    if let (true, Some(frames)) = (o.headless, o.bench) {
+        let (mut renderer, format) = pollster::block_on(Renderer::new(&instance, None))?;
+        let view = |time| View {
+            time,
+            size: o.size,
+            comparison: o.comparison,
+            modern: o.modern,
+            hud: None,
+        };
+        let target = renderer.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Benchmark target"),
+            size: wgpu::Extent3d {
+                width: o.size.0,
+                height: o.size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let target = target.create_view(&Default::default());
+        let mut draw = |time: f64| -> Result<f64, String> {
+            let begun = Instant::now();
+            renderer.prepare(&clip, view(time));
+            let mut encoder = renderer.device.create_command_encoder(&Default::default());
+            renderer.draw(&mut encoder, &target);
+            renderer.queue.submit([encoder.finish()]);
+            renderer
+                .device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map_err(|e| e.to_string())?;
+            Ok(begun.elapsed().as_secs_f64() * 1000.0)
+        };
+        // The first frame builds the pipelines and catches up any replay.
+        let first = draw(o.seek)?;
+        let mut times: Vec<f64> = (1..=frames)
+            .map(|k| draw((o.seek + k as f64 / 60.0).min(clip.duration())))
+            .collect::<Result<_, _>>()?;
+        times.sort_by(f64::total_cmp);
+        println!(
+            "{frames} frames of {} × {} from {:.3}s: {:.2} ms a frame (median {:.2}, \
+             slowest {:.2}; first {first:.1}), prepare and draw, waiting for the GPU",
+            o.size.0,
+            o.size.1,
+            o.seek,
+            times.iter().sum::<f64>() / frames as f64,
+            times[frames / 2],
+            times[frames - 1],
+        );
+        return Ok(());
+    }
     if o.headless {
         let (mut renderer, format) = pollster::block_on(Renderer::new(&instance, None))?;
         renderer.capture(
@@ -666,11 +747,15 @@ fn run() -> Result<(), String> {
                     }
                 }
             };
-            // Part 6 shows its style; the scroller's settings before it.
+            // Part 5 and part 6 show their own; the scroller's settings
+            // before them.
+            let part5 = clip
+                .field_frame(time)
+                .map(|_| " · part 5 (Field)".to_owned());
             let style = clip
                 .rings
                 .as_ref()
-                .filter(|_| clip.rings_frame(time).is_some())
+                .filter(|_| part5.is_none() && clip.rings_frame(time).is_some())
                 .map(|r| {
                     let symbols = match r.symbol_set_at(time) {
                         Some(title) => format!(" · symbols: {title}"),
@@ -679,7 +764,7 @@ fn run() -> Result<(), String> {
                     };
                     format!(" · style {}{symbols}", r.style.name())
                 });
-            let preset = style.or_else(|| {
+            let preset = part5.or(style).or_else(|| {
                 clip.scroller.as_ref().map(|s| {
                     format!(
                         " · {:?} · {:?} {:.1}/{:.1} · waves {} {:.1}/{:.1}",

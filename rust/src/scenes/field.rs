@@ -212,6 +212,9 @@ fn ray(
     }
 }
 
+// Clone lets the HD preview keep checkpoints and replay reference frames on
+// demand; nothing in the scene depends on it.
+#[derive(Clone)]
 pub struct Field {
     source: Vec<u8>,
     destination: Vec<u8>,
@@ -236,7 +239,115 @@ pub struct Field {
     previous_music: u16,
     cleared: bool,
     done: bool,
+    /// The camera the latest terrain step drew with, for the HD preview.
+    #[cfg(feature = "hires")]
+    hd_camera: [i32; 5],
 }
+
+/// What part 5's current scanout shows, for the HD preview, read from the
+/// scene's counters rather than the pixels. See [`Field::hd_state`].
+#[cfg(feature = "hires")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HdField {
+    /// Whether the terrain has begun (`terrain`); before, the zoom runs.
+    pub terrain: bool,
+    /// Zoom steps so far (`frame`).
+    pub frame: usize,
+    /// The zoom scale the latest zoom step drew with, in 16.16 fixed point:
+    /// one window pixel spans `scale / 65536` buffer pixels, 1 to under 2.
+    /// A step that swaps the buffers draws with the scale after the swap,
+    /// then lowers it again by the speed; this is the scale it drew with.
+    pub scale: i32,
+    /// The zoom speed, subtracted from the scale each step (`speed`).
+    pub speed: i32,
+    /// The latest zoom step swapped the buffers: it drew the new level as
+    /// `expand` built it, and `perturb` changed its centre after drawing.
+    pub swapped: bool,
+    /// Rows of the next level `expand` has built, 0 to 100 (`next_row`).
+    pub next_row: usize,
+    /// Terrain steps so far (`terrain_frame`).
+    pub terrain_frame: usize,
+    /// The terrain level (`level`): 0 to 64 as it rises, falling as it sinks.
+    pub level: i32,
+    /// The `q` the projection table was last built with, 0 to 248:
+    /// `projection[z] = q * 256 / z + 512 - 2 q`, read back from the table as
+    /// `512 - projection[256]`. `None` before the first terrain step.
+    pub projection: Option<i32>,
+    /// The latest terrain step's camera: map x and y, height, and the sine
+    /// and cosine of its angle (amplitude 256).
+    pub camera: [i32; 5],
+    /// The window has been cleared to colour 129 behind the terrain.
+    pub cleared: bool,
+    /// The scene has reported done.
+    pub done: bool,
+}
+
+impl Field {
+    /// Read-only state of the current scanout for the HD preview.
+    #[cfg(feature = "hires")]
+    pub fn hd_state(&self) -> HdField {
+        let swapped = !self.terrain && self.frame > 0 && self.next_row == 0;
+        HdField {
+            terrain: self.terrain,
+            frame: self.frame,
+            scale: if swapped {
+                self.scale + self.speed
+            } else {
+                self.scale
+            },
+            speed: self.speed,
+            swapped,
+            next_row: self.next_row,
+            terrain_frame: self.terrain_frame,
+            level: self.level,
+            projection: (self.terrain_frame > 0).then(|| 512 - self.projection[256]),
+            camera: self.hd_camera,
+            cleared: self.cleared,
+            done: self.done,
+        }
+    }
+
+    /// The zoom's two field buffers, 256 bytes a row: the level being shown
+    /// (`source`) and the next, which `expand` builds two rows a step
+    /// (`destination`). Each is a 64 KB segment; the zoom reads rows 0 to
+    /// 199.
+    #[cfg(feature = "hires")]
+    pub fn hd_buffers(&self) -> [&[u8]; 2] {
+        [&self.source, &self.destination]
+    }
+
+    /// The terrain's colours and heights as `prepare` leaves them, 256 bytes
+    /// a row: row `x`, column `y` is map point `(x, y)`, 200 by 200.
+    #[cfg(feature = "hires")]
+    pub fn hd_terrain(&self) -> [&[u8]; 2] {
+        [&self.colors, &self.heights]
+    }
+
+    /// The 320 x 200 picture the window and terrain are drawn into.
+    #[cfg(feature = "hires")]
+    pub fn hd_video(&self) -> &[u8] {
+        &self.video[..64000]
+    }
+
+    /// The scene's 1024-entry sine table (amplitude 256).
+    #[cfg(feature = "hires")]
+    pub fn hd_sine(&self) -> &[i32] {
+        &self.sine
+    }
+
+    /// The 128 x 100 window `zoom` draws from a field buffer at a 16.16
+    /// scale, for checking the HD preview's reading of the zoom.
+    #[cfg(feature = "hires")]
+    pub fn hd_window(buffer: &[u8], scale: i32) -> Vec<u8> {
+        let source = segment(buffer.to_vec());
+        let mut output = vec![0; 65536];
+        zoom(&source, &mut output, scale as u16, (scale >> 16) as u16);
+        (0..100)
+            .flat_map(|y| output[0x39e0 + y * 320..][..128].to_vec())
+            .collect()
+    }
+}
+
 impl Field {
     pub fn new(data: &Data, vga: &mut Vga) -> Result<Self, String> {
         let memory = data.memory(5)?;
@@ -288,6 +399,8 @@ impl Field {
             previous_music: 0,
             cleared: false,
             done: false,
+            #[cfg(feature = "hires")]
+            hd_camera: [0; 5],
         })
     }
     pub fn step(&mut self, vga: &mut Vga, music: u16) -> bool {
@@ -415,6 +528,10 @@ impl Field {
             self.sine[angle],
             self.sine[(angle + 256) & 1023],
         ];
+        #[cfg(feature = "hires")]
+        {
+            self.hd_camera = camera;
+        }
         for column in (0..320).step_by(2) {
             ray(
                 &self.colors,
@@ -437,6 +554,114 @@ impl Field {
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+
+    /// Invented part-5 files in a temporary directory: an MZ image holding
+    /// only an invented sine table where the scene reads its own, gradients
+    /// for the field buffers and the terrain, and plain palettes.
+    #[cfg(feature = "hires")]
+    fn invented_data() -> (std::path::PathBuf, Data) {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!("panic-field-hd-test-{}", std::process::id()));
+        let files = dir.join("files");
+        fs::create_dir_all(&files).unwrap();
+        fs::create_dir_all(dir.join("unpacked")).unwrap();
+        fs::write(files.join("P.P"), b"invented test marker").unwrap();
+        // 32-byte header, then the image: the table at 0x1a8a0 - 0x10000.
+        let image = 0xa8a0 + 2048;
+        let total = 32 + image;
+        let mut mz = vec![0_u8; total];
+        for (at, value) in [
+            (0, 0x5a4d_u16),
+            (2, (total % 512) as u16),
+            (4, total.div_ceil(512) as u16),
+            (8, 2),
+            (0x18, 0x1c),
+        ] {
+            mz[at..at + 2].copy_from_slice(&value.to_le_bytes());
+        }
+        for i in 0..1024 {
+            let v = (256.0 * (i as f64 * std::f64::consts::TAU / 1024.0).sin()).round() as i16;
+            mz[32 + 0xa8a0 + i * 2..][..2].copy_from_slice(&v.to_le_bytes());
+        }
+        fs::write(dir.join("unpacked/5.final.000.exe"), mz).unwrap();
+        let palette: Vec<u8> = (0..768).map(|i| (i / 3 % 64) as u8).collect();
+        for name in ["WELLPAL.PAL", "WINDOW.PAL", "MAP.PAL"] {
+            fs::write(files.join(name), &palette).unwrap();
+        }
+        let gradient: Vec<u8> = (0..65536).map(|i| (1 + (i % 256) / 2) as u8).collect();
+        fs::write(files.join("PBUF1.PRE"), &gradient).unwrap();
+        let rows: Vec<u8> = (0..65536).map(|i| (1 + (i / 256) % 100) as u8).collect();
+        fs::write(files.join("PBUF2.PRE"), &rows).unwrap();
+        let hill: Vec<u8> = (0..64000)
+            .map(|i| {
+                let (y, x) = ((i / 320) as f64 - 100.0, (i % 320) as f64 - 100.0);
+                (250.0 - (x * x + y * y).sqrt() * 2.0).max(0.0) as u8
+            })
+            .collect();
+        fs::write(files.join("DEP.U"), &hill).unwrap();
+        fs::write(files.join("MAP.U"), vec![90; 64000]).unwrap();
+        let data = Data::new(&dir).unwrap();
+        (dir, data)
+    }
+
+    #[cfg(feature = "hires")]
+    #[test]
+    fn hd_state_reads_the_counters_on_invented_data() {
+        let (dir, data) = invented_data();
+        let mut vga = Vga::new();
+        let mut scene = Field::new(&data, &mut vga).unwrap();
+        let first = scene.hd_state();
+        assert!(!first.terrain && !first.swapped && first.projection.is_none());
+        assert_eq!((first.frame, first.scale, first.speed), (0, 65536, 16));
+        // The first step swaps at once: speed 32, and the scale drawn is the
+        // one after the swap, 65536 - 32 + 65536, though the scene has
+        // lowered it again since.
+        assert!(!scene.step(&mut vga, 0x1011));
+        let swapped = scene.hd_state();
+        assert!(swapped.swapped);
+        assert_eq!((swapped.speed, swapped.scale), (32, 131040));
+        // The window shows PBUF2's rows as `zoom` draws them at that scale.
+        let window = Field::hd_window(&data.file("PBUF2.PRE").unwrap(), swapped.scale);
+        for y in 0..100 {
+            assert_eq!(
+                &vga.indices[(46 + y) * 320 + 96..][..128],
+                &window[y * 128..][..128]
+            );
+        }
+        assert!(!scene.step(&mut vga, 0x1012));
+        let next = scene.hd_state();
+        assert!(!next.swapped);
+        assert_eq!(
+            (next.speed, next.scale, next.next_row),
+            (48, 131040 - 32 - 48, 2)
+        );
+        // Past 0x1400 the speed falls; at 15 or below the terrain begins.
+        let mut steps = 0;
+        while !scene.hd_state().terrain {
+            assert!(!scene.step(&mut vga, 0x1500));
+            steps += 1;
+            assert!(steps < 100);
+        }
+        let terrain = scene.hd_state();
+        assert_eq!((terrain.terrain_frame, terrain.level), (1, 1));
+        assert_eq!(terrain.projection, Some(0));
+        // The camera of the step: terrain step 0 at angle 512, radius 70.
+        let sine = scene.hd_sine().to_vec();
+        let wx = 100 + sine[0] * 70 / 100;
+        let wy = 100 + sine[256] * 70 / 100;
+        assert_eq!(
+            terrain.camera,
+            [wx, wy, 3 * 70 + 470 - 5, sine[512], sine[768]]
+        );
+        for k in 2..40 {
+            assert!(!scene.step(&mut vga, 0x1500));
+            let state = scene.hd_state();
+            assert_eq!(state.level, k.min(64));
+            // The projection was built from the level before.
+            assert_eq!(state.projection, Some(((k - 1) * 8).min(248)));
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
     #[test]
     #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
     fn original_music_threshold_control_schedule() {

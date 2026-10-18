@@ -105,6 +105,20 @@ SHOTS = (
     _shot('rings', 'rings', 80.8, '--rings'),
     _shot('faithful-rings', 'faithful', 57.2, '--rings', '--faithful'),
     _shot('original-rings', 'original', 57.2, '--rings', '--original'),
+    # Part 5 (--field): the zoom early and late, the mountain rising in front
+    # of the still zoom, the orbit with the window cleared, the sink and the
+    # dark window at the end.
+    _shot('field', 'field', 84.0, '--field'),
+    _shot('field', 'field', 94.5, '--field'),
+    _shot('field', 'field', 97.6, '--field'),
+    _shot('field', 'field', 105.0, '--field'),
+    _shot('field', 'field', 125.0, '--field'),
+    _shot('field', 'field', 129.5, '--field'),
+    _shot('faithful-field', 'faithful', 89.0, '--field', '--faithful'),
+    _shot('faithful-field', 'faithful', 97.6, '--field', '--faithful'),
+    _shot('faithful-field', 'faithful', 105.0, '--field', '--faithful'),
+    _shot('faithful-field', 'faithful', 125.0, '--field', '--faithful'),
+    _shot('original-field', 'original', 105.0, '--field', '--original'),
 )
 CAPTURE_FLAGS = ('--seek', '--headless', '--size', '--data', '--out')
 

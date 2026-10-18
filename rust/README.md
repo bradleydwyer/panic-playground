@@ -69,8 +69,8 @@ the full importer.
 ## Experimental HD intro and scroller
 
 The `panic-hd` preview covers the opening through the PANIC logo, and with
-`--scroller` and `--rings` continues through parts 2 and 6. Build and run it
-from the repository root after importing your data:
+`--scroller`, `--rings` and `--field` continues through parts 2, 6 and 5.
+Build and run it from the repository root after importing your data:
 
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --modern
@@ -418,8 +418,8 @@ cargo run --release --locked --features hires --bin panic-hd -- --original-symbo
 `--rings` continues past part 2 through part 6, the interference rings and
 flashing symbols, to the first frame of part 5, with the music unbroken,
 as the pool described below. `--faithful` (or **M**) shows faithful HD, and `--split` (or **C**) the original on the left,
-as in the earlier parts. Part 5 itself is outside the preview: the clip ends
-on the PSTART picture as part 5 begins, at 81.27 seconds, and holds there.
+as in the earlier parts. Without `--field` (below), the clip ends on the
+PSTART picture as part 5 begins, at 81.27 seconds, and holds there.
 
 Read from the port, and checked against the engine on every frame by an
 ignored test, part 6 runs like this (the engine's `SEQUENCE` plays it after
@@ -700,6 +700,247 @@ The helpers in `rings_common.wgsl` include:
 it should show the PSTART picture, which part 5 opens on. Check a style
 with `tools/look_check.py`, whose part-6 shots show it through each phase.
 
+### Part 5: Field
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --field --seek 81
+cargo run --release --locked --features hires --bin panic-hd -- --field --faithful --seek 96
+```
+
+`--field` continues past part 6 through part 5, the zoom and the mountain,
+to the first frame of part 3, with the music unbroken. It implies `--rings`.
+`--faithful` (or **M**) shows faithful HD, `--original` (or **Tab**) the
+original and `--split` (or **C**) both, as in the earlier parts. Part 3 itself
+is outside the preview: the clip ends at 130.03 seconds, when part 3 takes
+part 5's last frame, and holds there.
+
+Read from the port, and checked against the engine on every frame by an
+ignored test, part 5 runs like this. It begins at 81.27 seconds on the
+PSTART picture part 6 faded in: a bevelled frame round a 128 by 100 window at
+(96, 46). In the window is an endless zoom into a blue field. Each frame
+resamples a 256 by 200 byte buffer round its centre, at 1 to 2 buffer pixels
+per window pixel, and lowers that scale by the speed; when it passes 1 the
+buffers swap to the next level, which `expand` builds two rows a frame as a
+smoothed enlargement of the centre, twice as fine, and `perturb` adds noise
+to the new level's centre. WELLPAL makes the field dark at 64 and bright at
+both ends. The speed rises by 16 a frame to 1024 by 82.17 seconds, one level
+every 64 frames (0.91 seconds). It dips to 1008 at 95.13, when the music's
+position passes 0x1400, and from 96.06, when the position is 0x400 past
+where the part began, it falls by 16 a frame, so the zoom stops at 96.96
+after 17 swaps, a magnification of about 81,000.
+
+The terrain then begins: a voxel height field of DEP.U's heights and MAP.U's
+colours as `prepare` makes them, in MAP.PAL's fire colours, drawn by 160 rays
+two columns wide from depth 64 to 512 in front of the picture. Its level
+rises by one a frame to 64 by 97.86 seconds. The level takes the camera down
+from 3 r + 470 to 3 r + 150 height units, r the orbit radius, and the
+projection from flat to perspective (its table is built with q = 8 times the
+level, up to 248). The window still shows the zoom's last frame behind the
+rising mountain until 98.11, when it is cleared to colour 129, near black.
+The camera circles the map's centre a turn every 1.46 seconds, looking
+inwards, its distance swinging from 125 to 234 map units and back every 1.83
+seconds. From 121.83 the level falls by two thirds of a unit a tracker row,
+the camera rises and the projection flattens; the last terrain pixel is at
+127.69, and the frame holds with its dark window until part 3 takes it.
+
+The preview keeps part 5 as compact state per frame, read from the scene's
+counters through `Field::hd_state`: the zoom's scale, speed, swaps and the
+rows of the next level built, the terrain level, the projection table's q,
+the camera and the window clear, with the three palettes the part shows. The
+zoom buffers and the original frames for `--original` and `--split` are
+replayed on demand rather than stored (about 570 MB): the scene, video memory
+and the shown buffer are kept every 64 frames (about 45 MB), and the port's
+own `Field::step` runs forward from the nearest checkpoint. The ignored test
+checks every replayed frame and palette against the engine's, that the shown
+buffer at the drawn scale is exactly the window (by the port's own `zoom`),
+the still and cleared window, the terrain's palette, the camera and the PCM,
+and prints the times above.
+
+Some of this is interpretation:
+
+- The zoom's scale is interpolated linearly between the original's frames,
+  in the shown buffer's pixels. Into a swap it carries on below 1, where the
+  next level takes over at twice the scale, so the magnification grows
+  without a step. At each frame's own time the window is the buffer round
+  its centre at the drawn scale, which agrees with the original's
+  fixed-point sampling at every pixel the test checks.
+- The camera follows the code's formulas at continuous time, without their
+  integer truncation. The code truncates the orbit's radius, then its
+  products, which moves the original's camera by up to 3 map units from the
+  path; the HD camera keeps to it.
+- Faithful HD marches each pixel's ray through the original terrain, as the
+  original's rays do in whole steps two columns wide: from depth 64 to 512
+  with the code's camera and projection, a pixel shows the nearest point
+  whose height reaches its row. Heights and colours are bilinear between the
+  map's cells. With each frame's own integer camera, its silhouette is within
+  a row of the original's in 81% of columns, 1.3 rows away on average; with
+  the smooth camera, 1.8 rows on average.
+- As the research found, DEP.U looks like a Mandelbrot mountain: its plateau
+  is the Mandelbrot set and its slopes follow base + slope sqrt(G(c)), G the
+  set's potential. The preview fits that when the data loads
+  (`MandelFit::fit`): the set's place, scale and aspect start from the
+  plateau's moments against the set's own, and Nelder-Mead maximises the
+  plateau's intersection over union with the set; the base and slope are a
+  least-squares line through the slopes. On the imported data the plateau
+  matches the set at an IoU of 0.987, with an aspect close to the VGA's 1.2,
+  and the slopes have an rms error of 4 of 250. A default test recovers an
+  invented mountain's parameters the same way. The fit is baked into a
+  relief, a texture of the height `prepare` would make of the fitted DEP
+  value with its gradient and the distance outside the set, for the modern
+  view. Nothing fitted is stored. How DEP.U was made isn't known, and
+  MAP.U's speckle, on a rounded plate, is of unknown origin.
+
+Faithful HD shows the original's look at display resolution: the picture
+smoothly upscaled through the current palette, with the window's edge kept
+sharp; the zoom from the port's field buffers, smoothly resampled at the
+interpolated scale in the original's palette, still once it stops and colour
+129 once cleared; and the original terrain, marched per pixel, through the
+palette, never over the top row, as in the original. At 2560 × 1440 on an
+Apple M5 Max a frame takes about 0.9 ms during the zoom and 2.6 to 2.9 ms
+during the terrain, as `--bench` measures it, CPU and waiting for the GPU
+included (it gives part 6's faithful HD 0.7 ms).
+
+The modern view is three authors' work, each in their own files; see
+"Adding to part 5" below. Until they fill them in, each draws a plain
+stand-in: the frame is the PSTART picture, smoothly upscaled, with no smoke;
+the window is faithful HD's; and the mountain is the fitted relief, marched
+with the code's camera and projection and lit plainly in MAP.PAL's ramp by
+height. Those take about 2.0 ms a frame during the zoom and 4.6 to 4.8 ms
+during the terrain at 2560 × 1440, the shared bloom included. The stand-ins
+only show that the framework runs end to end; the modern look is to be
+authored.
+
+### Adding to part 5
+
+Part 5's modern view has three authors, each with a WGSL file and a Rust
+file of their own in `src/hd/`:
+
+| Author | Files | Draws |
+| --- | --- | --- |
+| Frame | `field_frame.wgsl`, `field_frame.rs` | The metal frame and the smoke behind and round it, with the fluid hook |
+| Zoom | `field_zoom.wgsl`, `field_zoom.rs` | What the window shows |
+| Mountain | `field_mountain.wgsl`, `field_mountain.rs` | The mountain |
+
+The renderer builds one module from the shared controls,
+`field_common.wgsl`, the three authors' files and `field_style.wgsl`, whose
+entry points call the authors' functions:
+
+```wgsl
+fn frame_layers(px:FieldPixel)->FrameLayers   // smoke behind the frame, the frame, smoke in front
+fn zoom_layer(px:FieldPixel)->FieldLayer      // the window's content
+fn mountain_layer(px:FieldPixel)->FieldLayer  // the mountain
+fn frame_fluid_init(cell:FluidCell)->vec4f    // the fluid's first state
+fn frame_fluid(cell:FluidCell)->vec4f         // one step of the fluid
+fn frame_prepass(px:FieldPixel)->vec4f        // likewise zoom_prepass and mountain_prepass
+```
+
+A `FieldLayer` is light premultiplied by its opacity (linear HDR; the shared
+bloom and ACES tonemap follow), the opacity, and a depth as scene z, towards
+the viewer: the frame's plane is z = 0 (`LAYER_FRAME_Z`), the window's
+content is behind it (`LAYER_WINDOW_Z`) and the mountain in front
+(`LAYER_MOUNTAIN_Z`), as the original draws them. `field_style` puts the
+five layers over black farthest first, so the mountain covers the frame and
+smoke can lie behind it, round it and in front. The zoom's layer may reach
+past the window's edge, where the frame hides it. Prefix your own names with
+`frame_`, `zoom_` or `mountain_`: the shared code leaves those prefixes to
+you but for the prepass readers, and a default test checks it. The naga
+test validates the module and checks that each entry point uses only the
+bindings its pipeline has. Edit only your two files.
+
+Each Rust file holds its author's `AuthorInfo`: set `prepass: true` to have
+`<name>_prepass` drawn first, at half the resolution each way, into a
+texture `<name>_prepass_at(uv)` reads. Its controls function returns four
+spare vec4s at each moment, read as `fc.frame_style`, `fc.zoom_style` or
+`fc.mountain_style`. `field_frame.rs` also holds the fluid's settings
+(`FLUID`) and `FRAME_TAKES_PART6_FADE`; `field_mountain.rs` holds the
+relief's resolution (`RELIEF_SIZE`, 1024 by default, about 5 texels a map
+unit).
+
+`px` gives the pixel in the same spaces as part 6's: `uv`, `xy` (the
+screen), `source` (the original's 320 by 200 pixels, continuing beyond the
+frame on wide screens), `scene` (source rows on the 4:3 display, y up,
+centred, with the default camera `EYE` and `camera_ray`) and `pixel` (one
+target pixel in source rows). The terrain's map is 200 by 200 units: map
+point (x, y) is DEP.U and MAP.U's row x and column y.
+
+The helpers in `field_common.wgsl` read the part-5 block through `fc`, which
+the fragment entries copy from `u.field` and the fluid step from its own
+controls, so they work in both. They include:
+
+- Timing: `field_seconds()`, `field_phase()` (0 zoom, 1 terrain),
+  `field_frame()`, and the phases' times, as part-5 seconds:
+  `time_full_speed()`, `time_braking()`, `time_terrain()`,
+  `time_cleared()`, `time_risen()`, `time_sinking()`,
+  `time_last_terrain()` and `time_end()`.
+- The zoom: `field_zoom_scale()` (buffer pixels per window pixel, below 1
+  while the next level is due), `field_zoom_ahead()`,
+  `field_zoom_level()` (log2 of the magnification since the first zoom
+  frame, continuous), `field_zoom_phase()` (its fraction),
+  `field_zoom_swaps()`, `field_zoom_speed()`, `field_zoom_rows()`,
+  `field_zoom_running()` and `field_zoom_shown()`; the field itself,
+  smoothly resampled, with `field_zoom_value(s)`, `field_zoom_color(s)`,
+  `field_zoom_point(s)` and `field_zoom_buffer_value(b, next)`.
+- The camera and projection, as the code has them: `camera_map()`,
+  `camera_height()`, `camera_angle()`, `camera_forward()`,
+  `camera_right()`, `orbit_radius()`, `camera_distance()`,
+  `terrain_level()`, `projection_q()`, `projection(z)`,
+  `terrain_frame()`, `terrain_row(z, h)` (the source row at which height h
+  shows at depth z), `terrain_dir(column)` and `map_point(column, z)`; and
+  `terrain_march(s, footprint, from_relief)`, the per-pixel march, through
+  the original terrain or the relief, with `terrain_height`,
+  `terrain_color` and `terrain_shown()`.
+- The window: `window_rect()`, `in_window(s)`, `window_cover(s, blur)`,
+  `window_point(s)`, `window_cleared()`, `cleared_seconds()`,
+  `window_content(s)` (the original's window, smoothly) and
+  `picture_level()`.
+- The original's pictures: `picture_color(s, level)`,
+  `picture_frame(s, level)` (the frame round the window, for its edge),
+  `palette_entry(i)` and `palette_color(index)`.
+- The Mandelbrot fit: `mandel_c(m)`, `mandel_potential(c, limit)`,
+  `mandel_dep(m)` and `mandel_height(m)` by direct iteration in f32,
+  `height_of_dep`, and the baked relief, `relief_at(m)` (height, gradient
+  and distance outside the set) and `relief_height(m)`; the fit's own
+  values are `mandel_centre()`, `mandel_scale()`, `mandel_aspect()`,
+  `mandel_base()`, `mandel_slope()` and `mandel_plateau()`.
+- Compositing: `FieldLayer`, `field_layer(c, a, z)`, `no_layer()`,
+  `FrameLayers`, `field_composite`, `depth_z(xy, t)` and
+  `tonemap_inverse`.
+- The fluid: `fluid_load`, `fluid_sample`, `fluid_blend` (fragments only),
+  `fluid_uv`, `fluid_source`, `fluid_cell`, `fluid_steps()`,
+  `fluid_fraction()`, `fluid_dt()`, `fluid_seconds()` and
+  `fluid_region()`; in the step, `fluid_step_number()` and
+  `fluid_step_seconds()`.
+- Music cues measured from the PCM, as in the earlier parts: `cue_energy()`,
+  `cue_onset()`, `cue_low()` and `cue_accent()` (fragments only).
+
+The fluid hook runs `frame_fluid` as a compute pass over a grid of
+`FLUID.size` texels (Rgba16Float) covering the source rectangle
+`FLUID.region`, one step every 1 / `FLUID.rate` seconds (70 by default, one a
+frame of the original) from part 5's start, or from part 6's PSTART fade
+(80.36 seconds) with `FluidStart::PictureFade`. State n is the fluid at its
+start plus n steps; each step reads the one before it (`fluid_load`,
+`fluid_sample`) and the part-5 block at its own start, and nothing else that
+varies, so it is deterministic. A moment shows the state just past it and
+the one before (`fluid_blend` mixes them). Playing on runs a step or two a
+frame; a seek forward runs the steps it skips; a seek back starts again from
+the latest state kept every `FLUID.checkpoint` steps (256 by default) on the
+GPU, or from the start. Playback, seeking, scrubbing and a single exported
+frame therefore reach the same state, which an ignored test checks byte for
+byte on the GPU; a fresh process, as one-frame export uses, runs from the
+start. The step is a compute shader: use `textureSampleLevel` or
+`textureLoad`, not `textureSample`, `fwidth`, the music cues or
+`fluid_blend`. The stand-in draws nothing and only counts its steps, which
+the test reads back.
+
+Two hand-overs frame the part. Part 6 ends on the PSTART picture, and its
+look is part 6's own; setting `FRAME_TAKES_PART6_FADE` lets part 5's modern
+view draw part 6's fade instead, from 80.36 seconds, so the frame author can
+bring the lit metal frame in there: `picture_level()` rises from 0 to 1 over
+it and `field_seconds()` is negative. Part 5 must end on the frame with a
+dark, empty window, which part 3 will zoom into: the window is cleared at
+98.11 seconds, and from then on the zoom's layer should stay dark. Check the
+look with `tools/look_check.py`, whose part-5 shots show each phase.
+
 `--fps` starts with the frame-rate counter in the top-left corner, showing
 frames per second and milliseconds per frame. With vsync the rate can't exceed
 the display's refresh rate; `--no-vsync`, or V, shows how fast frames can
@@ -732,7 +973,9 @@ uniform block, which `renderer.rs` prepends to each shader, matches the Rust
 intro's reference pixels and PCM against the existing engine, sampled fly-by
 projection heights, the transition's complete reference frames, audio and
 tile schedule, the scroller's letters and positions against every part-2
-frame, and part 6's state, replayed frames and PCM against every part-6 frame:
+frame, part 6's state, replayed frames and PCM against every part-6 frame,
+and part 5's against every part-5 frame. Another, which needs a GPU, checks
+that part 5's fluid hook reaches the same state however a moment is reached:
 
 ```sh
 cargo test --release --locked --features hires
@@ -741,6 +984,16 @@ PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked \
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires transition_matches_engine_frames_audio_and_schedule -- --ignored
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires scroller_glyphs_and_positions_rebuild_every_reference_frame -- --ignored
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part6_state_matches_every_engine_frame -- --ignored --nocapture
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part5_state_matches_every_engine_frame -- --ignored --nocapture
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part5_fluid_is_the_same_however_it_is_reached -- --ignored
+```
+
+`--bench N` draws N frames from `--seek`, a sixtieth of a second apart,
+without a window, and prints the time a frame takes, CPU and waiting for the
+GPU included:
+
+```sh
+./target/release/panic-hd --field --faithful --bench 120 --seek 105 --size 2560x1440
 ```
 
 The fitted trajectories approximate the reference projection; they do not prove
@@ -776,9 +1029,9 @@ here. Don't commit any binary fixtures, including audio.
 and compares them with an earlier set, to catch unintended changes to the look
 while the shaders change. It needs only the Python standard library and your
 imported data, and writes everything under `artifacts/look-check/`, which Git
-ignores. Its 31 shots cover the modern intro letters, the plate and doors, the
-logo, the laser cut, the scroller with each backdrop and lighting mode, part 6
-through its phases, faithful HD and the original view, at 960 × 540. Their
+ignores. Its 42 shots cover the modern intro letters, the plate and doors, the
+logo, the laser cut, the scroller with each backdrop and lighting mode, parts 6
+and 5 through their phases, faithful HD and the original view, at 960 × 540. Their
 times are authored test points, not cues from the original. `list` shows
 them, and `--only` selects shots or groups by name, with wildcards
 (`--only scroller,laser` or `--only 'intro-7*'`).
@@ -820,7 +1073,7 @@ strength from 0.6 to 0.61 moved pixels by at most 2/255 but over 19% to 92% of
 each shot showing the bump wall, and those count as changed; at 18.6 seconds,
 where the wall has barely appeared, only 30 pixels moved by 1/255, which
 counts as noise. Sets from different GPUs or drivers aren't expected to match.
-Rendering takes about 0.2 to 0.5 seconds a shot. Comparing takes under a
+Rendering takes about 0.2 to 1.2 seconds a shot. Comparing takes under a
 second for each changed 960 × 540 shot, and shots are compared in parallel.
 
 ## Timing and platform notes

@@ -7,8 +7,9 @@ Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 [▶ Watch the modern intro, scroller and rings on YouTube](https://youtu.be/p4w5MObv9Ho)
 
 So far this covers the opening through the PANIC logo, the square transition,
-experiments with the following double scroller, and part 6's interference
-rings as a pool of liquid chrome under neon. The idea is to keep the
+experiments with the following double scroller, part 6's interference
+rings as a pool of liquid chrome under neon, and the groundwork for part 5's
+zoom and mountain. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
 letters that refract the stars behind them, a mirrored plate that reflects the
 warp, motion blur, a starfield that ramps into warp, a heated metal logo with
@@ -163,7 +164,8 @@ cargo run --release --locked --features hires --bin panic-hd -- --rings --seek 4
 
 Part 6 starts at 42.23 seconds, black until its first symbol at 43.41. The
 rings fade in from 50.33 seconds and out from 72.99, and the PSTART picture
-fades in from 80.36; part 5 would begin at 81.27, where the preview ends.
+fades in from 80.36; part 5 begins at 81.27, where `--rings` ends and
+`--field` carries on.
 The symbols become neon: glowing gas in clear glass tubes, bent into
 separate runs with gaps where lines cross, as signs are made. The two ring
 layers become two sets of waves interfering on a pool of liquid chrome that
@@ -202,6 +204,33 @@ spherical waves in haze. They remain in the Git history: commit `a786132`
 introduced faithful-plus and the style framework, `43a1b78` glass, `64877d8`
 the bump wall and `3e1c181` the haze, and `a9f0e30` is the last commit that
 still has them.
+
+### Part 5: Field
+
+`--field` carries on through part 5, to the frame part 3 starts from, with
+the music unbroken:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --field --seek 81
+```
+
+Part 5 starts at 81.27 seconds on the PSTART picture part 6 faded in. In its
+window an endless zoom dives into a blue field, a level twice as fine every
+0.91 seconds at full speed, until it brakes and stops at 96.96 after about
+81,000 times. Then a mountain of fire colours rises in front of the frame,
+the window goes dark at 98.11, and the camera circles the mountain until it
+sinks from 121.83; the frame holds with its dark window until 130.03. All of
+that is read from the port and checked against it frame by frame. Faithful
+HD (**M**) shows it at display resolution: the zoom from the port's own
+buffers, smoothly, and the mountain marched pixel by pixel through the
+original height map with the port's camera. As the research found, the
+height map looks like a Mandelbrot mountain, the set as its plateau and its
+slopes following the set's potential; the preview fits that when it starts,
+which is an interpretation, and keeps nothing fitted. The modern look is
+still to come, in three parts: the metal frame and smoke round it, the zoom
+and the mountain, each in its own files. For now each draws a plain
+stand-in. The [renderer notes](rust/README.md#part-5-field) say what is read,
+what is interpreted and what is authored, and how the three plug in.
 
 ### Keys
 

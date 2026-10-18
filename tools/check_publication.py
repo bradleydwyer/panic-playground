@@ -33,6 +33,15 @@ RESEARCH_FILES = {
     'rust/src/hd/rings_common.wgsl', 'rust/src/hd/rings_style.wgsl',
     'rust/src/hd/rings_faithful.wgsl', 'rust/src/hd/rings_pool.wgsl',
     'rust/src/hd/rings_symbols.txt', 'rust/src/hd/rings_authored.rs',
+    # Part 5: its state, fit and relief, its GPU side, the shared shader code,
+    # faithful HD, the entry points and the three authors' files (each author
+    # edits only their own WGSL and Rust files).
+    'rust/src/hd/field.rs', 'rust/src/hd/field_render.rs',
+    'rust/src/hd/field_common.wgsl', 'rust/src/hd/field_style.wgsl',
+    'rust/src/hd/field_faithful.wgsl',
+    'rust/src/hd/field_frame.wgsl', 'rust/src/hd/field_frame.rs',
+    'rust/src/hd/field_zoom.wgsl', 'rust/src/hd/field_zoom.rs',
+    'rust/src/hd/field_mountain.wgsl', 'rust/src/hd/field_mountain.rs',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
     'rust/src/scenes/scroller.rs', 'rust/src/scenes/field.rs',
     'rust/src/scenes/rings.rs', 'rust/src/scenes/dots.rs',
