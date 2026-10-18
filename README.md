@@ -4,6 +4,8 @@ Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
 [![Watch the modern Panic intro and scroller on YouTube](https://img.youtube.com/vi/Tiw6-bga6Qk/maxresdefault.jpg)](https://youtu.be/Tiw6-bga6Qk)
 
+[▶ Watch the modern intro and scroller on YouTube](https://youtu.be/Tiw6-bga6Qk)
+
 So far this covers the opening through the PANIC logo, the square transition,
 and experiments with the following double scroller. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
