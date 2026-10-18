@@ -33,6 +33,7 @@ RESEARCH_FILES = {
     'rust/src/scenes/plasma.rs', 'rust/src/scenes/greetings.rs',
     'rust/src/scenes/ending.rs',
     'tools/import_panic.py', 'tools/unpack_panic.py', 'tests/test_import_panic.py',
+    'tools/look_check.py', 'tests/test_look_check.py',
 }
 
 

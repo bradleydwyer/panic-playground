@@ -167,6 +167,23 @@ cargo test --release --locked --features hires
 ```
 
 Tests using original demo data are opt-in; see [the test notes](rust/README.md#tests).
+
+To catch unintended changes to the look while working on the shaders, render
+a baseline set of frames first, then check each new build against it:
+
+```sh
+python3 tools/look_check.py render baseline
+# edit, then rebuild panic-hd
+python3 tools/look_check.py check baseline
+```
+
+`check` renders the same shots with `target/release/panic-hd` and compares
+them pixel by pixel. If more than a few stray pixels change (by default more
+than 0.1% of a frame, however faintly), or a shot no longer renders, it says
+which shots and exits with an error. Heatmaps and a before, after and
+difference sheet go under `artifacts/look-check/`. The
+[look check notes](rust/README.md#look-check) cover the options.
+
 Before committing, stage the changes and run:
 
 ```sh
