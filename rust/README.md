@@ -516,8 +516,10 @@ amber so they stay apart from the warm plate; the rods reflect them, and
 their light passes through the plates onto a dark backing. While the lamps
 are off, the neon still catches the glass faintly. `GLASS_LIGHTING` in
 `rings_glass.wgsl` switches the plates to clear glass with no colour, or to
-both plates lit blue from the left and warm from the right. It took 0.9 to
-2.4 ms a frame.
+both plates lit blue from the left and warm from the right. The plates fill
+the whole screen, widescreen included, rather than the original's 256 by 184
+window, and the tubes' own glass is clear, catching the lamps and showing
+the rings bent through it. It took 1.2 to 2.6 ms a frame.
 
 Pool (**3**) shows the rings as liquid chrome seen from above. The two ring
 layers are two wave sources at the original's ring centres, with its band
