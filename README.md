@@ -181,7 +181,10 @@ drawings in place of the original's: water; the elements and alchemy;
 machines of 1992; faces; things of the 1990s and what replaced them; social
 media then and now; and AI. The music still picks which symbol lights and
 when, so each set follows the original's order and pairs, and the original
-symbols play before and after. The new symbols were drawn for this remake;
+symbols play before and after. They are bent into neon signs as the
+originals are: each tube is a single run, loops open where the tube would
+turn back into the sign, and where strokes meet or cross, one stops short of
+the other with an air gap. The new symbols were drawn for this remake;
 they are not recovered from the demo, and unlike its data they are kept in
 the repository, in `rust/src/hd/rings_symbols.txt`. Some are neon tracings
 of company logos: Claude, ChatGPT, Apple, Bitcoin, YouTube, Instagram, X,

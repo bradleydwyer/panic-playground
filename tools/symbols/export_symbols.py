@@ -55,9 +55,10 @@ HEADER = """\
 # spaces, in a 100-unit drawing box on a 0 to 1000 grid, x right and y down
 # (points may fall a little outside it). A run of one point is a dot. Runs
 # are simplified to within a quarter of a unit (Ramer-Douglas-Peucker).
-# hd/rings.rs uses each run, as drawn, as a neon tube's centreline: a run
-# whose last point is its first is a closed loop, and where runs cross or
-# meet their tubes overlap.
+# hd/rings_authored.rs makes the runs into neon tubes as a sign maker would:
+# a run whose last point is its first is a loop, runs that meet end to end
+# are one bent tube, a loop opens at its lowest point, and where tubes meet
+# or cross, one stops short of the other with an air gap.
 #
 # Made by tools/symbols/export_symbols.py from the drawings in tools/symbols/;
 # edit those and export again rather than editing this file.

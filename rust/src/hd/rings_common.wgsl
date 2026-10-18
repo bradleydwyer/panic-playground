@@ -13,7 +13,7 @@
 //   band geometry and the PSTART picture.
 // - Authored: the 7 new symbol sets (rings_symbols.txt) that the neon shows
 //   in the middle of the part in place of the original masks; their runs are
-//   the tubes as drawn (rings::SymbolFields::authored).
+//   made into neon tubes as signs are (rings::SymbolFields::authored).
 // - Interpretation: the analytic band model fitted to M.DAT (98% of its
 //   pixels), smooth outlines and centrelines of the masks, interpolation
 //   between the original's 70 Hz frames and the symbols' averaged flicker.

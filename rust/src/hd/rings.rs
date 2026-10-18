@@ -20,7 +20,7 @@
 //! - Authored: everything the style adds (neon tubes, the pool, lighting),
 //!   and the 7 new symbol sets in rings_symbols.txt, line drawings made for
 //!   the remake (some are tracings of company logos, their owners'
-//!   trademarks). Their runs are the neon tubes as drawn
+//!   trademarks). Their runs are made into neon tubes as signs are
 //!   ([`SymbolFields::authored`]), shown in the 7 patterns of the tune from
 //!   window [`NEW_SET_FIRST_WINDOW`]; the music still picks which mask
 //!   lights.

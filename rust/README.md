@@ -514,19 +514,33 @@ in set 5; YouTube, Instagram, X, WhatsApp, Facebook, Reddit, LinkedIn and
 TikTok in set 6). Those logos are trademarks of their owners; their use here
 implies no affiliation or endorsement.
 
-The drawings' runs are the tubes as drawn: each run is a tube's centreline,
-in a box 155 rows high on the screen's centre (`AUTHORED_BOX`), round on the
-4:3 display. That stands them about as tall as the originals, whose masks
-are 43 to 157 rows tall, 123 at the median; the drawings come to 31 to 153,
-124 at the median, and every one stays inside the 4:3 frame with its tubes'
-glass, which a default test checks. The originals' redrawing doesn't apply
-to them: there is no thinning or tracing, no gap where runs cross or meet,
-so their tubes simply overlap, nothing short is dropped and no near-circle
-is made a circle. A run whose last point is its first is a closed loop with
-no ends, and a run of one point is a dot. The atlas measures the distances
-to the runs and their free ends, and the light map is made from them, as for
-the originals; a default test checks that every point of every run lies on
-its tube.
+The drawings' runs are made into neon tubes directly, in a box 155 rows
+high on the screen's centre (`AUTHORED_BOX`), round on the 4:3 display.
+That stands them about as tall as the originals, whose masks are 43 to 157
+rows tall, 123 at the median; the drawings come to 31 to 153, 124 at the
+median, and every one stays inside the 4:3 frame with its tubes' glass,
+which a default test checks. The originals' thinning, tracing and redrawing
+don't apply, but the same neon rules do (authored, after the owner's
+direction): each tube is a single run that never closes or joins another.
+Runs that meet end to end become one bent tube; where three or more ends
+meet, the two that continue each other most nearly straight do. An end
+whose glass touches another tube stops short of it with the originals' gap,
+both tubes' glass and a stroke's half-width of air (9.8 rows to the other's
+centreline). Where tubes still cross or touch, the shorter breaks with that
+gap either side (a run's later pass, where it crosses itself). A loop opens
+at the middle of its lowest stretch, its new ends that gap apart, or keeps
+half of itself if it is too small for that. A run of one point is a dot.
+What the cuts leave is kept however short, so pins, crossbars and links
+remain as short tubes; only runs too short to keep the gap at both ends can
+go, which happens to the crossbar of the A on the two keys of set 3. The
+atlas measures the distances to the tubes and their free ends, and the light
+map is made from them, as for the originals; default tests check that no
+loop is left, no glass touches, and nothing longer than two gaps is lost.
+
+How alike each symbol is to the next one the music shows decides how well
+the flashes keep time: the ignored test `consecutive_symbols_contrast`
+prints the overlap of their glass on screen, set by set, against the
+original symbols' (about 0.11 on average).
 
 The neon alone draws them, so their 112 layers keep only the two fields the
 tubes use, the centreline and free-end distances, over their own rectangle,
