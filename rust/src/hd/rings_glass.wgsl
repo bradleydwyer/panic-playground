@@ -2,7 +2,9 @@
 // whose set bands are raised rods: layer 0's plate in front, layer 1's a
 // little behind it. Each plate is lit through its own edge by its own lamp,
 // cool for layer 0 and warm for layer 1, so its rods glow from inside in that
-// colour, brightest along their walls. The back plate is seen through the
+// colour, brightest along their walls (GLASS_LIGHTING 0; 1 is clear glass
+// with no colour, 2 lights both plates blue from the left and warm from the
+// right). The back plate is seen through the
 // front one, bent by its rods. The lit symbols are neon tubes in front of
 // both plates, reflected in the rods and shining through them onto a dark
 // backing.
@@ -30,18 +32,43 @@ const GLASS_GAP=3.5;        // From the front plate's face to the back one's.
 const GLASS_FLOOR=14.0;     // From the back plate's face to the dark backing.
 const GLASS_ROD=1.8;        // A rod's height above its plate.
 const GLASS_IOR=1.5;
-// The edge lamps: colour and level, and the way their light runs through
-// each plate (scene axes): cool in from the upper left, warm from the lower
-// right, as the scroller's key and warm lamps.
+// How the plates are lit:
+// 0 layers: each plate through its own edge, the front one (layer 0) cool
+//   and the back one (layer 1) warm, as the owner first asked.
+// 1 clear: clear glass only, no colour: both plates lit white, the front
+//   one brighter, as the original's grey 48 to its grey 32.
+// 2 sides: clear glass lit blue only from the left side and warm only
+//   from the right, both plates alike (the front one brighter); each lamp's
+//   light fades across the plate and lights the rods' walls facing it.
+const GLASS_LIGHTING=0;
+// The layers' edge lamps: colour and level, and the way their light runs
+// through each plate (scene axes): cool in from the upper left, warm from
+// the lower right, as the scroller's key and warm lamps.
 const GLASS_COOL=vec3f(.10,.42,1.0)*1.3;
 const GLASS_WARM=vec3f(1.0,.30,.06)*1.1;
 const GLASS_COOL_RUN=vec2f(.857,-.514);
 const GLASS_WARM_RUN=vec2f(-.894,.447);
-// A rod's glow from its lamp: the body, and the brighter line just inside
-// each wall, where the light trapped in the plate leaves it (strongest on
-// the walls facing away from the lamp).
+// Clear: the white lamps for the front and back plates.
+const GLASS_WHITE_FRONT=vec3f(1.0)*1.0;
+const GLASS_WHITE_BACK=vec3f(1.0)*.55;
+// Sides: the lamps at the left and right, each plate's share (front, back)
+// and how much of a lamp's light is left at the far side of a plate.
+const GLASS_SIDE_BLUE=vec3f(.10,.42,1.0)*1.4;
+const GLASS_SIDE_WARM=vec3f(1.0,.30,.06)*1.2;
+const GLASS_SIDE_PLATES=vec2f(1.0,.6);
+const GLASS_SIDE_FAR=.08;
+// A rod's glow from a lamp: the body, and the brighter line just inside
+// each wall, where the light leaves it (strongest on the walls facing one
+// way: for an edge lamp away from it, for a side lamp towards it).
 const GLASS_BODY=.40;
 const GLASS_RIM=1.6;
+// For clear glass (lighting 1 and 2): a fainter body, so the rods look
+// clear, and more light at the walls; the share of a rim's light on walls
+// facing the other way (layers: .2).
+const GLASS_CLEAR_BODY=.18;
+const GLASS_CLEAR_RIM=2.2;
+const GLASS_CLEAR_SPREAD=.6;
+const GLASS_SIDE_SPREAD=.05;
 // Where rods of both plates cross, the share of their light that still
 // reaches the eye (the original's XOR draws both-set as black).
 const GLASS_CROSSING=.05;
@@ -102,14 +129,21 @@ fn glass_rod(layer:u32,s:vec2f,pixel:f32)->GlassRod {
     return GlassRod(cover,a,normalize(toward),dhdr*toward*cover,48.0*GLASS_ROD*a*a/(w*w)*cover);
 }
 fn glass_normal(rod:GlassRod)->vec3f {return normalize(vec3f(-rod.grad,1));}
-// A rod's glow from its lamp, for light running along `run` in the plate.
-fn glass_glow(rod:GlassRod,run:vec2f)->f32 {
+// A rod's glow from a lamp whose light leaves it most through the walls
+// facing `toward` (scene axes): the body, and the rims with `spread` of
+// their light on the walls facing away.
+fn glass_shine(rod:GlassRod,toward:vec2f,body:f32,rims:f32,spread:f32)->f32 {
     let x=abs(rod.across);
     let wall=sign(rod.across)*rod.out;
-    let facing=max(dot(wall,run),0.0);
+    let facing=max(dot(wall,toward),0.0);
     let rim=exp(-pow((x-.82)/.10,2.0));
     let edge=1.0-.5*smoothstep(.93,1.0,x);
-    return (GLASS_BODY*(.75+.5*facing*x)+GLASS_RIM*rim*(.2+.8*facing))*edge;
+    return (body*(.75+.5*facing*x)+rims*rim*(spread+(1.0-spread)*facing))*edge;
+}
+fn glass_glow(rod:GlassRod,toward:vec2f)->f32 {
+    if GLASS_LIGHTING==1 {return glass_shine(rod,toward,GLASS_CLEAR_BODY,GLASS_CLEAR_RIM,GLASS_CLEAR_SPREAD);}
+    if GLASS_LIGHTING==2 {return glass_shine(rod,toward,GLASS_CLEAR_BODY,GLASS_CLEAR_RIM,GLASS_SIDE_SPREAD);}
+    return glass_shine(rod,toward,GLASS_BODY,GLASS_RIM,.2);
 }
 fn glass_fresnel(c:f32)->f32 {return .04+.96*pow(1.0-clamp(c,0.0,1.0),5.0);}
 // The neutral softbox and a dim top light, as reflected along r.
@@ -235,6 +269,26 @@ fn glass_edge(s:vec2f,blur:f32,side:f32,at:f32)->f32 {
     let near=select(1.0-across,across,side>0.0);
     return line*(.06+.94*near*near)*GLASS_EDGE;
 }
+// A plate's light (layer 0 the front plate, 1 the back) at source point s
+// with its rod there: the rod's glow, at `cover`, and the plate's edge,
+// `at` rows inside the window, for GLASS_LIGHTING.
+fn glass_lamps(layer:u32,rod:GlassRod,s:vec2f,blur:f32,at:f32,bass:f32,treble:f32,cover:f32)->vec3f {
+    let front=layer==0u;
+    if GLASS_LIGHTING==2 {
+        let u=clamp((s.x-RING_WINDOW.x)/(RING_WINDOW.z-RING_WINDOW.x),0.0,1.0);
+        let fade=mix(GLASS_SIDE_FAR,1.0,1.0-smoothstep(0.0,1.0,u));
+        let rise=mix(GLASS_SIDE_FAR,1.0,smoothstep(0.0,1.0,u));
+        let share=select(GLASS_SIDE_PLATES.y,GLASS_SIDE_PLATES.x,front);
+        let blue=GLASS_SIDE_BLUE*bass*share;
+        let warm=GLASS_SIDE_WARM*treble*share;
+        return (blue*fade*glass_glow(rod,vec2f(-1,0))+warm*rise*glass_glow(rod,vec2f(1,0)))*cover
+            +blue*glass_edge(s,blur,-1.0,at)+warm*glass_edge(s,blur,1.0,at);
+    }
+    var color=select(GLASS_WARM,GLASS_COOL,front);
+    if GLASS_LIGHTING==1 {color=select(GLASS_WHITE_BACK,GLASS_WHITE_FRONT,front);}
+    let run=select(GLASS_WARM_RUN,GLASS_COOL_RUN,front);
+    return color*select(treble,bass,front)*(glass_glow(rod,run)*cover+glass_edge(s,blur,select(1.0,-1.0,front),at));
+}
 // A rod's rims alone, where light gathered in it leaves.
 fn glass_rims(rod:GlassRod)->f32 {return exp(-pow((abs(rod.across)-.82)/.12,2.0));}
 // The plates and the backing at source point s (the pixel's, or bent through
@@ -243,10 +297,11 @@ fn glass_scene(px:RingsPixel,s:vec2f,lit:f32,caught:f32)->vec3f {
     let ray=camera_ray(px.xy);
     let up=vec3f(0,0,1);
     let blur=px.pixel;
-    // Lamp levels. With musical lighting the cool lamp follows the bass and
-    // the warm one the treble (the shared cues measured from the PCM).
-    let cool=GLASS_COOL*lit*glass_music(1.0,.45+cue_level()*.35+cue_bass()*cue_bass()*1.8);
-    let warm=GLASS_WARM*lit*glass_music(1.0,.45+cue_level()*.35+pow(cue_treble(),1.5)*1.6);
+    // Lamp levels. With musical lighting the cool (or left, or front)
+    // lamp follows the bass and the warm (right, back) one the treble (the
+    // shared cues measured from the PCM).
+    let bass=lit*glass_music(1.0,.45+cue_level()*.35+cue_bass()*cue_bass()*1.8);
+    let treble=lit*glass_music(1.0,.45+cue_level()*.35+pow(cue_treble(),1.5)*1.6);
     // The front plate: its rod, the surface's reflection and the light it
     // lets through.
     let window0=ring_window(s,blur*1.5);
@@ -274,9 +329,9 @@ fn glass_scene(px:RingsPixel,s:vec2f,lit:f32,caught:f32)->vec3f {
     let r1=reflect(below,n1);
     let a0=f.cover*window0;
     let a1=b.cover*window1;
-    // Each plate's glow, cut where rods of the other cross it.
-    c+=cool*(glass_glow(f,GLASS_COOL_RUN)*a0*mix(1.0,GLASS_CROSSING,a1)+glass_edge(s,blur,-1.0,.5));
-    let glow1=warm*(glass_glow(b,GLASS_WARM_RUN)*a1*mix(1.0,GLASS_CROSSING,a0)+glass_edge(s1,blur,1.0,-.45));
+    // Each plate's glow, cut where rods of the other cross it, and its edge.
+    c+=glass_lamps(0u,f,s,blur,.5,bass,treble,a0*mix(1.0,GLASS_CROSSING,a1));
+    let glow1=glass_lamps(1u,b,s1,blur,-.45,bass,treble,a1*mix(1.0,GLASS_CROSSING,a0));
     // The neon's light gathered in the rods, let out along their rims; the
     // back plate's comes through the front one's rods.
     c+=glass_neon_light(p0,up)*GLASS_GATHER*glass_rims(f)*a0*caught;
