@@ -183,7 +183,7 @@ what is interpreted and what is authored, and how to add a style.
 | Key | Action |
 | --- | --- |
 | Space | Pause or resume |
-| Left / Right | Seek one second |
+| Left / Right | Step one second; hold to scrub through time, faster the longer held |
 | Home / R | Replay |
 | End | Pause on the finished logo |
 | M | Switch modern 3D / faithful HD |

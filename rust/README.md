@@ -387,7 +387,7 @@ optical simulation. All fields are generated locally in memory.
 | Key | Action |
 | --- | --- |
 | Space | Pause or resume |
-| Left / Right | Seek one second |
+| Left / Right | Step one second; hold to scrub through time, faster the longer held |
 | Home / R | Replay from the start |
 | End | Pause on the finished logo |
 | M | Switch modern 3D / faithful HD |

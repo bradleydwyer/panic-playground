@@ -10,7 +10,7 @@ use panic_demo::{
 use sdl2::{
     audio::{AudioQueue, AudioSpecDesired},
     event::{Event, WindowEvent},
-    keyboard::Keycode,
+    keyboard::{Keycode, Scancode},
     video::FullscreenType,
 };
 use std::{
@@ -228,7 +228,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings) to part 5's first frame\n  --rings-style S  Part 6 style: faithful-plus (default), glass, pool, room or volume\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light\n1-5: part 6 style (faithful-plus, glass, pool, room, volume)\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings) to part 5's first frame\n  --rings-style S  Part 6 style: faithful-plus (default), glass, pool, room or volume\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: step 1s, hold to scrub · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light\n1-5: part 6 style (faithful-plus, glass, pool, room, volume)\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6."
                     );
                     std::process::exit(0);
                 }
@@ -250,6 +250,13 @@ impl Options {
         Ok(o)
     }
 }
+
+/// Holding Left or Right scrubs through time once held this long (seconds);
+/// a tap still steps one second.
+const SCRUB_DELAY: f64 = 0.25;
+/// The scrub's speed in seconds of the show per second held: its start, how
+/// fast it gains, and its most.
+const SCRUB_SPEED: (f64, f64, f64) = (4.0, 8.0, 20.0);
 
 fn set_audio(
     device: &AudioQueue<i16>,
@@ -381,7 +388,7 @@ fn run() -> Result<(), String> {
     let (mut renderer, format) = pollster::block_on(Renderer::new(&instance, Some(&surface)))?;
     println!("GPU: {}", renderer.adapter_name);
     println!(
-        "Space pause · arrows seek · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength · W wall waves · ,/. wave depth · ;/' wave light · 1-5 part 6 style"
+        "Space pause · arrows step, hold to scrub · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength · W wall waves · ,/. wave depth · ;/' wave light · 1-5 part 6 style"
     );
     let (width, height) = window.drawable_size();
     let mut config = wgpu::SurfaceConfiguration {
@@ -420,6 +427,10 @@ fn run() -> Result<(), String> {
     let mut rate = [0.0_f32; 2];
     let mut rate_frames = 0_u32;
     let mut rate_start = Instant::now();
+    // Left or Right held down, and since when, and whether it has started to
+    // scrub (with the music paused until it is let go).
+    let mut hold: Option<(f64, Instant)> = None;
+    let mut scrubbing = false;
     'preview: loop {
         let now = Instant::now();
         let delta = now.duration_since(last_frame).as_secs_f64();
@@ -429,7 +440,7 @@ fn run() -> Result<(), String> {
         {
             break;
         }
-        if !paused {
+        if !paused && !scrubbing {
             let remaining = device.size() as usize / 2;
             let audio_time =
                 anchor + queued.saturating_sub(remaining) as f64 / (SAMPLE_RATE * 2) as f64;
@@ -459,12 +470,18 @@ fn run() -> Result<(), String> {
                         paused = !paused;
                         if paused {
                             device.pause();
-                        } else {
+                        } else if !scrubbing {
                             device.resume();
                         }
                     }
-                    Keycode::Left => seek = Some((time - 1.0).max(0.0)),
-                    Keycode::Right => seek = Some((time + 1.0).min(clip.duration())),
+                    Keycode::Left => {
+                        seek = Some((time - 1.0).max(0.0));
+                        hold = Some((-1.0, now));
+                    }
+                    Keycode::Right => {
+                        seek = Some((time + 1.0).min(clip.duration()));
+                        hold = Some((1.0, now));
+                    }
                     Keycode::Home | Keycode::R => {
                         seek = Some(0.0);
                         paused = false;
@@ -584,6 +601,31 @@ fn run() -> Result<(), String> {
                     paused = true;
                 }
                 _ => {}
+            }
+        }
+        if let Some((direction, since)) = hold {
+            let key = if direction < 0.0 {
+                Scancode::Left
+            } else {
+                Scancode::Right
+            };
+            let held = now.duration_since(since).as_secs_f64();
+            if !events.keyboard_state().is_scancode_pressed(key) {
+                hold = None;
+                if scrubbing {
+                    // Let go: the music picks up from here.
+                    scrubbing = false;
+                    seek = Some(time);
+                    println!("Scrubbed to {time:.1}s");
+                }
+            } else if held > SCRUB_DELAY {
+                if !scrubbing {
+                    scrubbing = true;
+                    device.pause();
+                }
+                let (start, gain, most) = SCRUB_SPEED;
+                let speed = (start + gain * (held - SCRUB_DELAY)).min(most);
+                time = (time + direction * speed * delta).clamp(0.0, clip.duration());
             }
         }
         if let Some(t) = seek {
