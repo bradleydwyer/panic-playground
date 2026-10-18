@@ -801,12 +801,9 @@ during the terrain, as `--bench` measures it, CPU and waiting for the GPU
 included (it gives part 6's faithful HD 0.7 ms).
 
 The modern view is three authors' work, each in their own files; see
-"Adding to part 5" below. The metal frame and its smoke are in. Until the
-other two fill theirs in, each draws a plain stand-in: the window
-is faithful HD's, and the mountain is the fitted relief, marched with the
-code's camera and projection and lit plainly in MAP.PAL's ramp by height.
-The stand-ins only show that the framework runs end to end; their modern
-look is to be authored.
+"Adding to part 5" below. The metal frame, its smoke and the mountain are
+in. Until the zoom's author fills theirs in, the window draws a plain
+stand-in, faithful HD's.
 
 The frame is dark polished gunmetal. It is drawn exactly where the PSTART
 picture has it, as nothing is displaced, and is lit by what is round it.
@@ -909,6 +906,72 @@ driver. Seeking and memory, for `Volume`:
 The renderer asks the GPU for its full number of storage buffers per
 shader stage, as the smoke's solver binds more than wgpu's default of 8.
 
+The modern mountain is a molten Mandelbrot: dark cooled crust with lava
+running down its slopes in channels and cracks, and on the plateau, the set
+itself, a lava lake with plates of crust drifting and cracking on it.
+
+- Derived: the motion and the shape. The level, the camera, the flat to
+  perspective morph of the projection, the orbit and the sink come through
+  the shared helpers, as faithful HD has them; within each exposure the
+  camera moves on by the code's formulas (`field_mountain.rs` passes the
+  rates: a terrain step and a level a frame while it rises, q eight times
+  the level). The surface is the fitted one: the baked relief, and near the
+  set the fitted formula, base + slope sqrt(G(c)), evaluated per pixel.
+- Interpretation: lighting the projection as 3D, a height unit as 0.29 map
+  units (at full perspective a height unit shows 62 / z rows and a map unit
+  across 213 / z), and reading MAP.U's speckle back out of `prepare`'s
+  colours as (4 colour - height) / 3. The level's rate while it sinks is
+  estimated, as its mean fall since the sink began.
+- Authored: the materials, the lighting, the detail method, the exposure and
+  the light handed to the frame. The lava's colours are the original's
+  terrain ramp (the terrain palette's entries 128 to 191, from MAP.PAL) as
+  HDR emission, into the shared bloom and tonemap; it is the main light,
+  with a dim cool key from behind the camera, shadowed and occluded by the
+  relief. Lava runs down in narrow rivers drawn in the set's external angle,
+  arg Phi(c) / 2 pi from the product formula for Böttcher's coordinate (its
+  first 16 terms, with principal arguments), which is constant along the
+  slopes' fall lines (the field lines of G), so the rivers run straight down
+  them and crowd into the fjords between the bulbs; flecks follow MAP.U's
+  speckle. The lake is molten as the mountain rises out of the zoom's set,
+  so that the set reads against a dark rim, and grows its crust and spills
+  over the rim in the two seconds after it has risen. The rays start at
+  depth 4 rather than the original's 64 (read from `ray`; 4 is where the
+  code's projection table starts), so that close passes show the nearer
+  slopes where the original smears the terrain at depth 64 down the columns
+  below it.
+
+Near the set the detail is computed on demand rather than taken from the
+bake. Rays march the relief, skipping space by its coarse cells, and in a
+band round the set, where its texels can't hold the boundary, the fitted
+formula itself: the potential and its gradient by direct iteration in f32,
+stepped by a bound from the potential (the distance estimate d = G / (2
+|grad G|) is about a lower bound on the distance to the set for small G, by
+Koebe's quarter theorem, and within it the positive harmonic G is at least G
+(d - r) / (d + r) at distance r, by Harnack's inequality) or by a Newton
+step towards the potential the ray's height needs, kept between that bound
+and four times it, no finer than half a pixel. A comparison only needs to
+know whether G is below that potential, and an orbit still short of the
+bailout after n iterations has G below about 11 / 2^n, so the march stops
+iterating early; shading decides the plateau with the full 100 iterations.
+So the plateau's edge, the filaments' ridges and the cusp stay sharp to the
+pixel, up close as far off, with normals from the potential's gradient; a
+ray that grazes the crests for more than 20 steps goes on through the
+relief. A half-resolution prepass marches every ray at the middle of the
+exposure and keeps where it first came within a pixel and a half of the
+surface or entered the band, and its hit and coverage; each full-resolution
+pixel marches on from there. The exposure is 0.7 of a 70 Hz frame, as part
+6's rings use: where the surface moves across the screen in it, up to six
+samples are taken along the motion, each what the prepass saw where its ray
+points at the middle of the exposure, shaded with the middle's surface
+carried over to first order (G, and the angle by Cauchy-Riemann).
+
+At 2560 × 1440 on an Apple M5 Max the whole part-5 frame takes 5.1 to 6.0 ms
+during the terrain with the frame and window stand-ins (at 98.2, 105, 115 and
+122.5 seconds, medians of `--bench 150`, the best of five interleaved runs),
+against 1.1 ms with no mountain and 2.9 to 3.1 ms with the plain stand-in it
+replaced; at 105 seconds the prepass takes about 1.0 ms, the middle of the
+exposure 2.3 ms and the rest of the exposure 1.4 ms.
+
 ### Adding to part 5
 
 Part 5's modern view has three authors, each with a WGSL file and a Rust
@@ -970,6 +1033,17 @@ light as given; until then the frame draws a stand-in:
 - `fc.mountain_style[1]`: the lava's radiance, rgb, linear HDR; this one
   says whether the lava is given. The stand-in is an orange glow over the
   plateau, in front of the frame, rising and sinking with the terrain.
+
+The mountain's controls carry the lava's light for the frame and smoke to
+use: `fc.mountain_style[0]` is the centre of the lake's light as the frame
+sees it, its source x and y (320 by 200 pixels), a scene z in front of the
+frame (100, `LAYER_MOUNTAIN_Z`, with the lake 180 map units from the camera,
+nearer the viewer as it comes closer) and a spread (the lake's radius in
+source rows); `fc.mountain_style[1]` is its colour times its strength in
+linear HDR, an orange of mean radiance about 1.2, fading to 0 as the lake
+leaves the screen and 0 with no mountain, with the luminance in w. Both
+follow the camera smoothly. `fc.mountain_style[2]` is for the mountain's
+own exposure.
 
 `px` gives the pixel in the same spaces as part 6's: `uv`, `xy` (the
 screen), `source` (the original's 320 by 200 pixels, continuing beyond the
