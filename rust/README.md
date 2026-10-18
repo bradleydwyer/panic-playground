@@ -179,16 +179,18 @@ follows the arc, with its depth crossover in the gap between rows. The
 existing laser transition reveals the wall; the preview ends after part 2's
 fade. `--scroller glass` is still accepted.
 
-The glass lets through a blurred view of the backdrop's light behind each
-letter, tinted blue towards the left and orange towards the right. Seen
-through a letter, its own soft shadow on the backdrop is lighter, as that
-light came through the glass. Lamp light gathered by each face leaves in a
-band just inside its bevel, so the letters glow along their edges while the
-bevel line stays crisp, and the sine text's light spreads through any letter
-it passes. Part 2's whole scene then has an exposure of 1.2 before the shared
-tonemap. These are authored looks, set by constants in `scroller.wgsl`
-(`GLASS_LIGHT`, `GLASS_RIM`, `GLASS_EDGE_ROWS`, `FILAMENT_IN_GLASS`,
-`GLASS_SHADOW` and `SCROLLER_EXPOSURE`), not a model of the original.
+Over the bump wall (`chrome` or `wall`), the glass lets through a blurred
+view of the wall's light behind each letter; the `chamber` shows through it
+refracted but unblurred. Either is tinted blue towards the left and orange
+towards the right. Seen through a letter, its own soft shadow on the backdrop
+is lighter, as that light came through the glass. Lamp light gathered by
+each face leaves in a band just inside its bevel, so the letters glow along
+their edges while the bevel line stays crisp, and the sine text's light
+spreads through the glass close to it. Part 2's whole scene then has an
+exposure of 1.2 before the shared tonemap. These are authored looks, set by
+constants in `scroller.wgsl` (`GLASS_LIGHT`, `GLASS_RIM`, `GLASS_EDGE_ROWS`,
+`FILAMENT_IN_GLASS`, `GLASS_SHADOW` and `SCROLLER_EXPOSURE`), not a model of
+the original.
 
 Glass was chosen from three presets. The other two were `ribbons`, coated
 titanium lettering with curved row ends, and `sculpted`, the same material on

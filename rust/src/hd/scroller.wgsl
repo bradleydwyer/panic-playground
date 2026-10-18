@@ -501,7 +501,6 @@ fn reflected(p:vec3f,r:vec3f)->vec3f {
     }
     return env;
 }
-// Shading of one wall sample, without the letter reflections.
 // Light from a bump with normal n, before it is pulled towards the level.
 fn bump_light(n:vec3f,p:vec3f,ray:vec3f,metal:vec3f)->vec3f {
     let r=reflect(ray,n);
@@ -510,6 +509,7 @@ fn bump_light(n:vec3f,p:vec3f,ray:vec3f,metal:vec3f)->vec3f {
     // Faint occlusion where a bump meets the backing.
     return c*mix(.55,1.0,smoothstep(.0,.5,n.z));
 }
+// Shading of one wall sample, without the letter reflections.
 fn wall_surface(hit:WallHit,p:vec3f,ray:vec3f)->vec3f {
     let metal=wall_metal(hit.at);
     // The level a flat tile would have: the backing and the relief are pulled
@@ -713,7 +713,10 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
         color+=heat(p.x)*smoothstep(-.5,.8,behind)*.55;
     }
     // The filament's light spreads through the glass on either side of it.
-    color+=heat(p.x)*tint*halo(behind,.25)*FILAMENT_IN_GLASS;
+    // Added after the mix, so undamped, it must be gone by 8 rows: from there
+    // the sine field holds a lower bound per blank row, which steps line by
+    // line and would draw stripes across every letter.
+    color+=heat(p.x)*tint*halo(behind,.25)*(1.0-smoothstep(5.0,8.0,abs(behind)))*FILAMENT_IN_GLASS;
     color+=heat(p.x)*pow(1.0-face,2.0)*lighting(.462,.20+energy*.25+bass()*.85+attack()*.7);
     return color;
 }
