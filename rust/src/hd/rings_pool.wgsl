@@ -4,7 +4,8 @@
 // source has a lamp hung low over it, cool over the first layer's and warm
 // over the second's, so each source's waves catch its own colour and their
 // crests cast shadows away from it. The lit symbols hover just above the
-// surface as neon tubes, and the waves bend their reflections.
+// surface as neon tubes, and the waves bend their reflections. By default
+// the waves fill the screen (POOL_FILL).
 // Module: the shared controls, rings_common.wgsl, wall.wgsl, this file and
 // rings_style.wgsl.
 //
@@ -12,8 +13,9 @@
 // - From rings_common.wgsl, which says what it read from the port and what
 //   it fitted to the local data: the sources' positions (each layer's ring
 //   centre, moving as the original's does, with no motion of our own), the
-//   band width and the first edge's radius, the ring intensity and its
-//   fades, the lit symbol and its windows, and the PSTART fade.
+//   band width and the first edge's radius, the ring window (with
+//   POOL_FILL 0), the ring intensity and its fades, the lit symbol and its
+//   windows, and the PSTART fade.
 // - Authored after the original's palette: the wave height. Each layer's
 //   waves crest in the middle of the bands the original sets and trough in
 //   the middle of its clear ones, and the second layer's waves are inverted
@@ -21,14 +23,17 @@
 //   would be raised where only the grey-48 layer is set, sunken where only
 //   the grey-32 layer is, and level where the original is black (both or
 //   neither): there a still, black mirror, as the original's XOR is black.
-// - Authored: the chrome, the waves' height and profile, the lamps (their
-//   colours, height and shades), the softbox and room, the neon's height and
-//   everything else that is seen.
+// - Authored: the chrome, the waves' height and profile, the waves continued
+//   past the window to fill the screen, the lamps (their colours, height and
+//   shades), the softbox and room, the neon's height and everything else
+//   that is seen.
 //
 // The timing follows the original exactly: black before the first symbol,
-// the waves' height and the lamps' power both following ring_intensity (so
-// the fades are the waves rising and settling, and between them the pool is
-// a still black mirror showing only the neon), and from 80.36 s the PSTART
+// the lamps' power following ring_intensity, so the fades are the lamps
+// coming up and going out. By default the waves stay whole with the lamps
+// off, seen only by the neon on them (POOL_DARK_WAVES; at 0 their height
+// follows ring_intensity too, and between the fades the pool is a still
+// black mirror showing only the neon). From 80.36 s the PSTART
 // picture at its fade level, placed with tonemap_inverse as faithful-plus
 // places it, so that at 81.27 s the screen shows the picture part 5 opens on.
 
@@ -36,6 +41,11 @@
 // The waves' depth: each layer's crest height at full intensity, in rows
 // (source rows on the 4:3 display). About 1 keeps them liquid; 2 is choppy.
 const POOL_DEPTH=.8;
+// How much of that height the waves keep with the lamps off, before and
+// after the rings' fades: 0 lets them settle into a still black mirror, as
+// the original is black; 1 keeps them whole, seen only by the neon on their
+// flanks, as the glass style's rods catch it.
+const POOL_DARK_WAVES=1.0;
 // Sharpening of each layer's profile, from a sine (0) towards the
 // original's square bands: steeper flanks at the band edges, flatter
 // crests and troughs.
@@ -46,6 +56,11 @@ const POOL_CORE=3.0;
 // source pixels and so 1.2 times taller than wide, which keeps the pattern
 // on the original's; RING_ROUND would make them round.
 const POOL_METRIC=RING_FAITHFUL;
+// Where the waves are: 0 the original's ring window (256 x 184 source
+// pixels at (32, 8), read from the code; the pool is level round it), 1 the
+// whole screen, wide screens included (authored: the waves are continued
+// past the window, from the same sources).
+const POOL_FILL=1;
 // The chrome: its reflectance at normal incidence and its roughness (GGX
 // alpha), widened where the waves turn faster than a pixel can show.
 const POOL_METAL=vec3f(.62,.64,.68);
@@ -102,14 +117,20 @@ fn pool_layer(layer:u32,s:vec2f,shutter:f32)->vec3f {
     let g=POOL_METRIC*d/(r*2.0*ring_width())*p.y;
     return vec3f(p.x,g.x/COLUMN,-g.y);
 }
-fn pool_amp()->f32 {return POOL_DEPTH*ring_intensity();}
+fn pool_amp()->f32 {return POOL_DEPTH*mix(POOL_DARK_WAVES,1.0,ring_intensity());}
+// Where the waves run at source point s: 1 in them, antialiased over `blur`
+// pixels at the ring window's edge, or everywhere when they fill the screen.
+fn pool_window(s:vec2f,blur:f32)->f32 {
+    if POOL_FILL==1 {return 1.0;}
+    return ring_window(s,blur);
+}
 // The surface at source point s: height in rows and slope in scene axes.
-// The first layer's waves less the second's, inside the original's ring
-// window (the pool is level beyond it).
+// The first layer's waves less the second's, where the waves run (the pool
+// is level beyond).
 fn pool_wave(s:vec2f,shutter:f32,window:f32)->vec3f {
     return (pool_layer(0u,s,shutter)-pool_layer(1u,s,shutter))*window*pool_amp();
 }
-fn pool_height(s:vec2f)->f32 {return pool_wave(s,.5*POOL_EXPOSURE,ring_window(s,1.0)).x;}
+fn pool_height(s:vec2f)->f32 {return pool_wave(s,.5*POOL_EXPOSURE,pool_window(s,1.0)).x;}
 
 // ---- Light -----------------------------------------------------------------
 // GGX reflection of a light from unit direction l, per unit irradiance, for
@@ -175,7 +196,7 @@ fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
     let flat_p=vec3f(scene_of_source(s),0.0);
     let flat_r=reflect(ray,vec3f(0,0,1));
     let f0=POOL_METAL+(1.0-POOL_METAL)*pow(1.0-v.z,5.0);
-    let window=ring_window(s,px.pixel*1.5);
+    let window=pool_window(s,px.pixel*1.5);
     // Level: a black mirror showing only the neon (and, faintly, the room).
     if pool_amp()<=0.0 || window<=0.0 {
         return f0*(neon_reflection(flat_p,flat_r,POOL_NEON_HEIGHT,POOL_ROUGH*.6/max(flat_r.z,.05))

@@ -530,13 +530,16 @@ Pool (**3**) shows the rings as liquid chrome seen from above. The two ring
 layers are two wave sources at the original's ring centres, with its band
 spacing; the second layer's waves are inverted, so the surface lies level and
 dark where the original is black, and rises or sinks where only one layer is
-set. A low lamp hangs over each source, cool over the first and warm over
-the second, so each source's waves catch its colour and their crests shade
-the waves beyond. Waves and lamps rise and settle with the original's ring
-fades; between them the pool is a still black mirror, and the neon symbols
-hover just above it, their reflections bent by the waves. It is exposed over
-a whole 60 Hz frame so the fringes don't flicker. It took 1.7 to 3.5 ms a
-frame.
+set. The waves fill the whole screen, widescreen included, rather than the
+original's 256 by 184 window. A low lamp hangs over each source, cool over
+the first and warm over the second, so each source's waves catch its colour
+and their crests shade the waves beyond. The lamps come up and go out with
+the original's ring fades, but the waves stay: before and after the fades
+they are seen only by the neon symbols hovering just above, whose
+reflections they bend. (`POOL_DARK_WAVES` at 0 lets them settle into a still
+black mirror between the fades instead.) It is exposed over a whole 60 Hz
+frame so the fringes don't flicker. It takes about 1.8 ms a frame at
+2560 × 1440.
 
 Room (**4**) keeps part 2's chrome bump wall, seen with the scroller's camera,
 and turns the lights out: the wall fades with the scroller and stays black
