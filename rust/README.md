@@ -497,12 +497,52 @@ them instead). Fragments shorter than a tube's width go. A haze of
 scattered light follows the tubes' shape.
 The tubes light the rings and a dark backing behind them, close by and in a
 wide pool. The neon light is an approximation: a prefiltered map of the
-tubes, not traced light. Glass, pool, room and volume
-are placeholders for experiments under way; for now they show faithful-plus
-with a tint, and room shows the bump wall behind it, faintly lit by the
-neon. At 2560 by 1440 on an Apple M5 Max, with other work sharing the GPU,
-faithful-plus took 0.6 to 1.25 ms a frame over repeated runs, including
-bloom and tonemapping, and faithful HD 0.15 to 0.5 ms.
+tubes, not traced light. At 2560 by 1440 on an Apple M5 Max, with other work
+sharing the GPU, faithful-plus took 0.6 to 1.25 ms a frame over repeated
+runs, including bloom and tonemapping, and faithful HD 0.15 to 0.5 ms.
+
+The other styles keep the original's ring centres, bands, fades and symbol
+timing through the shared helpers; everything seen is authored.
+
+Glass (**2**) turns each ring layer into a clear glass plate whose set bands
+are raised rods, with layer 0's plate in front of layer 1's. Each plate is
+lit through its own edge, cool for the front plate and warm for the back
+one, so its rods glow from inside, brightest along their walls; the back
+plate is seen through the front one, bent by its rods. Where rods of both
+plates cross, an authored rule turns their light aside, so crossings stay
+dark as in the original and the moiré reads the same way. The symbols are
+neon tubes in front of the plates, lemon yellow here rather than the shared
+amber so they stay apart from the warm plate; the rods reflect them, and
+their light passes through the plates onto a dark backing. While the lamps
+are off, the neon still catches the glass faintly. `GLASS_LIGHTING` in
+`rings_glass.wgsl` switches the plates to clear glass with no colour, or to
+both plates lit blue from the left and warm from the right. It took 0.9 to
+2.4 ms a frame.
+
+Pool (**3**) shows the rings as liquid chrome seen from above. The two ring
+layers are two wave sources at the original's ring centres, with its band
+spacing; the second layer's waves are inverted, so the surface lies level and
+dark where the original is black, and rises or sinks where only one layer is
+set. A low lamp hangs over each source, cool over the first and warm over
+the second, so each source's waves catch its colour and their crests shade
+the waves beyond. Waves and lamps rise and settle with the original's ring
+fades; between them the pool is a still black mirror, and the neon symbols
+hover just above it, their reflections bent by the waves. It is exposed over
+a whole 60 Hz frame so the fringes don't flicker. It took 1.7 to 3.5 ms a
+frame.
+
+Room (**4**) keeps part 2's chrome bump wall, seen with the scroller's camera,
+and turns the lights out: the wall fades with the scroller and stays black
+until the first symbol. The lit symbol hangs a few rows in front of the wall
+as neon tubes, which light the bumps turned to them and show in their
+chrome. Two gobo projectors above the camera cast the ring layers onto the
+wall, layer 0 in cool blue and layer 1 in warm orange, aligned so that the
+wall's flat backing shows the original's bands exactly; the bumps take the
+pattern displaced towards each projector, shade and shadow themselves, and
+each tube casts a shadow in each beam. Lamps add, so the original's dark
+overlaps come from an authored subtraction rather than from the light. The
+bump shape and wall strength keys apply, and musical lighting (**L**) lets
+the lamps flare on the bass. It took 4.1 to 4.5 ms a frame on a quiet GPU.
 
 ### Adding a part-6 style
 
