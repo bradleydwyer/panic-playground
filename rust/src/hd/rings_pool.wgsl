@@ -95,8 +95,10 @@ const POOL_WARM=vec3f(1.0,.27,.055)*2.2;
 const POOL_SOFTBOX=vec3f(.85,.9,1.0)*.35;
 const POOL_SOFTBOX_AT=vec3f(-.50,.62,.60);
 const POOL_ROOM=.10;
-// The neon tubes' height above the level surface, in rows.
-const POOL_NEON_HEIGHT=8.0;
+// The neon tubes' height above the level surface, in rows: high enough
+// (about a quarter of the screen) that the waves' flanks catch them far out
+// across the pool, not only beneath them.
+const POOL_NEON_HEIGHT=48.0;
 // How strongly the surface mirrors the neon: the sharp image of the tubes
 // (1 is the chrome's own reflectance; more is authored, so the neon holds
 // its own against the lamps), and the soft glow round it from the chrome's
@@ -207,13 +209,20 @@ fn pool_power()->f32 {
 // where it meets the plane (hence the obliquity), with the pixel's own
 // footprint. Past about two source pixels, the light map blurred as far.
 // Through the fade-in it comes up with the rings (ring_peak).
+// The tubes are drawn where they are seen, at their source points; hanging
+// nearer the eye than the surface, a tube drawn at source point s is at
+// scene_of_source(s) times (EYE_Z - height) / EYE_Z in its plane, so a
+// point there is scaled back out to find the source point it is drawn at.
 fn pool_neon(p:vec3f,r:vec3f,pixel:f32,spread:f32)->vec3f {
     let hit=neon_plane_hit(p,r,POOL_NEON_HEIGHT);
     if hit.w<0.0 {return vec3f(0);}
-    let footprint=pixel+spread*hit.w/max(r.z,.05);
-    let soft=neon_reflection(p,r,POOL_NEON_HEIGHT,max(footprint,.6)/hit.w);
+    let out=EYE_Z/(EYE_Z-POOL_NEON_HEIGHT);
+    let s=source_of_scene(hit.xy*out);
+    let footprint=(pixel+spread*hit.w/max(r.z,.05))*out;
+    let sigma=max(footprint,.6);
+    let soft=NEON_LIGHT*(neon_map(neon_mask(),s,sigma)*neon_on()+neon_map(neon_previous(),s,sigma)*neon_previous_on());
     if footprint>2.0 {return soft*ring_peak();}
-    let sharp=neon_emission(source_of_scene(hit.xy),footprint);
+    let sharp=neon_emission(s,footprint);
     return mix(sharp,soft,smoothstep(.8,2.0,footprint))*ring_peak();
 }
 
@@ -252,8 +261,7 @@ fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
     // The neon in the sheen too: a soft glow round its sharp reflection.
     let mid_r=reflect(ray,mid_n);
     let mid_f=POOL_METAL+(1.0-POOL_METAL)*pow(1.0-max(dot(mid_n,v),0.0),5.0);
-    c+=mid_f*neon_reflection(here,mid_r,POOL_NEON_HEIGHT,sheen_alpha/max(mid_r.z,.05))*ring_peak()
-        *POOL_SHEEN.x*POOL_NEON_GLOW*f32(POOL_SHUTTER);
+    c+=mid_f*pool_neon(here,mid_r,px.pixel,sheen_alpha)*POOL_SHEEN.x*POOL_NEON_GLOW*f32(POOL_SHUTTER);
     for(var i=0;i<POOL_SHUTTER;i++) {
         let t=(f32(i)+.5)/f32(POOL_SHUTTER)*POOL_EXPOSURE;
         // Each sample at its own point in the pixel too (an R2 sequence), so
