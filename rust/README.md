@@ -546,19 +546,21 @@ dark where the original is black, and rises or sinks where only one layer is
 set. The waves fill the whole screen, widescreen included, rather than the
 original's 256 by 184 window. A low lamp hangs over each source, cool over
 the first and warm over the second, so each source's waves catch its colour
-and their crests shade the waves beyond. The neon symbols hang high above
-the surface, about a quarter of the screen, so the waves' flanks catch them
-far out across the pool. Each wave mirrors the tubes themselves, traced to
-where its reflection meets them, in perspective, with a soft glow round
-them from the chrome's sheen; both are twice as strong as the chrome alone
-would give, an authored boost so the neon holds its own against the lamps.
-Until the rings first fade in there is no pool, only the neon on black; the
-pool comes up with the fade, waves, lamps and reflections together. When
-the rings fade out the lamps go out, but the waves stay, seen only by the
-neon they reflect. (`POOL_DARK_WAVES` at 0 lets them settle into a still
-black mirror instead.) It is exposed over a whole 60 Hz frame, its samples
-spread across each pixel as well, so the fringes don't flicker and the
-reflections stay sharp. It takes about 2 ms a frame at 2560 × 1440.
+and their crests shade the waves beyond. While the rings are lit, the neon
+symbols hang high above the surface, about a quarter of the screen, so the
+waves' flanks catch them far out across the pool; as the rings fade out they
+sink to just above it, so in the dark their reflections keep near them.
+Each wave mirrors the tubes themselves, traced to where its reflection meets
+them, in perspective, with a soft glow round them from the chrome's sheen;
+both are twice as strong as the chrome alone would give, an authored boost
+so the neon holds its own against the lamps. Until the rings first fade in
+there is no pool, only the neon on black; the pool comes up with the fade,
+waves, lamps and reflections together. When the rings fade out the lamps go
+out, but the waves stay, seen only by the neon they reflect.
+(`POOL_DARK_WAVES` at 0 lets them settle into a still black mirror instead.)
+It is exposed over a whole 60 Hz frame, its samples spread across each pixel
+as well, so the fringes don't flicker and the reflections stay sharp. It
+takes about 2 ms a frame at 2560 × 1440.
 
 Room (**4**) keeps part 2's chrome bump wall, seen with the scroller's camera,
 and turns the lights out: the wall fades with the scroller and stays black

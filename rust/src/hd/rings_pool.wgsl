@@ -95,10 +95,13 @@ const POOL_WARM=vec3f(1.0,.27,.055)*2.2;
 const POOL_SOFTBOX=vec3f(.85,.9,1.0)*.35;
 const POOL_SOFTBOX_AT=vec3f(-.50,.62,.60);
 const POOL_ROOM=.10;
-// The neon tubes' height above the level surface, in rows: high enough
-// (about a quarter of the screen) that the waves' flanks catch them far out
-// across the pool, not only beneath them.
-const POOL_NEON_HEIGHT=48.0;
+// The neon tubes' height above the level surface, in rows: with the rings
+// lit, high (about a quarter of the screen), so the waves' flanks catch them
+// far out across the pool; with the lamps out, low, so their reflections
+// keep near them. It follows the rings' fades between the two.
+const POOL_NEON_HIGH=48.0;
+const POOL_NEON_LOW=8.0;
+fn pool_neon_height()->f32 {return mix(POOL_NEON_LOW,POOL_NEON_HIGH,ring_intensity());}
 // How strongly the surface mirrors the neon: the sharp image of the tubes
 // (1 is the chrome's own reflectance; more is authored, so the neon holds
 // its own against the lamps), and the soft glow round it from the chrome's
@@ -214,9 +217,10 @@ fn pool_power()->f32 {
 // scene_of_source(s) times (EYE_Z - height) / EYE_Z in its plane, so a
 // point there is scaled back out to find the source point it is drawn at.
 fn pool_neon(p:vec3f,r:vec3f,pixel:f32,spread:f32)->vec3f {
-    let hit=neon_plane_hit(p,r,POOL_NEON_HEIGHT);
+    let height=pool_neon_height();
+    let hit=neon_plane_hit(p,r,height);
     if hit.w<0.0 {return vec3f(0);}
-    let out=EYE_Z/(EYE_Z-POOL_NEON_HEIGHT);
+    let out=EYE_Z/(EYE_Z-height);
     let s=source_of_scene(hit.xy*out);
     let footprint=(pixel+spread*hit.w/max(r.z,.05))*out;
     let sigma=max(footprint,.6);
