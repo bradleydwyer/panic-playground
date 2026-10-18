@@ -159,6 +159,7 @@ cargo run --release --locked --features hires --bin panic-hd -- --rings --seek 4
 | --- | --- |
 | `--rings` | Continue through part 6, in the faithful-plus style |
 | `--rings-style glass` | Choose the part 6 style: `faithful-plus` (the default), `glass`, `pool`, `room` or `volume` |
+| `--neon-flicker last` | Where the styles' neon falters: `off`, `first` (before the rings), `last` (as they fade out and after; the default) or `both` |
 
 Part 6 starts at 42.23 seconds, black until its first symbol at 43.41. The
 rings fade in from 50.33 seconds and out from 72.99, and the PSTART picture
@@ -173,8 +174,10 @@ interfering on liquid chrome under a cool and a warm lamp. Room projects them
 in cool and warm onto the scroller's bump wall, left in the dark and lit by
 the neon. Volume makes them spherical waves in haze, with the camera
 drifting off the original's axis while the rings are at full strength. In
-the app, **1** to **5** switch styles and
-**M** shows faithful HD, the original's look at display resolution. The
+every style the neon is unreliable as the rings fade out and after, like a
+dying sign: mostly lit, with troubled spells where it sputters out
+(authored; **N** moves it to before the rings, to both, or turns it off).
+In the app, **1** to **5** switch styles and **M** shows faithful HD, the original's look at display resolution. The
 [renderer notes](rust/README.md#part-6-rings) say what is read from the port,
 what is interpreted and what is authored, and how to add a style.
 
@@ -190,6 +193,7 @@ what is interpreted and what is authored, and how to add a style.
 | Tab | Toggle the original rendering |
 | C | Toggle the split comparison |
 | 1 to 5 | Part 6 style: faithful-plus, glass, pool, room, volume |
+| N | Part 6 neon flicker: off, first, last, both |
 | F | Toggle fullscreen |
 | S | Save a PNG under `artifacts/` |
 | P | Show or hide the frame-rate counter |
