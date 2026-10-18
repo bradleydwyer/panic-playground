@@ -342,10 +342,38 @@ fn bump()->Bump {
     return Bump(.875-radius,radius,mix(.55,1.0,s),dome,radius-dome,mix(1.0,1.0/1.2,s));
 }
 fn octant(v:vec3f)->vec3f {return select(vec3f(1),vec3f(-1),v<vec3f(0));}
-// Analytic ray / rounded box intersection, adapted from Inigo Quilez's
-// MIT-licensed rounded box intersector (iquilezles.org/articles/intersectors):
-// bounding box, then flat faces, the corner sphere and the edge cylinders of
-// the entry octant. rd must be normalised. Returns -1 on a miss.
+// Analytic ray / rounded box intersection: bounding box, then flat faces, the
+// corner sphere and the edge cylinders of the entry octant. rd must be
+// normalised, and size.z 0 as for the bumps: the z edges are left out.
+// Returns -1 on a miss.
+//
+// Adapted from roundedboxIntersect() in Inigo Quilez's "Rounded Box -
+// intersection", https://www.shadertoy.com/view/WlSXRW (the same code is in
+// https://iquilezles.org/articles/intersectors/). Changes: ported to WGSL,
+// near-zero direction components nudged off zero, octant() for sign() and no
+// z edges. bump_hit()'s box normal is his roundedboxNormal(). Both are used
+// under his MIT License; the notice, from the head of that shader:
+//
+// The MIT License
+// Copyright © 2019 Inigo Quilez
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to
+// deal in the Software without restriction, including without limitation the
+// rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+// sell copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+// IN THE SOFTWARE.
 fn rounded_box(ro0:vec3f,rd0:vec3f,size:vec3f,rad:f32)->f32 {
     let rd1=select(rd0,octant(rd0)*1e-7,abs(rd0)<vec3f(1e-7));
     let m=1.0/rd1;let n=m*ro0;let k=abs(m)*(size+rad);
@@ -376,7 +404,8 @@ fn rounded_box(ro0:vec3f,rd0:vec3f,size:vec3f,rad:f32)->f32 {
 // Entry into one bump, with its tile-space normal; t<0 on a miss. Entering
 // the intersection of two convex solids is the later of the two entries, as
 // long as the ray is still inside both; that holds for rays arriving from
-// above, which is all the wall needs.
+// above, which is all the wall needs. The box normal is Quilez's (see
+// rounded_box).
 fn bump_hit(ro:vec3f,rd:vec3f,shape:Bump)->vec4f {
     let size=vec3f(shape.inner,shape.inner,0);
     let t=rounded_box(ro,rd,size,shape.radius);
