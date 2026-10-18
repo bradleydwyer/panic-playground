@@ -232,39 +232,48 @@ default 0.6; **-** and **=** in steps of 0.1) sets how present the wall is.
 All of this is authored, not recovered from the original.
 
 `--wall-waves` adds waves to the `chrome` and `wall` backdrops. They are off
-by default; **W** turns them on and off while playing, and `--wall-waves 0.5`
-sets a strength from 0 to 1 (1 if omitted). The original's wall is flat, an
-image moved by palette changes, so the waves, their timing and their light are
-all authored. A swell about 11 tiles from crest to crest rolls across the wall
-every 4 seconds, varied along its crests by a slower, longer one. Ripples
-spread out in rings at 8 tiles a second and settle within 3 seconds. Each
-starts on a hit in the music: the scroller's bass cue rising through a
-threshold, at most one every 0.8 seconds, read from the same causal analysis
-of the PCM as the musical lighting, once the hit has played. The relative
-level and the intro's accent cue set its size, so the strongest downbeats (in
-the local analysis, at about 22, 29 and 36 seconds) make the largest rings.
-Their origins step through a low-discrepancy sequence across the middle of the
-screen. The waves are anchored to the screen, and the wall's sway carries the
+by default, and **W** turns them on and off while playing. The original's wall
+is flat, an image moved by palette changes, so the waves and their light are
+authored, not recovered. A swell about 15 tiles from crest to crest rolls
+across the wall every 5.5 seconds, varied along its crests by a slower, longer
+one. The waves are anchored to the screen, and the wall's sway carries the
 bumps through them. They ease in from the laser cut's first opening to the
-start of the text, and settle over the 1.5 seconds before part 2's fade. The
-ripple schedule is computed when the clip loads, and the waves depend only on
-the time, so seeking, pausing and captures agree.
+start of the text, and settle over the 1.5 seconds before part 2's fade. They
+depend only on the time, so seeking, pausing and captures agree.
 
-Each pixel finds the waves once, at the middle of its exposure, with their
-slope, rate of rise and curvature. Its samples trace the bumps resting rigidly
-on the waves' tangent plane there, each bump on the plane at its own tile's
-centre and tilted with it, so the intersection stays analytic and exact for
-that plane; across the wall the bumps follow the waves' curve. Each sample
-carries the plane to its own time in the 1/100 s exposure, to first order.
-The depth shows mostly through light. Tilted bumps reflect other parts of the
-studio, so highlights travel across the crests and the cool and warm side
-lights fall on opposite slopes. A tile's overall brightness follows the
-studio light its tilt reflects, and troughs, curved in below their crests,
-are darker. The letters' reflections shift with the tilt, and towards the
-sides of the screen raised tiles shift slightly against lower ones. The lamps
-are too frontal, and the slopes too gentle, for the crests to cast shadows.
-The waves add about 0.2 to 0.4 ms per frame at 2560 × 1440 on an Apple M5
-Max.
+With the waves on, a grazing light of the wall's own lights it from the left,
+the scene's cool side, a little above the horizontal and 18 degrees over the
+wall. The crests throw shadows across the troughs, the bumps on the slopes
+facing the light catch it, and each bump shades its neighbour. As the light
+strengthens it takes over from the studio light, so the wall's overall level
+stays about the same and the shadows read. It lights only the wall: the
+letters' lamps and the studio are unchanged, and without the waves nothing
+changes at all.
+
+Two controls adjust them while playing, each in steps of 0.1, and both
+appear in the window title:
+
+- Depth, the swell's height: `--wall-waves 0.5` sets it, from 0.1 (barely
+  there) to 1 (far too deep), 0.5 by default; **,** and **.** step it. At 0.5
+  the swell rises and falls 1.3 tile widths, about six times the bumps' own
+  height.
+- Light, the side light's strength and so its shadows': `--wave-light 0.5`
+  sets it, from 0 (the studio alone) to 1 (stark), 0.5 by default; **;**
+  and **'** step it.
+
+Each bump rests rigidly on the waves at its own tile's centre, tilted with
+their slope there, and stays on its tile; every pixel and sample sees the same
+bump at that moment, so the intersection stays analytic. Each sample finds
+the waves at its own time in the 1/100 s exposure. The backing between the
+bumps is the waves' tangent plane at the pixel, and that plane, widened by how
+far the waves curve away from it, bounds the few tiles a ray must test. The
+crests' shadows come from a short march along the light across the waves'
+own surface, once per pixel and softened over the light's breadth. The bumps'
+shadows come from a ray towards the light through the bumps within a tile or
+so, on every other sample, each aimed at a different part of the light, so
+their edges are soft too. The side light follows the waves' slope more than
+each bump's, so the bumps don't sparkle. With the waves on, the wall costs
+about 1.5 to 2.5 ms more per frame at 2560 × 1440 on an Apple M5 Max.
 
 `--scroller-lighting musical` uses relative loudness and bass/treble
 onsets from the original PCM. Bass pulses the blue/orange lights, their metal
@@ -367,6 +376,8 @@ optical simulation. All fields are generated locally in memory.
 | [ / ] | Bump shape for the wall backdrops |
 | - / = | Strength of the wall backdrops |
 | W | Waves on the wall backdrops, on or off |
+| , / . | Depth of the waves |
+| ; / ' | Strength of the waves' side light and shadows |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
