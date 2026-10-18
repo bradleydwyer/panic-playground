@@ -38,7 +38,7 @@ mod frame;
 mod mountain;
 #[path = "field_zoom.rs"]
 mod zoom;
-pub use frame::{FLUID, FRAME, FRAME_TAKES_PART6_FADE};
+pub use frame::{FLUID, FRAME, FRAME_TAKES_PART6_FADE, frame_shape};
 pub use mountain::{MOUNTAIN, RELIEF_SIZE};
 pub use zoom::ZOOM;
 

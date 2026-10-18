@@ -13,6 +13,7 @@
 //! `FLUID.checkpoint` steps, or from the start.
 use super::field::{
     BUFFER_SIZE, COARSE_CELLS, FLUID, FieldBlock, FieldPreview, FluidStart, MAP_SIZE, authors,
+    frame_shape,
 };
 use super::renderer::wgsl_parts;
 use bytemuck::{Pod, Zeroable};
@@ -55,7 +56,7 @@ struct Inputs {
     layout: BindGroupLayout,
     uniform: Buffer,
     sampler: Sampler,
-    views: [TextureView; 8],
+    views: [TextureView; 9],
     blank: TextureView,
 }
 
@@ -71,7 +72,7 @@ impl Inputs {
                 resource: BindingResource::Sampler(&self.sampler),
             },
         ];
-        for (binding, view) in [1, 2, 3, 4, 5, 6, 7, 8].into_iter().zip(&self.views) {
+        for (binding, view) in [1, 2, 3, 4, 5, 6, 7, 8, 13].into_iter().zip(&self.views) {
             entries.push(BindGroupEntry {
                 binding,
                 resource: BindingResource::TextureView(view),
@@ -238,6 +239,14 @@ impl FieldRenderer {
             TextureFormat::Rgba16Float,
             bytemuck::cast_slice(&preview.relief.texels),
         );
+        // The frame author's shape, baked from the picture (field_frame.rs).
+        let shape = frame_shape(preview);
+        let shape = made(
+            "Part 5 frame shape",
+            shape.size,
+            TextureFormat::Rgba16Float,
+            bytemuck::cast_slice(&shape.texels),
+        );
         let blank = made("No prepass", (1, 1), TextureFormat::Rgba16Float, &[0; 8])
             .create_view(&Default::default());
         let sampler = device.create_sampler(&SamplerDescriptor {
@@ -275,7 +284,7 @@ impl FieldRenderer {
                 count: None,
             },
         ];
-        entries.extend([1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12].map(sampled_entry));
+        entries.extend([1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13].map(sampled_entry));
         let layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("Part 5 inputs"),
             entries: &entries,
@@ -331,6 +340,7 @@ impl FieldRenderer {
                 &coarse,
                 &relief,
                 reference,
+                &shape,
             ]
             .map(|t| t.create_view(&Default::default())),
             blank,
