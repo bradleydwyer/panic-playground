@@ -39,7 +39,8 @@ const GLASS_IOR=1.5;
 //   one brighter, as the original's grey 48 to its grey 32.
 // 2 sides: clear glass lit blue only from the left side and warm only
 //   from the right, both plates alike (the front one brighter); each lamp's
-//   light fades across the plate and lights the rods' walls facing it.
+//   light fades across the plate and lights the rods' walls facing it, and
+//   the rods reflect only those two lamps.
 const GLASS_LIGHTING=0;
 // The layers' edge lamps: colour and level, and the way their light runs
 // through each plate (scene axes): cool in from the upper left, warm from
@@ -57,6 +58,9 @@ const GLASS_SIDE_BLUE=vec3f(.10,.42,1.0)*1.4;
 const GLASS_SIDE_WARM=vec3f(1.0,.30,.06)*1.2;
 const GLASS_SIDE_PLATES=vec2f(1.0,.6);
 const GLASS_SIDE_FAR=.08;
+// Sides: the two lamps as the rods reflect them, in place of the softbox,
+// so nothing else lights the glass.
+const GLASS_SIDE_SHEEN=.8;
 // A rod's glow from a lamp: the body, and the brighter line just inside
 // each wall, where the light leaves it (strongest on the walls facing one
 // way: for an edge lamp away from it, for a side lamp towards it).
@@ -154,6 +158,17 @@ fn glass_softbox(r:vec3f)->vec3f {
     var c=vec3f(.9,.95,1.0)*exp(-dot(soft,soft)*9.0)*smoothstep(0.0,.3,r.z);
     c+=vec3f(.30,.32,.35)*exp(-pow((r.y-.85)*5.0,2.0))*smoothstep(0.0,.3,r.z);
     return c;
+}
+// What a surface reflects along r from the lamps: the softbox, or for
+// lighting 2 only the two side lamps (bass, treble: their levels).
+fn glass_studio(r:vec3f,lit:f32,bass:f32,treble:f32)->vec3f {
+    if GLASS_LIGHTING==2 {
+        let facing=smoothstep(-.2,.3,r.z);
+        let left=exp(-pow((r.x+.62)*3.0,2.0))*facing;
+        let right=exp(-pow((r.x-.66)*3.5,2.0))*facing;
+        return (GLASS_SIDE_BLUE*bass*left+GLASS_SIDE_WARM*treble*right)*GLASS_SIDE_SHEEN;
+    }
+    return glass_softbox(r)*GLASS_SOFTBOX*lit;
 }
 // ---- The neon, in this style's colour ----------------------------------------
 // Local copies of rings_common.wgsl's neon_tube and neon_glass with the gas
@@ -310,7 +325,7 @@ fn glass_scene(px:RingsPixel,s:vec2f,lit:f32,caught:f32)->vec3f {
     let n0=normalize(mix(up,glass_normal(f),window0));
     let f0=glass_fresnel(dot(n0,-ray));
     let r0=reflect(ray,n0);
-    var c=f0*(glass_softbox(r0)*GLASS_SOFTBOX*lit+glass_glint(p0,r0,blur,f.curve)*GLASS_GLINT*caught)*window0;
+    var c=f0*(glass_studio(r0,lit,bass,treble)+glass_glint(p0,r0,blur,f.curve)*GLASS_GLINT*caught)*window0;
     // Through the rod and out of the plate's flat back; total internal
     // reflection there shows nothing behind.
     let inside=refract(ray,n0,1.0/GLASS_IOR);
@@ -335,7 +350,7 @@ fn glass_scene(px:RingsPixel,s:vec2f,lit:f32,caught:f32)->vec3f {
     // The neon's light gathered in the rods, let out along their rims; the
     // back plate's comes through the front one's rods.
     c+=glass_neon_light(p0,up)*GLASS_GATHER*glass_rims(f)*a0*caught;
-    var back=glow1+f1*(glass_softbox(r1)*GLASS_SOFTBOX*lit+glass_glint(p1,r1,blur,b.curve)*GLASS_GLINT*caught)*window1;
+    var back=glow1+f1*(glass_studio(r1,lit,bass,treble)+glass_glint(p1,r1,blur,b.curve)*GLASS_GLINT*caught)*window1;
     // The dark backing, lit by the neon through both plates.
     let p2=vec3f(p1.xy,-GLASS_DEPTH-GLASS_GAP-GLASS_FLOOR);
     let neon2=glass_neon_light(p2,up)*caught;
