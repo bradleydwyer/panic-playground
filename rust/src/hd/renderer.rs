@@ -108,7 +108,8 @@ struct Controls {
     // Ring intensity 0..1, PSTART level 0..1, unused, unused.
     ring_fades: vec4f,
     // Lit mask (-1 none), previous mask, seconds since the lit window began
-    // (or since the last ended), seconds until it ends (-1 none lit).
+    // (or since the last ended), seconds until it ends (-1 none lit); the
+    // windows are taken a frame ahead, so the third is down to -1/70 then.
     symbol: vec4f,
     // Symbol atlas and neon light map: origin and size in source pixels.
     symbol_atlas: vec4f,

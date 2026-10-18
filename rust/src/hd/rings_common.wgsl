@@ -204,20 +204,23 @@ const SYMBOL_YELLOW=vec3f(1,1,.0683);
 fn neon_mask()->i32 {return i32(u.symbol.x);}
 fn neon_previous()->i32 {return i32(u.symbol.y);}
 // Seconds since the lit window began (or since the last one ended, with
-// none lit), and until it ends (-1 with none lit).
+// none lit), and until it ends (-1 with none lit). The windows are taken a
+// frame ahead, so the first is negative, down to -1/70, through the frame
+// before a switch.
 fn neon_since()->f32 {return u.symbol.z;}
 fn neon_until()->f32 {return u.symbol.w;}
-// How lit each symbol is, 0..1: the new one comes on over one frame from its
-// first lit frame, as the old one goes off (an authored cross-fade; the
-// original switches between frames). Steady in between: the HD views show
-// the original's 35 Hz flicker as its average.
+// How lit each symbol is, 0..1: the new one comes on over the frame before
+// its first lit frame, as the old one goes off (an authored cross-fade; the
+// original switches between frames), so at each frame's own time the HD
+// views show that frame's symbol. Steady in between: they show the
+// original's 35 Hz flicker as its average.
 fn neon_on()->f32 {
     if u.symbol.x<0.0 {return 0.0;}
-    return clamp(u.symbol.z*70.0,0.0,1.0);
+    return clamp(u.symbol.z*70.0+1.0,0.0,1.0);
 }
 fn neon_previous_on()->f32 {
     if u.symbol.y<0.0 {return 0.0;}
-    return 1.0-clamp(u.symbol.z*70.0,0.0,1.0);
+    return 1.0-clamp(u.symbol.z*70.0+1.0,0.0,1.0);
 }
 // Authored neon tubes, in an amber yellow warmer than the original's lemon
 // (the owner's direction: lit neon in glass tubes, after photographs of neon

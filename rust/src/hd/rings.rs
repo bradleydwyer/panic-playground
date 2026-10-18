@@ -1675,10 +1675,14 @@ impl RingsPreview {
             }
         });
         let picture = self.lerp_at(time, |f| f.state.picture.map_or(0.0, |l| l as f64 / 64.0));
+        // The windows as of the next frame, so that a switch completes on the
+        // original's own frame and each frame time shows exactly that frame's
+        // symbol: during the frame before, the times below are negative.
         let mut symbol = [-1.0, -1.0, 0.0, -1.0];
-        let current = self.windows.partition_point(|w| w.start <= j);
+        let ahead = self.frame_at(time + 1.0 / FRAME_RATE as f64).unwrap_or(0);
+        let current = self.windows.partition_point(|w| w.start <= ahead);
         if let Some(w) = current.checked_sub(1).map(|i| self.windows[i]) {
-            if j < w.end {
+            if ahead < w.end {
                 symbol[0] = w.mask as f32;
                 symbol[2] = (time - seconds(w.start)) as f32;
                 symbol[3] = (seconds(w.end) - time) as f32;
@@ -2248,6 +2252,10 @@ mod tests {
                         Some(n) => {
                             note(&mut events, "first symbol", j);
                             assert!(lit == masks[n as usize], "symbol {n} at {j}");
+                            // At the frame's own time the HD views show it fully.
+                            let symbol = rings.controls(seconds(j)).symbol;
+                            assert_eq!(symbol[0], n as f32, "HD symbol at {j}");
+                            assert!(symbol[2] * 70.0 + 1.0 >= 0.999, "HD symbol at {j} fading");
                         }
                         None => assert!(!lit.contains(&true), "unlit frame {j}"),
                     }
