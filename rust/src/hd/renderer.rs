@@ -55,7 +55,9 @@ struct Uniforms {
     ring_bands: [f32; 4],
     ring_fades: [f32; 4],
     symbol: [f32; 4],
+    symbol_layers: [f32; 4],
     symbol_atlas: [f32; 4],
+    authored_atlas: [f32; 4],
     neon_map: [f32; 4],
     /// Spare values for the selected part-6 style (`StyleInfo::controls`).
     rings_style: [[f32; 4]; 4],
@@ -109,12 +111,20 @@ struct Controls {
     // Ring intensity 0..1, PSTART level 0..1, the most the rings have been
     // lit so far (0..1), unused.
     ring_fades: vec4f,
-    // Lit mask (-1 none), previous mask, seconds since the lit window began
-    // (or since the last ended), seconds until it ends (-1 none lit); the
-    // windows are taken a frame ahead, so the third is down to -1/70 then.
+    // The original's lit mask (-1 none), its previous mask, seconds since the
+    // lit window began (or since the last ended), seconds until it ends (-1
+    // none lit); the windows are taken a frame ahead, so the third is down to
+    // -1/70 then.
     symbol: vec4f,
-    // Symbol atlas and neon light map: origin and size in source pixels.
+    // The symbol atlas layers that draw the lit and previous symbols (-1
+    // none): the original's mask, 0..15, or in the middle of part 6 an
+    // authored set's drawing, 16 + 16 k + mask for set k; unused, unused.
+    symbol_layers: vec4f,
+    // The atlases of the original symbols (layers 0..15) and of the authored
+    // sets (16 and on), and the rectangle both neon light maps cover: origin
+    // and size in source pixels.
     symbol_atlas: vec4f,
+    authored_atlas: vec4f,
     neon_map: vec4f,
     // Spare values for the selected style, from its StyleInfo::controls.
     rings_style: array<vec4f,4>,
@@ -788,7 +798,9 @@ impl Renderer {
         u.ring_bands = controls.ring_bands;
         u.ring_fades = controls.ring_fades;
         u.symbol = controls.symbol;
+        u.symbol_layers = controls.symbol_layers;
         u.symbol_atlas = controls.symbol_atlas;
+        u.authored_atlas = controls.authored_atlas;
         u.neon_map = controls.neon_map;
         u.rings_style = controls.rings_style;
         self.queue
@@ -1317,12 +1329,21 @@ mod tests {
     /// The constants the part-6 shaders repeat from hd/rings.rs and clip.rs.
     #[test]
     fn part6_shaders_repeat_the_rust_constants() {
-        use super::super::rings::{NEON_RADIUS, RING_WINDOW, SYMBOL_LIMIT, SYMBOL_SCALE};
+        use super::super::rings::{
+            NEON_RADIUS, NEON_STROKE, ORIGINAL_SYMBOLS, RING_WINDOW, SYMBOL_LIMIT, SYMBOL_SCALE,
+            TUBE_LIGHT_SCALE,
+        };
         let common = include_str!("rings_common.wgsl");
         for constant in [
             format!("const SYMBOL_SCALE={SYMBOL_SCALE}.0;"),
             format!("const SYMBOL_LIMIT={SYMBOL_LIMIT:.1};"),
             format!("const NEON_RADIUS={NEON_RADIUS:?};"),
+            format!("const ORIGINAL_SYMBOLS={ORIGINAL_SYMBOLS};"),
+            format!("const NEON_STROKE={NEON_STROKE:?};"),
+            format!(
+                "const TUBE_LIGHT_LOD={:.1};",
+                (TUBE_LIGHT_SCALE as f32).log2()
+            ),
             format!(
                 "const RING_WINDOW=vec4f({},{},{},{});",
                 RING_WINDOW[0], RING_WINDOW[1], RING_WINDOW[2], RING_WINDOW[3]
@@ -1380,7 +1401,9 @@ mod tests {
             ring_bands,
             ring_fades,
             symbol,
+            symbol_layers,
             symbol_atlas,
+            authored_atlas,
             neon_map,
             rings_style,
         ];

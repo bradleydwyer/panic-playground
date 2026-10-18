@@ -3,8 +3,9 @@
 // interpretation matching 98% of its pixels), circles in source pixels so
 // 1.2 times taller than wide on the 4:3 display as in the original, in the
 // original's window, with its two greys and XOR, antialiased. The symbols are
-// their smoothed stroke outlines at half strength in the original's average
-// tint: the original lights them on alternate frames only, and this shows
+// always the original's masks (original_mask(), never the authored sets the
+// neon shows), their smoothed stroke outlines at half strength in the
+// original's average tint: the original lights them on alternate frames only, and this shows
 // the average of that 35 Hz flicker in linear light. The PSTART picture is
 // smoothly upscaled and faded in DAC units, as its palette is. Not
 // reproduced: the original's one-frame stale ring pages after a page flip.
@@ -23,7 +24,7 @@ fn faithful_rings(px:RingsPixel)->vec3f {
     let b=ring_cover(1u,s,RING_FAITHFUL,0.0,fwidth(ring_radius(1u,s,RING_FAITHFUL,0.0)))*window;
     var c=ring_xor(a,b);
     for(var k=0;k<2;k++) {
-        let mask=select(neon_mask(),neon_previous(),k==1);
+        let mask=select(original_mask(),original_previous(),k==1);
         let on=select(neon_on(),neon_previous_on(),k==1);
         if on>0.0 {
             let d=symbol_field(mask,s).x;

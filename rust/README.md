@@ -400,6 +400,7 @@ optical simulation. All fields are generated locally in memory.
 | W | Waves on the wall backdrops, on or off |
 | , / . | Depth of the waves |
 | ; / ' | Strength of the waves' side light and shadows |
+| N | Part 6: the new symbols in its middle, or the original's throughout |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
@@ -411,6 +412,7 @@ optical simulation. All fields are generated locally in memory.
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --rings --seek 42
 cargo run --release --locked --features hires --bin panic-hd -- --rings --faithful --seek 50
+cargo run --release --locked --features hires --bin panic-hd -- --original-symbols --seek 50
 ```
 
 `--rings` continues past part 2 through part 6, the interference rings and
@@ -470,6 +472,66 @@ dead straight; a curved one that a circle fits closely becomes an exact arc,
 and freehand curves become smooth splines through the key points; and each
 sharp turn becomes a short bend, as glass tube is bent. A short overshoot past a corner at a run's end
 is dropped. The atlas measures distances exactly to these curves.
+
+#### New symbols
+
+In the middle of the part the neon shows authored symbols instead of the
+original's. Read from the port, the symbol windows come 32 to each pattern
+of the tune: windows 0 to 31 are order 06, from the first symbol at 43.41
+seconds, 32 to 63 order 07, and so on to window 320 at 80.33. The seven
+patterns from window 64 to 287 each show their own set of 16 drawings, and
+the original's mask number picks the drawing with the same number, so the
+music's order and pairs are kept:
+
+| Set | Windows | From | Theme |
+| --- | --- | --- | --- |
+| 1 | 64 to 95 | 50.79 s | Water |
+| 2 | 96 to 127 | 54.50 s | The elements and alchemy |
+| 3 | 128 to 159 | 58.16 s | Machines of 1992 |
+| 4 | 160 to 191 | 61.87 s | Faces |
+| 5 | 192 to 223 | 65.56 s | Then and now: brick phone to smartphone, and so on |
+| 6 | 224 to 255 | 69.24 s | Social media then and now |
+| 7 | 256 to 287 | 72.93 s | AI |
+
+Patterns 2, 4 and 7 never light one pair of masks (12 and 13 in the second;
+6 and 7 in the others), and those sets leave them out. The windows before
+64, and those from 288 (76.64 seconds) to the end of the part, keep the
+original symbols. Faithful HD always shows the original's, and
+`--original-symbols` (or **N**) shows them throughout. The ignored data
+test checks the windows' patterns and times, and that each set draws every
+mask its pattern lights.
+
+The drawings are authored for this remake, not recovered from the demo, so
+unlike the original's data they are kept in Git, in
+`src/hd/rings_symbols.txt`: one line per drawing of its set, mask, label and
+runs, open polylines in a 100-unit box on a 0 to 1000 grid. The file's
+header describes the format. Some are neon tracings of company logos
+(Claude, ChatGPT, Apple and Bitcoin in set 5; YouTube, Instagram, X,
+WhatsApp, Facebook, Reddit, LinkedIn and TikTok in set 6). Those logos are
+trademarks of their owners; their use here implies no affiliation or
+endorsement.
+
+When the preview loads, each drawing becomes a 320 by 200 mask like an
+original's: its box 110 rows high on the screen's centre, round on the 4:3
+display, with pixels set within the original strokes' half-width of 2.2
+rows (`NEON_STROKE`) of a run. The tubes are then made from the mask exactly
+as from the originals, through thinning, the runs and their crossing gaps,
+the clean curves and the light map. So the drawings' own runs aren't kept:
+where strokes meet, one runs through and the others stop short of it, and
+a branch that is left shorter than about two strokes' widths goes. Together
+with what thinning takes from a free end, a branch that reaches less than
+about 21 rows (19 units) from a junction disappears: the pins of the
+microchips, the joystick's stick, the monitor's stand, the anchor's crossbar
+and the crosses of the Mercury and Venus symbols, for example. A closed run that
+is nearly a circle becomes one, so Instagram's rounded square is drawn round.
+
+The neon alone draws them, so their 112 layers keep only the two fields the
+tubes use, the centreline and free-end distances, over their own smaller
+rectangle, and a light map at half the resolution each way (one texel per 2
+by 2 pixels, `SymbolDetail::Tubes`). They take 59 MB, against 30 MB for the
+original's 16 layers, and are built in about 0.2 seconds. Below about 1.2
+pixels their light map is blurrier than asked, which shows only where the
+pool's reflections soften.
 
 Faithful HD shows the original's look at display resolution: the analytic
 rings in the original window with its two greys and XOR, antialiased; the
@@ -576,6 +638,10 @@ The helpers in `rings_common.wgsl` include:
   (`neon_mask()`, `neon_previous()`, `neon_on()`, `neon_previous_on()`,
   `neon_since()`, `neon_until()`). The symbol switches are the original's
   own cues, on its tracker rows. Before 43.41 seconds the original is black.
+  `neon_mask()` and `neon_previous()` give the symbol layers the neon draws:
+  an authored set's drawings in the middle of the part, the original's masks
+  elsewhere. `original_mask()` and `original_previous()` always give the
+  original's masks, for faithful HD.
 - Music cues measured from the PCM, as the intro and scroller use them:
   `cue_energy()`, `cue_onset()`, `cue_low()`, `cue_accent()`, `cue_level()`,
   `cue_bass()`, `cue_treble()`, and `musical_lighting()` for the viewer's
@@ -586,9 +652,10 @@ The helpers in `rings_common.wgsl` include:
   `ring_window` and `ring_xor` (the original's greys). Pass `RING_FAITHFUL`
   for the original's tall rings or `RING_ROUND` for round ones, and a
   shutter position from 0 (now) to 1 (1/100 s earlier) for motion blur.
-- Symbols: `symbol_field` (the outline's signed distance, the distance to
-  the centreline, the stroke's half-width and the distance to the stroke's
-  nearest free end), `tube_distance`; the tubes as `NeonGlass` samples
+- Symbols, by layer: `symbol_field` (the outline's signed distance, the
+  distance to the centreline, the stroke's half-width and the distance to
+  the stroke's nearest free end; for the authored sets the outline and
+  half-width are derived from the centreline distance), `tube_distance`; the tubes as `NeonGlass` samples
   (the light they add, how much glass covers the pixel and where the scene
   behind shows through it) from `neon_tube`, `neon_tube_at` and
   `neon_glass`, composed over a scene with `neon_over`; `neon_emission`

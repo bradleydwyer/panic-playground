@@ -159,6 +159,7 @@ cargo run --release --locked --features hires --bin panic-hd -- --rings --seek 4
 | Option | Effect |
 | --- | --- |
 | `--rings` | Continue through part 6, as a liquid-chrome pool under neon |
+| `--original-symbols` | Part 6 with the original symbols throughout |
 
 Part 6 starts at 42.23 seconds, black until its first symbol at 43.41. The
 rings fade in from 50.33 seconds and out from 72.99, and the PSTART picture
@@ -173,6 +174,21 @@ leaving the waves lit by the neon alone. In the app, **M** shows faithful
 HD, the original's look at display resolution. The
 [renderer notes](rust/README.md#part-6-rings) say what is read from the port,
 what is interpreted and what is authored, and how to add a style.
+
+In the middle of the part the neon shows new symbols. Each of the seven
+patterns of the tune from 50.79 to 76.64 seconds has its own set of 16
+drawings in place of the original's: water; the elements and alchemy;
+machines of 1992; faces; things of the 1990s and what replaced them; social
+media then and now; and AI. The music still picks which symbol lights and
+when, so each set follows the original's order and pairs, and the original
+symbols play before and after. The new symbols were drawn for this remake;
+they are not recovered from the demo, and unlike its data they are kept in
+the repository, in `rust/src/hd/rings_symbols.txt`. Some are neon tracings
+of company logos: Claude, ChatGPT, Apple, Bitcoin, YouTube, Instagram, X,
+WhatsApp, Facebook, Reddit, LinkedIn and TikTok. Those logos are trademarks
+of their owners; their use here implies no affiliation or endorsement.
+Faithful HD keeps the original symbols, and `--original-symbols`, or **N**
+in the app, shows them throughout.
 
 Four other styles were tried alongside the pool and removed from the code:
 faithful-plus, the original's two greys with the neon symbols; edge-lit

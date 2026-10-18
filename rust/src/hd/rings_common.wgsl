@@ -11,6 +11,9 @@
 //   its frames, the PSTART fade level and the part's phases.
 // - Decoded locally from the data at load time: the 16 symbol masks, M.DAT's
 //   band geometry and the PSTART picture.
+// - Authored: the 7 new symbol sets (rings_symbols.txt) that the neon shows
+//   in the middle of the part in place of the original masks, drawn into
+//   masks like the originals at load time.
 // - Interpretation: the analytic band model fitted to M.DAT (98% of its
 //   pixels), smooth outlines and centrelines of the masks, interpolation
 //   between the original's 70 Hz frames and the symbols' averaged flicker.
@@ -27,6 +30,11 @@
 // The style's own half-resolution prepass (StyleInfo::prepass); 1 x 1 black
 // without one, and while the prepass itself renders.
 @group(0) @binding(6) var prepass:texture_2d<f32>;
+// The authored symbol sets (layers 16 and on, one texture layer each from
+// 0): only the tubes' fields, the centreline and free-end distances, and a
+// light map texel per 2 x 2 pixels (rings::SymbolDetail::Tubes).
+@group(0) @binding(7) var authored_atlas:texture_2d_array<f32>;
+@group(0) @binding(8) var authored_light:texture_2d_array<f32>;
 
 const PI=3.14159265;
 // clip::PIXEL_ASPECT: a source column is 5/6 of a row on the 4:3 display.
@@ -41,6 +49,13 @@ const RING_WINDOW=vec4f(32,8,288,192);
 const SYMBOL_SCALE=2.0;
 const SYMBOL_LIMIT=12.0;
 const NEON_RADIUS=3.8;
+// rings::ORIGINAL_SYMBOLS (layers 0 to 15 are the original's masks, the rest
+// the authored sets), rings::NEON_STROKE (the strokes' half-width, rows) and
+// the log2 of rings::TUBE_LIGHT_SCALE (the authored light map's coarser
+// texels, as mip levels).
+const ORIGINAL_SYMBOLS=16;
+const NEON_STROKE=2.2;
+const TUBE_LIGHT_LOD=1.0;
 // The default camera, as the scroller's: the eye 550 rows in front of the
 // screen plane z = 0, where the 4:3 frame is 200 rows high. Styles may use
 // their own.
@@ -183,30 +198,51 @@ fn ring_xor(a:f32,b:f32)->vec3f {
 }
 
 // ---- Symbols -----------------------------------------------------------------
-// The 16 masks Rings::new decodes from M.SUM, one atlas layer each. The lit
-// one changes on the original's tracker rows, about every 8 frames: the
+// The 16 masks Rings::new decodes from M.SUM are atlas layers 0 to 15. The
+// lit one changes on the original's tracker rows, about every 8 frames: the
 // selector toggles every second row and the page every second toggle. The
 // original lights it in yellow (63, 63, random 0..31) on even frames only.
-// Atlas layout: u.symbol_atlas holds its origin and size in source pixels.
-// Returns the outline's signed distance (positive inside the original
-// stroke), the distance to the stroke's centreline, the stroke's half-width
-// there and the distance to the nearest free end of a stroke's centreline,
-// all in source rows (scene units). Beyond the atlas, or with
-// no mask (-1), the distances read as at least SYMBOL_LIMIT.
-fn symbol_field(mask:i32,s:vec2f)->vec4f {
+// Layers 16 and on are the authored sets, 16 each (set k's drawing of mask n
+// at 16 + 16 k + n), which the neon shows in place of the originals in the
+// middle of the part; rings::window_layer picks the layer. Faithful HD
+// always draws the original masks.
+// Atlas layout: u.symbol_atlas and u.authored_atlas hold their origins and
+// sizes in source pixels.
+// Returns the outline's signed distance (positive inside the stroke), the
+// distance to the stroke's centreline, the stroke's half-width there and the
+// distance to the nearest free end of a stroke's centreline, all in source
+// rows (scene units). Beyond the atlas, or with no layer (-1), the distances
+// read as at least SYMBOL_LIMIT. The authored sets keep only the centreline
+// and free-end distances; their strokes are drawn NEON_STROKE wide, so the
+// half-width reads as that and the outline as that less the centreline
+// distance (approximate: it ignores the gaps cut into the runs).
+fn symbol_field(layer:i32,s:vec2f)->vec4f {
     let far=vec4f(-SYMBOL_LIMIT,SYMBOL_LIMIT,0,SYMBOL_LIMIT);
-    if mask<0 {return far;}
-    let t=(s-u.symbol_atlas.xy)/u.symbol_atlas.zw;
+    if layer<0 {return far;}
+    if layer<ORIGINAL_SYMBOLS {
+        let t=(s-u.symbol_atlas.xy)/u.symbol_atlas.zw;
+        if any(t<vec2f(0)) || any(t>vec2f(1)) {return far;}
+        return textureSampleLevel(symbol_atlas,linear,t,layer,0.0);
+    }
+    let t=(s-u.authored_atlas.xy)/u.authored_atlas.zw;
     if any(t<vec2f(0)) || any(t>vec2f(1)) {return far;}
-    return textureSampleLevel(symbol_atlas,linear,t,mask,0.0);
+    let f=textureSampleLevel(authored_atlas,linear,t,layer-ORIGINAL_SYMBOLS,0.0).rg;
+    return vec4f(max(NEON_STROKE-f.x,-SYMBOL_LIMIT),f.x,select(0.0,NEON_STROKE,f.x<SYMBOL_LIMIT),f.y);
 }
 // The original's average symbol tint in linear light: (63, 63, b) with b
 // uniformly random in 0..31, the mean of b's linear light (read from the
 // palette code; the average is an interpretation of its flicker).
 const SYMBOL_YELLOW=vec3f(1,1,.0683);
-// The lit mask (-1 for none) and the one lit before it (-1 if none).
-fn neon_mask()->i32 {return i32(u.symbol.x);}
-fn neon_previous()->i32 {return i32(u.symbol.y);}
+// The atlas layers the neon draws (-1 for none): the lit symbol's and the
+// one lit before it. In the middle of the part they are an authored set's
+// drawings of the original's masks; elsewhere, or with --original-symbols,
+// the original masks themselves.
+fn neon_mask()->i32 {return i32(u.symbol_layers.x);}
+fn neon_previous()->i32 {return i32(u.symbol_layers.y);}
+// The original's lit mask and the one lit before it (-1 for none), which
+// are also their atlas layers: for faithful HD, which always shows them.
+fn original_mask()->i32 {return i32(u.symbol.x);}
+fn original_previous()->i32 {return i32(u.symbol.y);}
 // Seconds since the lit window began (or since the last one ended, with
 // none lit), and until it ends (-1 with none lit). The windows are taken a
 // frame ahead, so the first is negative, down to -1/70, through the frame
@@ -289,28 +325,28 @@ fn neon_tube(d:f32,end:f32,across:vec2f,footprint:f32)->NeonGlass {
     let bend=vec2f(across.x*COLUMN,-across.y)*x*NEON_RADIUS*.6;
     return NeonGlass(light*glass,glass*mix(1.0,.35,max(column*lit,0.0)),bend);
 }
-// One mask's tube at source point s.
-fn neon_tube_at(mask:i32,s:vec2f,footprint:f32)->NeonGlass {
-    let f=symbol_field(mask,s);
+// One layer's tube at source point s.
+fn neon_tube_at(layer:i32,s:vec2f,footprint:f32)->NeonGlass {
+    let f=symbol_field(layer,s);
     if f.y>NEON_RADIUS+footprint {return NeonGlass(vec3f(0),0.0,vec2f(0));}
     let e=.5;
-    let g=vec2f(symbol_field(mask,s+vec2f(e,0)).y-symbol_field(mask,s-vec2f(e,0)).y,
-        symbol_field(mask,s+vec2f(0,e)).y-symbol_field(mask,s-vec2f(0,e)).y);
+    let g=vec2f(symbol_field(layer,s+vec2f(e,0)).y-symbol_field(layer,s-vec2f(e,0)).y,
+        symbol_field(layer,s+vec2f(0,e)).y-symbol_field(layer,s-vec2f(0,e)).y);
     // Source axes to scene axes: columns are 5/6 of a row; y turns up.
     let across=vec2f(g.x/COLUMN,-g.y);
     let n=select(vec2f(0),across/max(length(across),1e-5),length(across)>1e-4);
     return neon_tube(f.y,f.w,n,footprint);
 }
-// Tube distance (rows) to a mask's centreline at source point s.
-fn tube_distance(mask:i32,s:vec2f)->f32 {return symbol_field(mask,s).y;}
+// Tube distance (rows) to a layer's centreline at source point s.
+fn tube_distance(layer:i32,s:vec2f)->f32 {return symbol_field(layer,s).y;}
 // The lit tubes at source point s, current and previous symbol together.
 fn neon_glass(s:vec2f,footprint:f32)->NeonGlass {
     var n=NeonGlass(vec3f(0),0.0,vec2f(0));
     for(var k=0;k<2;k++) {
-        let mask=select(neon_mask(),neon_previous(),k==1);
+        let layer=select(neon_mask(),neon_previous(),k==1);
         let on=select(neon_on(),neon_previous_on(),k==1);
         if on>0.0 {
-            let t=neon_tube_at(mask,s,footprint);
+            let t=neon_tube_at(layer,s,footprint);
             n.light+=t.light*on;
             n.bend+=t.bend*t.glass*on;
             n.glass=max(n.glass,t.glass*on);
@@ -330,37 +366,40 @@ fn neon_emission(s:vec2f,footprint:f32)->vec3f {return neon_glass(s,footprint).l
 fn neon_haze(s:vec2f)->vec3f {
     var h=0.0;
     for(var k=0;k<2;k++) {
-        let mask=select(neon_mask(),neon_previous(),k==1);
+        let layer=select(neon_mask(),neon_previous(),k==1);
         let on=select(neon_on(),neon_previous_on(),k==1);
-        if on>0.0 {h+=(neon_map(mask,s,2.0)*NEON_HAZE.x+neon_map(mask,s,8.0)*NEON_HAZE.y)*on;}
+        if on>0.0 {h+=(neon_map(layer,s,2.0)*NEON_HAZE.x+neon_map(layer,s,8.0)*NEON_HAZE.y)*on;}
     }
     return NEON_GAS*h;
 }
-// Neon light map of one mask: the share of the area around source point s
+// Neon light map of one layer: the share of the area around source point s
 // covered by its tubes, blurred over about `sigma` source pixels (the mip
 // chain of rings::SymbolFields::light; trilinear, so roughly Gaussian).
-fn neon_map(mask:i32,s:vec2f,sigma:f32)->f32 {
-    if mask<0 {return 0.0;}
+// The authored sets' maps start a level coarser, so below about 1.2 pixels
+// they are blurrier than asked.
+fn neon_map(layer:i32,s:vec2f,sigma:f32)->f32 {
+    if layer<0 {return 0.0;}
     let t=(s-u.neon_map.xy)/u.neon_map.zw;
     let lod=log2(max(sigma/.6,1.0));
-    return textureSampleLevel(neon_light,linear,t,mask,lod).r;
+    if layer<ORIGINAL_SYMBOLS {return textureSampleLevel(neon_light,linear,t,layer,lod).r;}
+    return textureSampleLevel(authored_light,linear,t,layer-ORIGINAL_SYMBOLS,max(lod-TUBE_LIGHT_LOD,0.0)).r;
 }
-// Light from one mask's tubes, lying in the plane z = height (scene), at
+// Light from one layer's tubes, lying in the plane z = height (scene), at
 // scene point p with unit normal n. Approximate: the tubes are an area light
 // of radiance NEON_LIGHT; the irradiance from the plane is pi times the
 // share of it the point sees within about the distance to it (the light map
 // blurred that far), arriving from the tubes' centroid there (found from
 // the map's slope).
-fn neon_light_one(mask:i32,p:vec3f,n:vec3f,height:f32)->vec3f {
+fn neon_light_one(layer:i32,p:vec3f,n:vec3f,height:f32)->vec3f {
     let dz=height-p.z;
     let reach=abs(dz)+NEON_RADIUS;
     let sigma=.75*reach;
     let s=source_of_scene(p.xy);
-    let f=neon_map(mask,s,sigma);
+    let f=neon_map(layer,s,sigma);
     if f<1e-5 {return vec3f(0);}
     let e=.5*sigma;
-    let g=vec2f(neon_map(mask,s+vec2f(e,0),sigma)-neon_map(mask,s-vec2f(e,0),sigma),
-        neon_map(mask,s+vec2f(0,e),sigma)-neon_map(mask,s-vec2f(0,e),sigma))/(2.0*e);
+    let g=vec2f(neon_map(layer,s+vec2f(e,0),sigma)-neon_map(layer,s-vec2f(e,0),sigma),
+        neon_map(layer,s+vec2f(0,e),sigma)-neon_map(layer,s-vec2f(0,e),sigma))/(2.0*e);
     // The centroid's offset in source pixels, then in scene axes.
     let offset=clamp(g*sigma*sigma/f,vec2f(-3.0*sigma),vec2f(3.0*sigma));
     let l=normalize(vec3f(offset.x*COLUMN,-offset.y,select(-reach,reach,dz>=0.0)));

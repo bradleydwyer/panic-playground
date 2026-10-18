@@ -32,6 +32,7 @@ RESEARCH_FILES = {
     'rust/src/hd/rings.rs', 'rust/src/hd/rings_render.rs',
     'rust/src/hd/rings_common.wgsl', 'rust/src/hd/rings_style.wgsl',
     'rust/src/hd/rings_faithful.wgsl', 'rust/src/hd/rings_pool.wgsl',
+    'rust/src/hd/rings_symbols.txt',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
     'rust/src/scenes/scroller.rs', 'rust/src/scenes/field.rs',
     'rust/src/scenes/rings.rs', 'rust/src/scenes/dots.rs',

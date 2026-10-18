@@ -2,7 +2,7 @@
 //! draws straight to the output; a style draws into the modern renderer's
 //! HDR target, which then takes the shared bloom and tonemap.
 use super::renderer::wgsl_parts;
-use super::rings::{LIGHT_SIZE, RingsPreview, RingsStyle, StyleInfo};
+use super::rings::{RingsPreview, RingsStyle, StyleInfo, SymbolFields};
 use wgpu::*;
 
 const COMMON: &str = include_str!("rings_common.wgsl");
@@ -34,6 +34,8 @@ struct Inputs {
     uniform: Buffer,
     atlas: TextureView,
     light: TextureView,
+    authored: TextureView,
+    authored_light: TextureView,
     reference: TextureView,
     picture: TextureView,
 }
@@ -61,6 +63,8 @@ impl Inputs {
                 },
                 view(5, &self.picture),
                 view(6, prepass),
+                view(7, &self.authored),
+                view(8, &self.authored_light),
             ],
         })
     }
@@ -87,75 +91,9 @@ impl RingsRenderer {
         output: TextureFormat,
         preview: &RingsPreview,
     ) -> Self {
-        let symbols = &preview.symbols;
-        let (tw, th) = symbols.texels();
-        let atlas = device.create_texture(&TextureDescriptor {
-            label: Some("Part 6 symbol fields"),
-            size: Extent3d {
-                width: tw,
-                height: th,
-                depth_or_array_layers: 16,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::Rgba16Float,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            atlas.as_image_copy(),
-            bytemuck::cast_slice(&symbols.atlas),
-            TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(tw * 8),
-                rows_per_image: Some(th),
-            },
-            Extent3d {
-                width: tw,
-                height: th,
-                depth_or_array_layers: 16,
-            },
-        );
-        let light = device.create_texture(&TextureDescriptor {
-            label: Some("Part 6 neon light map"),
-            size: Extent3d {
-                width: LIGHT_SIZE[0],
-                height: LIGHT_SIZE[1],
-                depth_or_array_layers: 16,
-            },
-            mip_level_count: symbols.light.len() as u32,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::R16Float,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        for (level, texels) in symbols.light.iter().enumerate() {
-            let (w, h) = (
-                (LIGHT_SIZE[0] >> level).max(1),
-                (LIGHT_SIZE[1] >> level).max(1),
-            );
-            queue.write_texture(
-                TexelCopyTextureInfo {
-                    texture: &light,
-                    mip_level: level as u32,
-                    origin: Origin3d::ZERO,
-                    aspect: TextureAspect::All,
-                },
-                bytemuck::cast_slice(texels),
-                TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(w * 2),
-                    rows_per_image: Some(h),
-                },
-                Extent3d {
-                    width: w,
-                    height: h,
-                    depth_or_array_layers: 16,
-                },
-            );
-        }
+        let (atlas, light) = upload_fields(device, queue, &preview.symbols, "Part 6 symbols");
+        let (authored, authored_light) =
+            upload_fields(device, queue, &preview.authored, "Part 6 authored symbols");
         let flat = |label, (width, height), format, data: &[u8]| {
             let texture = device.create_texture(&TextureDescriptor {
                 label: Some(label),
@@ -235,14 +173,10 @@ impl RingsRenderer {
                 },
                 texture(5, TextureViewDimension::D2),
                 texture(6, TextureViewDimension::D2),
+                texture(7, TextureViewDimension::D2Array),
+                texture(8, TextureViewDimension::D2Array),
             ],
         });
-        let array = |texture: &Texture| {
-            texture.create_view(&TextureViewDescriptor {
-                dimension: Some(TextureViewDimension::D2Array),
-                ..Default::default()
-            })
-        };
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("Part 6"),
             bind_group_layouts: &[Some(&layout)],
@@ -301,8 +235,10 @@ impl RingsRenderer {
             layout,
             sampler,
             uniform: uniform.clone(),
-            atlas: array(&atlas),
-            light: array(&light),
+            atlas,
+            light,
+            authored,
+            authored_light,
             reference: reference.create_view(&Default::default()),
             picture,
         };
@@ -402,6 +338,96 @@ impl RingsRenderer {
         }
         self.pass(encoder, hdr, &pipelines.color, inputs, style.name());
     }
+}
+
+/// Upload a set of symbol fields: the atlas, with as many channels as its
+/// detail keeps, and the light map with its mip chain, one array layer per
+/// mask each.
+fn upload_fields(
+    device: &Device,
+    queue: &Queue,
+    fields: &SymbolFields,
+    label: &str,
+) -> (TextureView, TextureView) {
+    let layers = fields.layers as u32;
+    let (tw, th) = fields.texels();
+    let channels = fields.detail.channels() as u32;
+    let array = |texture: &Texture| {
+        texture.create_view(&TextureViewDescriptor {
+            dimension: Some(TextureViewDimension::D2Array),
+            ..Default::default()
+        })
+    };
+    let atlas = device.create_texture(&TextureDescriptor {
+        label: Some(&format!("{label}: fields")),
+        size: Extent3d {
+            width: tw,
+            height: th,
+            depth_or_array_layers: layers,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: if channels == 4 {
+            TextureFormat::Rgba16Float
+        } else {
+            TextureFormat::Rg16Float
+        },
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        atlas.as_image_copy(),
+        bytemuck::cast_slice(&fields.atlas),
+        TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(tw * channels * 2),
+            rows_per_image: Some(th),
+        },
+        Extent3d {
+            width: tw,
+            height: th,
+            depth_or_array_layers: layers,
+        },
+    );
+    let [lw, lh] = fields.detail.light_size();
+    let light = device.create_texture(&TextureDescriptor {
+        label: Some(&format!("{label}: neon light map")),
+        size: Extent3d {
+            width: lw,
+            height: lh,
+            depth_or_array_layers: layers,
+        },
+        mip_level_count: fields.light.len() as u32,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::R16Float,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    for (level, texels) in fields.light.iter().enumerate() {
+        let (w, h) = ((lw >> level).max(1), (lh >> level).max(1));
+        queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &light,
+                mip_level: level as u32,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            bytemuck::cast_slice(texels),
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 2),
+                rows_per_image: Some(h),
+            },
+            Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: layers,
+            },
+        );
+    }
+    (array(&atlas), array(&light))
 }
 
 fn key(preview: &RingsPreview) -> (usize, usize) {

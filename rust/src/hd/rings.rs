@@ -1,7 +1,9 @@
 //! Part 6 (Rings) for the HD preview: the state of every part-6 frame read
 //! from the port's `Rings` scene, the ring band model and symbol fields built
 //! in memory from the local data, the original frames replayed on demand for
-//! comparison, and the registry of part-6 styles, now the pool alone.
+//! comparison, the authored symbol sets that replace the original symbols
+//! in the middle of the part, and the registry of part-6 styles, now the
+//! pool alone.
 //!
 //! What comes from where:
 //! - Read from the port's code and counters (`Rings::hd_state`,
@@ -15,7 +17,12 @@
 //!   masks, interpolation between the original's 70 Hz frames, the
 //!   one-frame-latency reading of the page flips that skips the stale-page
 //!   artefact, and the symbols' time-averaged flicker.
-//! - Authored: everything the style adds (neon tubes, the pool, lighting).
+//! - Authored: everything the style adds (neon tubes, the pool, lighting),
+//!   and the 7 new symbol sets in rings_symbols.txt, line drawings made for
+//!   the remake (some are tracings of company logos, their owners'
+//!   trademarks). They are drawn into masks like the originals at load time
+//!   and shown in the 7 patterns of the tune from window
+//!   [`NEW_SET_FIRST_WINDOW`]; the music still picks which mask lights.
 use super::clip::{PIXEL_ASPECT, smooth_signed_distance, vga_linear};
 use crate::{
     data::Data,
@@ -59,6 +66,30 @@ pub const RING_WINDOW: [f32; 4] = [32.0, 8.0, 288.0, 192.0];
 pub const RING_SHUTTER_TICKS: f64 = 0.7;
 /// Frames between replay checkpoints for the original comparison.
 const REPLAY_INTERVAL: usize = 64;
+/// The authored symbol sets (not recovered; see the file's header).
+const AUTHORED_SYMBOLS: &str = include_str!("rings_symbols.txt");
+/// Authored sets of 16 symbols, shown in place of the original's masks in
+/// the middle of part 6, one set per pattern of the tune.
+pub const NEW_SETS: usize = 7;
+/// The original's symbol masks, symbol layers 0 to 15. rings_common.wgsl
+/// repeats it.
+pub const ORIGINAL_SYMBOLS: usize = 16;
+/// Symbol layers: the original's 16 masks, then 16 for each new set (set
+/// `k`, from 0, mask `n` at layer `16 + 16 k + n`). The first 16 are
+/// [`RingsPreview::symbols`], the rest [`RingsPreview::authored`].
+pub const SYMBOL_LAYERS: usize = ORIGINAL_SYMBOLS * (1 + NEW_SETS);
+/// Symbol windows per pattern of the tune, and the first window of the new
+/// sets: read from the port's windows, each run of 32 is one order of the
+/// tune. The sets take the third to the ninth of part 6, windows 64 to 287,
+/// from the first lit frame at 50.79 s to window 288's at 76.64 s (the HD
+/// views switch over the frame before each). The ignored data test checks
+/// these.
+pub const PATTERN_WINDOWS: usize = 32;
+pub const NEW_SET_FIRST_WINDOW: usize = 2 * PATTERN_WINDOWS;
+/// Height, in source rows, of the box the authored drawings' 100 units fill,
+/// centred on the screen's centre; across, a unit is the same length on the
+/// display, so 6/5 as many columns (authored, about the originals' size).
+pub const AUTHORED_BOX: f32 = 110.0;
 
 /// The concentric bands of M.DAT as an analytic model (an interpretation).
 /// M.DAT holds 8 pre-shifted banks of 152 rows of 424 one-bit pixels: the
@@ -253,35 +284,84 @@ pub fn catmull_rom(values: &[[f64; 2]], position: f64) -> [f64; 2] {
     })
 }
 
-/// Distance fields of the 16 symbol masks and their neon light map, built in
-/// memory from the locally decoded masks. The smoothing, the centrelines and
-/// the light map are interpretations or authored; nothing here is stored.
+/// What a set of symbol fields keeps per layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SymbolDetail {
+    /// All four fields per atlas texel and a light map texel per source
+    /// pixel: the original's 16 masks.
+    Full,
+    /// Only the tube's two fields, the centreline and free-end distances,
+    /// and a light map texel per [`TUBE_LIGHT_SCALE`] × [`TUBE_LIGHT_SCALE`]
+    /// pixels: the authored sets, which the neon alone draws (faithful HD
+    /// shows the originals), so that their 112 layers take 59 MB rather
+    /// than 147 in full detail.
+    Tubes,
+}
+
+/// Source pixels per light map texel, each way, for [`SymbolDetail::Tubes`].
+/// rings_common.wgsl repeats its log2 as TUBE_LIGHT_LOD.
+pub const TUBE_LIGHT_SCALE: usize = 2;
+
+impl SymbolDetail {
+    /// Half floats per atlas texel.
+    pub fn channels(self) -> usize {
+        match self {
+            Self::Full => 4,
+            Self::Tubes => 2,
+        }
+    }
+
+    /// Source pixels per light map texel, each way.
+    pub fn light_scale(self) -> usize {
+        match self {
+            Self::Full => 1,
+            Self::Tubes => TUBE_LIGHT_SCALE,
+        }
+    }
+
+    /// The light map's top level, in texels: it covers [`LIGHT_SIZE`]
+    /// pixels from [`LIGHT_ORIGIN`] whatever its scale.
+    pub fn light_size(self) -> [u32; 2] {
+        LIGHT_SIZE.map(|n| n / self.light_scale() as u32)
+    }
+}
+
+/// Distance fields of symbol masks and their neon light map, built in memory
+/// at load time, one layer per mask: the original's 16 masks decoded locally,
+/// or the authored sets drawn into masks ([`authored_masks`]). The smoothing,
+/// the centrelines and the light map are interpretations or authored;
+/// nothing derived from the original data is stored.
 pub struct SymbolFields {
     /// Source-pixel rectangle the atlas covers: the masks' union and a
     /// margin of [`SYMBOL_PAD`] pixels. Origin, then size.
     pub origin: [i32; 2],
     pub size: [usize; 2],
-    /// Four half floats per texel, `SYMBOL_SCALE` texels per source pixel,
-    /// layer after layer (one per mask). Red: signed distance to the smoothed
-    /// outline of the original stroke pixels, positive inside. Green:
-    /// distance to the stroke's centreline. Blue: the stroke's half-width at
-    /// the nearest centreline point. Alpha: distance to the nearest free end
-    /// of a stroke's centreline (where a tube would end). All in source rows on
-    /// the 4:3 display (a column is 5/6 of a row), clamped to
-    /// ±[`SYMBOL_LIMIT`].
+    /// Layers, one per mask.
+    pub layers: usize,
+    pub detail: SymbolDetail,
+    /// Half floats per texel, `SYMBOL_SCALE` texels per source pixel, layer
+    /// after layer (one per mask). With [`SymbolDetail::Full`] four: red, the
+    /// signed distance to the smoothed outline of the stroke pixels, positive
+    /// inside; green, the distance to the stroke's centreline; blue, the
+    /// stroke's half-width at the nearest centreline point; alpha, the
+    /// distance to the nearest free end of a stroke's centreline (where a
+    /// tube would end). With [`SymbolDetail::Tubes`] only green and alpha, as
+    /// two. All in source rows on the 4:3 display (a column is 5/6 of a
+    /// row), clamped to ±[`SYMBOL_LIMIT`].
     pub atlas: Vec<f16>,
     /// Neon light map: for each mask, the coverage of tubes of
     /// [`NEON_RADIUS`] around the centrelines over [`LIGHT_SIZE`] pixels from
-    /// [`LIGHT_ORIGIN`], then a mip chain, each level the one before filtered
-    /// by a [1 3 3 1] / 8 kernel and halved. One half float per texel; each
-    /// level holds all 16 layers.
+    /// [`LIGHT_ORIGIN`], at the detail's [`SymbolDetail::light_size`], then a
+    /// mip chain, each level the one before filtered by a [1 3 3 1] / 8
+    /// kernel and halved. One half float per texel; each level holds every
+    /// layer.
     pub light: Vec<Vec<f16>>,
 }
 
 impl SymbolFields {
-    pub fn new(masks: &[Vec<bool>]) -> Result<Self, String> {
-        if masks.len() != 16 || masks.iter().any(|m| m.len() != 320 * 200) {
-            return Err("Part 6 needs 16 masks of 320 × 200 pixels".into());
+    pub fn new(masks: &[Vec<bool>], detail: SymbolDetail) -> Result<Self, String> {
+        if masks.is_empty() || masks.iter().any(|m| m.len() != 320 * 200) {
+            return Err("Part 6 needs symbol masks of 320 × 200 pixels".into());
         }
         let mut lo = [320_i32, 200];
         let mut hi = [-1_i32, -1];
@@ -304,37 +384,47 @@ impl SymbolFields {
             (hi[0] - lo[0] + 1 + 2 * pad) as usize,
             (hi[1] - lo[1] + 1 + 2 * pad) as usize,
         ];
-        let layers: Vec<(Vec<[f32; 4]>, Vec<f32>)> = std::thread::scope(|scope| {
-            let jobs: Vec<_> = masks
-                .iter()
-                .map(|mask| scope.spawn(move || symbol_layer(mask, origin, size)))
+        // A worker per core takes the next mask until none are left.
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let workers = std::thread::available_parallelism()
+            .map_or(4, |n| n.get())
+            .min(masks.len());
+        let mut layers: Vec<Option<SymbolLayer>> = (0..masks.len()).map(|_| None).collect();
+        std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..workers)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut done = Vec::new();
+                        loop {
+                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let Some(mask) = masks.get(i) else {
+                                return done;
+                            };
+                            done.push((i, symbol_layer(mask, origin, size, detail)));
+                        }
+                    })
+                })
                 .collect();
-            jobs.into_iter().map(|job| job.join().unwrap()).collect()
+            for job in jobs {
+                for (i, layer) in job.join().unwrap() {
+                    layers[i] = Some(layer);
+                }
+            }
         });
-        let atlas = layers
-            .iter()
-            .flat_map(|(texels, _)| texels.iter().flatten().map(|&v| f16::from_f32(v)))
-            .collect();
-        let mut levels: Vec<Vec<Vec<f32>>> = vec![layers.into_iter().map(|(_, l)| l).collect()];
-        let mut extent = (LIGHT_SIZE[0] as usize, LIGHT_SIZE[1] as usize);
-        while extent != (1, 1) {
-            let next = ((extent.0 >> 1).max(1), (extent.1 >> 1).max(1));
-            let level = levels
-                .last()
-                .unwrap()
-                .iter()
-                .map(|l| downsample(l, extent, next))
-                .collect();
-            levels.push(level);
-            extent = next;
+        // Join the layers, letting each go once copied.
+        let (mut atlas, mut light) = (Vec::new(), Vec::<Vec<f16>>::new());
+        for layer in layers.into_iter().map(Option::unwrap) {
+            atlas.extend(layer.atlas);
+            light.resize(layer.light.len(), Vec::new());
+            for (level, texels) in light.iter_mut().zip(layer.light) {
+                level.extend(texels);
+            }
         }
-        let light = levels
-            .into_iter()
-            .map(|level| level.into_iter().flatten().map(f16::from_f32).collect())
-            .collect();
         Ok(Self {
             origin,
             size,
+            layers: masks.len(),
+            detail,
             atlas,
             light,
         })
@@ -347,10 +437,105 @@ impl SymbolFields {
             (self.size[1] * SYMBOL_SCALE) as u32,
         )
     }
+
+    /// Bytes the atlas and the light map hold (on the GPU, and here).
+    pub fn bytes(&self) -> usize {
+        (self.atlas.len() + self.light.iter().map(Vec::len).sum::<usize>()) * size_of::<f16>()
+    }
 }
 
-/// One mask's atlas texels and its full-resolution light map.
-fn symbol_layer(mask: &[bool], origin: [i32; 2], size: [usize; 2]) -> (Vec<[f32; 4]>, Vec<f32>) {
+/// One mask's atlas texels and light map levels, as half floats.
+struct SymbolLayer {
+    atlas: Vec<f16>,
+    light: Vec<Vec<f16>>,
+}
+
+/// One mask's layer: its fields ([`symbol_fields`]), the channels the detail
+/// keeps, and the light map at its scale with the mip chain down to 1 × 1.
+/// An empty mask is far from everything and casts no light, so it skips the
+/// tracing.
+fn symbol_layer(
+    mask: &[bool],
+    origin: [i32; 2],
+    size: [usize; 2],
+    detail: SymbolDetail,
+) -> SymbolLayer {
+    let [lw, lh] = detail.light_size().map(|n| n as usize);
+    let (texels, light) = if mask.contains(&true) {
+        let texels = symbol_fields(mask, origin, size);
+        let light = light_map(&texels, origin, size, detail.light_scale());
+        (texels, light)
+    } else {
+        let count = size[0] * size[1] * SYMBOL_SCALE * SYMBOL_SCALE;
+        let far = [-SYMBOL_LIMIT, SYMBOL_LIMIT, 0.0, SYMBOL_LIMIT];
+        (vec![far; count], vec![0.0; lw * lh])
+    };
+    let mut levels = vec![light];
+    let mut extent = (lw, lh);
+    while extent != (1, 1) {
+        let next = ((extent.0 >> 1).max(1), (extent.1 >> 1).max(1));
+        levels.push(downsample(levels.last().unwrap(), extent, next));
+        extent = next;
+    }
+    let channels: &[usize] = match detail {
+        SymbolDetail::Full => &[0, 1, 2, 3],
+        SymbolDetail::Tubes => &[1, 3],
+    };
+    SymbolLayer {
+        atlas: texels
+            .iter()
+            .flat_map(|t| channels.iter().map(|&c| f16::from_f32(t[c])))
+            .collect(),
+        light: levels
+            .iter()
+            .map(|level| level.iter().map(|&v| f16::from_f32(v)).collect())
+            .collect(),
+    }
+}
+
+/// The light map's top level for one mask: the coverage of its tubes, from
+/// the atlas texels' centreline distances, averaged over each light texel of
+/// `scale` × `scale` source pixels. Beyond the atlas there are no tubes.
+fn light_map(texels: &[[f32; 4]], origin: [i32; 2], size: [usize; 2], scale: usize) -> Vec<f32> {
+    let s = SYMBOL_SCALE;
+    let (w, h) = (size[0], size[1]);
+    let fw = w * s;
+    // A texel is half a source row high: soften the tube's edge over that.
+    let tube: Vec<f32> = texels
+        .iter()
+        .map(|t| ((NEON_RADIUS - t[1]) / 0.5 + 0.5).clamp(0.0, 1.0))
+        .collect();
+    let (lw, lh) = (
+        LIGHT_SIZE[0] as usize / scale,
+        LIGHT_SIZE[1] as usize / scale,
+    );
+    let mut light = vec![0.0; lw * lh];
+    for (j, row) in light.chunks_exact_mut(lw).enumerate() {
+        for (i, texel) in row.iter_mut().enumerate() {
+            let mut sum = 0.0;
+            for (py, px) in (0..scale).flat_map(|b| (0..scale).map(move |a| (b, a))) {
+                let y = (j * scale + py) as i32 + LIGHT_ORIGIN[1] - origin[1];
+                let x = (i * scale + px) as i32 + LIGHT_ORIGIN[0] - origin[0];
+                if y < 0 || y >= h as i32 || x < 0 || x >= w as i32 {
+                    continue;
+                }
+                let (x, y) = (x as usize * s, y as usize * s);
+                for dy in 0..s {
+                    for dx in 0..s {
+                        sum += tube[(y + dy) * fw + x + dx];
+                    }
+                }
+            }
+            *texel = sum / (s * s * scale * scale) as f32;
+        }
+    }
+    light
+}
+
+/// One mask's atlas texels: the outline's signed distance, then the
+/// distance to the redrawn tube runs, the stroke's half-width there and the
+/// distance to the nearest free end.
+fn symbol_fields(mask: &[bool], origin: [i32; 2], size: [usize; 2]) -> Vec<[f32; 4]> {
     let (w, h) = (size[0], size[1]);
     let crop: Vec<bool> = (0..w * h)
         .map(|at| {
@@ -381,35 +566,7 @@ fn symbol_layer(mask: &[bool], origin: [i32; 2], size: [usize; 2]) -> (Vec<[f32;
             redraw_run(&points, closed)
         })
         .collect();
-    let texels = curve_fields(&runs, &outline, fw, fh, s); // Tube coverage per atlas texel, then averaged over each light texel.
-    // A texel is half a source row high: soften the tube's edge over that.
-    let tube: Vec<f32> = texels
-        .iter()
-        .map(|t| ((NEON_RADIUS - t[1]) / 0.5 + 0.5).clamp(0.0, 1.0))
-        .collect();
-    let (lw, lh) = (LIGHT_SIZE[0] as usize, LIGHT_SIZE[1] as usize);
-    let mut light = vec![0.0; lw * lh];
-    for (j, row) in light.chunks_exact_mut(lw).enumerate() {
-        let y = j as i32 + LIGHT_ORIGIN[1] - origin[1];
-        if y < 0 || y >= h as i32 {
-            continue;
-        }
-        for (i, texel) in row.iter_mut().enumerate() {
-            let x = i as i32 + LIGHT_ORIGIN[0] - origin[0];
-            if x < 0 || x >= w as i32 {
-                continue;
-            }
-            let (x, y) = (x as usize * s, y as usize * s);
-            let mut sum = 0.0;
-            for dy in 0..s {
-                for dx in 0..s {
-                    sum += tube[(y + dy) * fw + x + dx];
-                }
-            }
-            *texel = sum / (s * s) as f32;
-        }
-    }
-    (texels, light)
+    curve_fields(&runs, &outline, fw, fh, s)
 }
 
 /// Halve a light map level with a [1 3 3 1] / 8 filter each way; texels
@@ -1458,6 +1615,169 @@ fn keep_isolated(skeleton: &mut [bool], outline: &[f32], w: usize, h: usize) {
     }
 }
 
+/// One authored symbol (see rings_symbols.txt): its label and its runs,
+/// open polylines in the 100-unit drawing box, x right and y down.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuthoredShape {
+    pub mask: u8,
+    pub label: String,
+    pub runs: Vec<Vec<[f32; 2]>>,
+}
+
+/// One authored set: its title and the masks it draws, by the original's
+/// mask number. Masks it leaves out are empty.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AuthoredSet {
+    pub title: String,
+    pub shapes: Vec<AuthoredShape>,
+}
+
+/// Read rings_symbols.txt's format (described in its header): `set`, its
+/// number and title, then a line per shape of set, mask, label and runs, all
+/// separated by tabs. Points are on a 0..1000 grid, 10 to a drawing unit.
+pub fn parse_authored(text: &str) -> Result<Vec<AuthoredSet>, String> {
+    let mut sets: Vec<AuthoredSet> = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let line = line.trim_end_matches('\r');
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let error = |what: &str| format!("Symbol sets, line {}: {what}", i + 1);
+        match line.split('\t').collect::<Vec<_>>().as_slice() {
+            ["set", k, title] => {
+                if k.parse() != Ok(sets.len() + 1) {
+                    return Err(error("sets are numbered 1, 2, 3 and so on, in order"));
+                }
+                sets.push(AuthoredSet {
+                    title: title.to_string(),
+                    shapes: Vec::new(),
+                });
+            }
+            [k, n, label, runs] => {
+                let set = k
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|k| sets.get_mut(k.checked_sub(1)?))
+                    .ok_or_else(|| error("a shape before its set's line"))?;
+                let mask = n
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|&n| n < 16)
+                    .ok_or_else(|| error("masks are 0 to 15"))?;
+                if set.shapes.iter().any(|s| s.mask == mask) {
+                    return Err(error("a mask drawn twice in one set"));
+                }
+                let runs = runs
+                    .split(" | ")
+                    .map(|run| {
+                        run.split_whitespace()
+                            .map(|point| {
+                                let (x, y) = point.split_once(',')?;
+                                Some(
+                                    [x.parse::<i32>().ok()?, y.parse::<i32>().ok()?]
+                                        .map(|v| v as f32 / 10.0),
+                                )
+                            })
+                            .collect::<Option<Vec<_>>>()
+                            .filter(|run| !run.is_empty())
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| error("runs are points x,y separated by spaces"))?;
+                set.shapes.push(AuthoredShape {
+                    mask,
+                    label: label.to_string(),
+                    runs,
+                });
+            }
+            _ => return Err(error("expected a set line or a shape line")),
+        }
+    }
+    Ok(sets)
+}
+
+/// Distance from p to the segment from a to b.
+fn segment_distance(p: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
+    let ab = [b[0] - a[0], b[1] - a[1]];
+    let ll = ab[0] * ab[0] + ab[1] * ab[1];
+    let t = if ll > 0.0 {
+        (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / ll).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (p[0] - a[0] - ab[0] * t).hypot(p[1] - a[1] - ab[1] * t)
+}
+
+/// Draw an authored shape into a 320 × 200 mask like an original's: its
+/// box [`AUTHORED_BOX`] rows high on the screen's centre, (160, 100), and
+/// round on the 4:3 display. A pixel is set where its centre lies within
+/// [`NEON_STROKE`] rows of a run on the display, so the strokes are about as
+/// wide as the original's; a one-point run is a dot that wide.
+pub fn rasterise(shape: &AuthoredShape) -> Vec<bool> {
+    let mut mask = vec![false; 320 * 200];
+    let unit = AUTHORED_BOX / 100.0;
+    // Display rows from the screen's centre.
+    let display = |p: [f32; 2]| [(p[0] - 50.0) * unit, (p[1] - 50.0) * unit];
+    for run in &shape.runs {
+        let points: Vec<[f32; 2]> = run.iter().map(|&p| display(p)).collect();
+        let segments: Vec<[[f32; 2]; 2]> = if points.len() == 1 {
+            vec![[points[0]; 2]]
+        } else {
+            points.windows(2).map(|w| [w[0], w[1]]).collect()
+        };
+        for [a, b] in segments {
+            let reach = NEON_STROKE + 1.0;
+            let column = |x: f32| x / PIXEL_ASPECT + 160.0;
+            let x0 = column(a[0].min(b[0]) - reach).floor().max(0.0) as usize;
+            let x1 = (column(a[0].max(b[0]) + reach).ceil().max(0.0) as usize).min(319);
+            let y0 = (a[1].min(b[1]) - reach + 100.0).floor().max(0.0) as usize;
+            let y1 = ((a[1].max(b[1]) + reach + 100.0).ceil().max(0.0) as usize).min(199);
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let p = [
+                        (x as f32 + 0.5 - 160.0) * PIXEL_ASPECT,
+                        y as f32 + 0.5 - 100.0,
+                    ];
+                    if segment_distance(p, a, b) <= NEON_STROKE {
+                        mask[y * 320 + x] = true;
+                    }
+                }
+            }
+        }
+    }
+    mask
+}
+
+/// The authored sets as masks for atlas layers 16 and on: `NEW_SETS` × 16,
+/// set `k` (from 0) mask `n` at `16 k + n`. Masks a set leaves out, and sets
+/// not drawn, are empty.
+pub fn authored_masks(sets: &[AuthoredSet]) -> Vec<Vec<bool>> {
+    let mut masks = vec![vec![false; 320 * 200]; NEW_SETS * 16];
+    for (k, set) in sets.iter().enumerate().take(NEW_SETS) {
+        for shape in &set.shapes {
+            masks[k * 16 + shape.mask as usize] = rasterise(shape);
+        }
+    }
+    masks
+}
+
+/// The authored set, from 0, shown in symbol window `index` (an index into
+/// [`RingsPreview::windows`]), if any: set `k` in the windows of the tune's
+/// pattern `k` from [`NEW_SET_FIRST_WINDOW`].
+pub fn window_set(index: usize) -> Option<usize> {
+    let k = index.checked_sub(NEW_SET_FIRST_WINDOW)? / PATTERN_WINDOWS;
+    (k < NEW_SETS).then_some(k)
+}
+
+/// The atlas layer that draws `mask` in symbol window `index`: the authored
+/// set's drawing of that mask in the middle of the part (unless `original`),
+/// else the original mask. The music's choice of mask is kept either way.
+pub fn window_layer(index: usize, mask: u8, original: bool) -> usize {
+    match window_set(index) {
+        Some(k) if !original => 16 + 16 * k + mask as usize,
+        _ => mask as usize,
+    }
+}
+
 /// Original part-6 frames replayed on demand for `--original` and
 /// `--split`, instead of storing about 177 MB of pixels: the scene and video
 /// memory are kept every [`REPLAY_INTERVAL`] frames, with the music position
@@ -1498,7 +1818,17 @@ pub struct RingsPreview {
     pub frames: Vec<RingsFrame>,
     pub windows: Vec<SymbolWindow>,
     pub bands: RingBands,
+    /// Symbol layers 0 to 15: the original's masks, in full detail.
     pub symbols: SymbolFields,
+    /// Symbol layers 16 and on: the authored sets, 16 masks each, with only
+    /// the tubes' fields ([`SymbolDetail::Tubes`]).
+    pub authored: SymbolFields,
+    /// The authored sets, as read from rings_symbols.txt.
+    pub symbol_sets: Vec<AuthoredSet>,
+    /// Show the original symbols throughout (`--original-symbols`, N)
+    /// instead of the authored sets in the middle of the part. Faithful HD
+    /// always shows the originals.
+    pub original_symbols: bool,
     /// The PSTART picture at its full palette, as 8-bit sRGB RGBA (the 6-bit
     /// DAC values expanded as the scanout does).
     pub picture: Vec<u8>,
@@ -1524,7 +1854,10 @@ impl RingsPreview {
         start: usize,
     ) -> Result<Self, String> {
         let mut rings = Rings::new(data, vga)?;
-        let masks: Vec<Vec<bool>> = (0..16).map(|n| Rings::hd_mask(vga, n)).collect();
+        let symbol_sets = parse_authored(AUTHORED_SYMBOLS)?;
+        let masks: Vec<Vec<bool>> = (0..ORIGINAL_SYMBOLS)
+            .map(|n| Rings::hd_mask(vga, n))
+            .collect();
         let bands = RingBands::fit(&rings.hd_source())?;
         let (image, palette) = rings.hd_picture();
         let picture = image
@@ -1538,7 +1871,8 @@ impl RingsPreview {
                 [expand(p[0]), expand(p[1]), expand(p[2]), 255]
             })
             .collect();
-        let symbols = SymbolFields::new(&masks)?;
+        let symbols = SymbolFields::new(&masks, SymbolDetail::Full)?;
+        let authored = SymbolFields::new(&authored_masks(&symbol_sets), SymbolDetail::Tubes)?;
         let mut states = Vec::new();
         let mut checkpoints = Vec::new();
         let mut positions = Vec::new();
@@ -1595,6 +1929,9 @@ impl RingsPreview {
             frames,
             bands,
             symbols,
+            authored,
+            symbol_sets,
+            original_symbols: false,
             picture,
             style: RingsStyle::Pool,
             replay: Replay {
@@ -1645,6 +1982,20 @@ impl RingsPreview {
         }
     }
 
+    /// The authored set shown at a clip time, by its title, if one is.
+    pub fn symbol_set_at(&self, time: f64) -> Option<&str> {
+        if self.original_symbols {
+            return None;
+        }
+        let j = self.frame_at(time)?;
+        let i = self
+            .windows
+            .partition_point(|w| w.start <= j)
+            .checked_sub(1)?;
+        let set = self.symbol_sets.get(window_set(i)?)?;
+        Some(&set.title)
+    }
+
     /// Both layers' ring centres (source pixels) at a clip time,
     /// interpolated through the frames' exact centres (Catmull-Rom; an
     /// interpretation, as the original moves once per frame in whole
@@ -1690,22 +2041,30 @@ impl RingsPreview {
         // The windows as of the next frame, so that a switch completes on the
         // original's own frame and each frame time shows exactly that frame's
         // symbol: during the frame before, the times below are negative.
+        // `symbol` holds the original's masks; `symbol_layers` the atlas
+        // layers that draw them.
         let mut symbol = [-1.0, -1.0, 0.0, -1.0];
+        let mut symbol_layers = [-1.0, -1.0, 0.0, 0.0];
+        let layer = |i: usize| window_layer(i, self.windows[i].mask, self.original_symbols) as f32;
         let ahead = self.frame_at(time + 1.0 / FRAME_RATE as f64).unwrap_or(0);
         let current = self.windows.partition_point(|w| w.start <= ahead);
-        if let Some(w) = current.checked_sub(1).map(|i| self.windows[i]) {
+        if let Some(i) = current.checked_sub(1) {
+            let w = self.windows[i];
             if ahead < w.end {
                 symbol[0] = w.mask as f32;
+                symbol_layers[0] = layer(i);
                 symbol[2] = (time - seconds(w.start)) as f32;
                 symbol[3] = (seconds(w.end) - time) as f32;
-                if let Some(p) = current.checked_sub(2).map(|i| self.windows[i])
-                    && p.end == w.start
+                if let Some(p) = i.checked_sub(1)
+                    && self.windows[p].end == w.start
                 {
-                    symbol[1] = p.mask as f32;
+                    symbol[1] = self.windows[p].mask as f32;
+                    symbol_layers[1] = layer(p);
                 }
             } else {
                 // Between windows: the last one, and the time since it ended.
                 symbol[1] = w.mask as f32;
+                symbol_layers[1] = layer(i);
                 symbol[2] = (time - seconds(w.end)) as f32;
             }
         }
@@ -1726,11 +2085,18 @@ impl RingsPreview {
             ],
             ring_fades: [intensity as f32, picture as f32, peak as f32, 0.0],
             symbol,
+            symbol_layers,
             symbol_atlas: [
                 self.symbols.origin[0] as f32,
                 self.symbols.origin[1] as f32,
                 self.symbols.size[0] as f32,
                 self.symbols.size[1] as f32,
+            ],
+            authored_atlas: [
+                self.authored.origin[0] as f32,
+                self.authored.origin[1] as f32,
+                self.authored.size[0] as f32,
+                self.authored.size[1] as f32,
             ],
             neon_map: [
                 LIGHT_ORIGIN[0] as f32,
@@ -1755,7 +2121,9 @@ pub struct RingsControls {
     pub ring_bands: [f32; 4],
     pub ring_fades: [f32; 4],
     pub symbol: [f32; 4],
+    pub symbol_layers: [f32; 4],
     pub symbol_atlas: [f32; 4],
+    pub authored_atlas: [f32; 4],
     pub neon_map: [f32; 4],
     pub rings_style: [[f32; 4]; 4],
 }
@@ -1928,7 +2296,7 @@ mod tests {
                 masks[2][y * 320 + x] = true;
             }
         }
-        let fields = SymbolFields::new(&masks).unwrap();
+        let fields = SymbolFields::new(&masks, SymbolDetail::Full).unwrap();
         let pad = SYMBOL_PAD as i32;
         assert_eq!(fields.origin, [100 - pad, 98 - pad]);
         assert_eq!(fields.size, [100 + 2 * SYMBOL_PAD, 5 + 2 * SYMBOL_PAD]);
@@ -1999,7 +2367,15 @@ mod tests {
                 assert!((mean(level, w, h) / top - 1.0).abs() < 0.05, "level {k}");
             }
         }
-        assert!(SymbolFields::new(&masks[..3]).is_err());
+        // Any number of masks, but at least one, all 320 × 200.
+        assert_eq!(
+            SymbolFields::new(&masks[..3], SymbolDetail::Full)
+                .unwrap()
+                .layers,
+            3
+        );
+        assert!(SymbolFields::new(&[], SymbolDetail::Full).is_err());
+        assert!(SymbolFields::new(&[vec![false; 10]], SymbolDetail::Full).is_err());
     }
 
     #[test]
@@ -2020,7 +2396,7 @@ mod tests {
         }
         let mut masks = vec![vec![false; 320 * 200]; 16];
         masks[0] = mask;
-        let fields = SymbolFields::new(&masks).unwrap();
+        let fields = SymbolFields::new(&masks, SymbolDetail::Full).unwrap();
         let (tw, _) = fields.texels();
         let texel = |x: f32, y: f32| {
             let i = ((x - fields.origin[0] as f32) * SYMBOL_SCALE as f32) as usize;
@@ -2091,6 +2467,371 @@ mod tests {
         assert_eq!(ring_grey(0, 64), vga_linear(48));
         assert_eq!(ring_grey(1, 64), vga_linear(32));
         assert_eq!(ring_grey(0, 32), vga_linear(24));
+    }
+
+    #[test]
+    fn authored_sets_parse_and_reject_bad_lines() {
+        let text = "# A comment\n\nset\t1\tInvented\n1\t3\ta bar and a dot\t0,500 1000,500 | 500,100\nset\t2\tEmpty\n";
+        let sets = parse_authored(text).unwrap();
+        assert_eq!(sets.len(), 2);
+        assert_eq!(sets[0].title, "Invented");
+        assert_eq!(
+            sets[0].shapes,
+            [AuthoredShape {
+                mask: 3,
+                label: "a bar and a dot".into(),
+                runs: vec![vec![[0.0, 50.0], [100.0, 50.0]], vec![[50.0, 10.0]]],
+            }]
+        );
+        assert!(sets[1].shapes.is_empty());
+        for bad in [
+            "set\t2\tOut of order\n",
+            "1\t0\tno set yet\t0,0 10,10\n",
+            "set\t1\tA\n1\t16\tmask too big\t0,0\n",
+            "set\t1\tA\n1\t0\tA\t0,0\n1\t0\ttwice\t0,0\n",
+            "set\t1\tA\n1\t0\tbad point\t0;0\n",
+            "set\t1\tA\n1\t0\tempty run\t0,0 |  | 5,5\n",
+            "just words\n",
+        ] {
+            assert!(parse_authored(bad).is_err(), "{bad:?}");
+        }
+        // The committed file parses, with every set in order.
+        let sets = parse_authored(AUTHORED_SYMBOLS).unwrap();
+        assert_eq!(sets.len(), NEW_SETS);
+        for set in &sets {
+            assert!(set.shapes.iter().all(|s| s.mask < 16 && !s.runs.is_empty()));
+        }
+    }
+
+    #[test]
+    fn authored_shapes_rasterise_round_and_centred() {
+        // A horizontal bar across the box's middle and a dot at its centre.
+        let mask_of = |runs: Vec<Vec<[f32; 2]>>| {
+            rasterise(&AuthoredShape {
+                mask: 0,
+                label: String::new(),
+                runs,
+            })
+        };
+        let bar = mask_of(vec![vec![[10.0, 50.0], [90.0, 50.0]]]);
+        let set = |m: &[bool], x: usize, y: usize| m[y * 320 + x];
+        // 80 units at 1.1 rows each, 6/5 as many columns: about 105.6
+        // columns, centred on column 160, plus the rounded ends.
+        let row: Vec<usize> = (0..320).filter(|&x| set(&bar, x, 100)).collect();
+        let half = 40.0 * AUTHORED_BOX / 100.0 / PIXEL_ASPECT + NEON_STROKE / PIXEL_ASPECT;
+        assert!(
+            ((row[0] as f32 + 0.5) - (160.0 - half)).abs() <= 1.0,
+            "{row:?}"
+        );
+        assert!(((row[row.len() - 1] as f32 + 0.5) - (160.0 + half)).abs() <= 1.0);
+        assert_eq!(
+            row.len(),
+            row[row.len() - 1] - row[0] + 1,
+            "one unbroken run"
+        );
+        // Across it: centres within 2.2 rows of y = 100, so rows 98 to 101.
+        let column: Vec<usize> = (0..200).filter(|&y| set(&bar, 160, y)).collect();
+        assert_eq!(column, [98, 99, 100, 101]);
+        // A dot is a disc, about as many rows high as its width in rows.
+        let dot = mask_of(vec![vec![[50.0, 50.0]]]);
+        let rows = (0..200).filter(|&y| set(&dot, 160, y)).count();
+        let columns = (0..320).filter(|&x| set(&dot, x, 100)).count() as f32;
+        assert_eq!(rows, 4);
+        assert!(
+            (columns * PIXEL_ASPECT - rows as f32).abs() <= 1.0,
+            "{columns}"
+        );
+        // The box is AUTHORED_BOX rows high: its top edge at row 45.
+        let top = mask_of(vec![vec![[0.0, 0.0], [100.0, 0.0]]]);
+        let first = (0..200).find(|&y| set(&top, 160, y)).unwrap();
+        let expected = 100.0 - AUTHORED_BOX / 2.0 - NEON_STROKE;
+        assert!((first as f32 + 0.5 - expected).abs() <= 1.0, "{first}");
+        // Points off the screen are dropped, not wrapped.
+        let off = mask_of(vec![vec![[-500.0, 50.0], [-400.0, 50.0]]]);
+        assert!(!off.contains(&true));
+        // Masks per set and mask: drawn ones set, the rest empty.
+        let sets = [AuthoredSet {
+            title: "Invented".into(),
+            shapes: vec![AuthoredShape {
+                mask: 5,
+                label: String::new(),
+                runs: vec![vec![[10.0, 50.0], [90.0, 50.0]]],
+            }],
+        }];
+        let masks = authored_masks(&sets);
+        assert_eq!(masks.len(), NEW_SETS * 16);
+        assert_eq!(masks[5], bar);
+        assert_eq!(masks.iter().filter(|m| m.contains(&true)).count(), 1);
+    }
+
+    #[test]
+    fn invented_windows_map_to_the_sets_patterns() {
+        // Invented windows: indices as the preview counts them.
+        assert_eq!(window_set(0), None);
+        assert_eq!(window_set(NEW_SET_FIRST_WINDOW - 1), None);
+        assert_eq!(window_set(NEW_SET_FIRST_WINDOW), Some(0));
+        assert_eq!(
+            window_set(NEW_SET_FIRST_WINDOW + PATTERN_WINDOWS - 1),
+            Some(0)
+        );
+        assert_eq!(window_set(NEW_SET_FIRST_WINDOW + PATTERN_WINDOWS), Some(1));
+        let last = NEW_SET_FIRST_WINDOW + NEW_SETS * PATTERN_WINDOWS;
+        assert_eq!(window_set(last - 1), Some(NEW_SETS - 1));
+        assert_eq!(window_set(last), None);
+        // Before and after the sets, and with --original-symbols, a window
+        // draws the original mask; in pattern k, set k's drawing of it.
+        assert_eq!(window_layer(10, 7, false), 7);
+        assert_eq!(window_layer(last + 3, 7, false), 7);
+        assert_eq!(window_layer(64, 0, false), 16);
+        assert_eq!(window_layer(64 + 31, 15, false), 31);
+        assert_eq!(window_layer(64 + 32 * 3 + 5, 9, false), 16 + 16 * 3 + 9);
+        assert_eq!(window_layer(64 + 32 * 3 + 5, 9, true), 9);
+        assert_eq!(window_layer(last - 1, 15, false), SYMBOL_LAYERS - 1);
+        // In the controls: invented windows, two before the sets and two in
+        // the first, back to back from part-6 frame 100, 8 frames each.
+        let windows: Vec<SymbolWindow> = (0..NEW_SET_FIRST_WINDOW + 2)
+            .map(|i| SymbolWindow {
+                mask: (i % 16) as u8,
+                start: 100 + 8 * i,
+                end: 108 + 8 * i,
+            })
+            .collect();
+        let starts: Vec<usize> = windows.iter().map(|w| w.start).collect();
+        let at = |i: usize| (starts[i] as f64 + 2.5) / FRAME_RATE as f64;
+        let preview = invented_preview(windows.clone());
+        let before = preview.controls(at(NEW_SET_FIRST_WINDOW - 1));
+        assert_eq!(before.symbol[..2], [15.0, 14.0]);
+        assert_eq!(before.symbol_layers[..2], [15.0, 14.0]);
+        let first = preview.controls(at(NEW_SET_FIRST_WINDOW));
+        assert_eq!(first.symbol[..2], [0.0, 15.0]);
+        assert_eq!(first.symbol_layers[..2], [16.0, 15.0]);
+        let second = preview.controls(at(NEW_SET_FIRST_WINDOW + 1));
+        assert_eq!(second.symbol_layers[..2], [17.0, 16.0]);
+        assert_eq!(
+            preview.symbol_set_at(at(NEW_SET_FIRST_WINDOW)),
+            Some("Invented")
+        );
+        assert_eq!(preview.symbol_set_at(at(3)), None);
+        // After the last window: none lit, the last one as the previous.
+        let after = preview.controls((windows.last().unwrap().end as f64 + 3.0) / 70.0);
+        assert_eq!(after.symbol[..2], [-1.0, 1.0]);
+        assert_eq!(after.symbol_layers[..2], [-1.0, 17.0]);
+        let mut original = invented_preview(windows);
+        original.original_symbols = true;
+        let first = original.controls(at(NEW_SET_FIRST_WINDOW));
+        assert_eq!(first.symbol_layers[..2], [0.0, 15.0]);
+        assert_eq!(original.symbol_set_at(at(NEW_SET_FIRST_WINDOW)), None);
+    }
+
+    /// A preview of invented frames: part 6 from clip frame 0, running, with
+    /// the given symbol windows, empty masks and one invented set.
+    fn invented_preview(windows: Vec<SymbolWindow>) -> RingsPreview {
+        let frames = windows.last().map_or(1, |w| w.end + 8);
+        let state = HdRings {
+            phase: 1,
+            frame: 1,
+            intensity: 64,
+            drawn_page: 0,
+            shown_page: 1,
+            lit: None,
+            picture: None,
+        };
+        let empty = vec![vec![false; 320 * 200]; 1];
+        RingsPreview {
+            start: 0,
+            frames: vec![
+                RingsFrame {
+                    state,
+                    shown_step: 0,
+                    offsets: [[0; 2]; 2],
+                    stale: false,
+                };
+                frames
+            ],
+            windows,
+            bands: RingBands::fit(&synthetic_bands(198.5, 5.25)).unwrap(),
+            symbols: SymbolFields::new(&empty, SymbolDetail::Full).unwrap(),
+            authored: SymbolFields::new(&empty, SymbolDetail::Tubes).unwrap(),
+            symbol_sets: vec![AuthoredSet {
+                title: "Invented".into(),
+                shapes: Vec::new(),
+            }],
+            original_symbols: false,
+            picture: vec![0; 320 * 200 * 4],
+            style: RingsStyle::Pool,
+            centres: [vec![[160.0, 100.0]; frames], vec![[160.0, 100.0]; frames]],
+            replay: Replay {
+                checkpoints: Vec::new(),
+                music: Vec::new(),
+                cursor: Mutex::new(None),
+            },
+        }
+    }
+
+    #[test]
+    fn tube_detail_keeps_the_tubes_fields_at_half_the_light() {
+        // An invented ring and bar, in full and in tube detail, and an empty
+        // mask, which skips the tracing.
+        let shape = AuthoredShape {
+            mask: 0,
+            label: String::new(),
+            runs: vec![
+                (0..=36)
+                    .map(|k| {
+                        let a = k as f32 * std::f32::consts::TAU / 36.0;
+                        [50.0 + 30.0 * a.cos(), 50.0 + 30.0 * a.sin()]
+                    })
+                    .collect(),
+                vec![[10.0, 95.0], [90.0, 95.0]],
+            ],
+        };
+        let masks = vec![rasterise(&shape), vec![false; 320 * 200]];
+        let full = SymbolFields::new(&masks, SymbolDetail::Full).unwrap();
+        let tubes = SymbolFields::new(&masks, SymbolDetail::Tubes).unwrap();
+        assert_eq!((full.origin, full.size), (tubes.origin, tubes.size));
+        assert_eq!(tubes.atlas.len() * 2, full.atlas.len());
+        let (two, four) = (
+            tubes.atlas.as_chunks::<2>().0,
+            full.atlas.as_chunks::<4>().0,
+        );
+        for (t, f) in two.iter().zip(four) {
+            assert_eq!(*t, [f[1], f[3]]);
+        }
+        // The empty layer reads far everywhere, as a traced empty mask does.
+        let (tw, th) = full.texels();
+        let layer = (tw * th) as usize;
+        let traced = symbol_fields(&masks[1], full.origin, full.size);
+        assert!(
+            traced
+                .iter()
+                .all(|t| *t == [-SYMBOL_LIMIT, SYMBOL_LIMIT, 0.0, SYMBOL_LIMIT])
+        );
+        for (k, v) in full.atlas[4 * layer..].iter().enumerate() {
+            assert_eq!(v.to_f32(), traced[k / 4][k % 4]);
+        }
+        // The tubes' light map: half the texels each way, one level fewer,
+        // and the same light in all (its mean over the map's area).
+        assert_eq!(SymbolDetail::Tubes.light_size(), LIGHT_SIZE.map(|n| n / 2));
+        assert_eq!(tubes.light.len() + 1, full.light.len());
+        let total = |level: &[f16], scale: f32| {
+            level.iter().map(|v| v.to_f32()).sum::<f32>() * scale * scale
+        };
+        let (fl, tl) = (&full.light[0], &tubes.light[0]);
+        let half = fl.len() / 2;
+        let (a, b) = (total(&fl[..half], 1.0), total(&tl[..tl.len() / 2], 2.0));
+        assert!(a > 100.0 && (a / b - 1.0).abs() < 1e-3, "{a} {b}");
+        assert!(
+            fl[half..]
+                .iter()
+                .chain(&tl[tl.len() / 2..])
+                .all(|v| v.to_f32() == 0.0)
+        );
+        assert!(tubes.bytes() * 2 < full.bytes());
+    }
+
+    /// The share of each authored drawing's stroke pixels that its tubes
+    /// keep (within a tube's radius of a run), by set, mask and label.
+    fn authored_tube_shares(fields: &SymbolFields, masks: &[Vec<bool>]) -> Vec<f32> {
+        let (tw, th) = fields.texels();
+        let c = fields.detail.channels();
+        masks
+            .iter()
+            .enumerate()
+            .map(|(layer, mask)| {
+                let (mut kept, mut all) = (0, 0);
+                for (at, _) in mask.iter().enumerate().filter(|(_, set)| **set) {
+                    let (x, y) = ((at % 320) as i32, (at / 320) as i32);
+                    let i = (x - fields.origin[0]) as usize * SYMBOL_SCALE;
+                    let j = (y - fields.origin[1]) as usize * SYMBOL_SCALE;
+                    let t = ((layer * th as usize + j) * tw as usize + i) * c;
+                    // The centreline distance is the first of two channels,
+                    // the second of four.
+                    let d = fields.atlas[t + c / 4].to_f32();
+                    all += 1;
+                    kept += (d < NEON_RADIUS) as usize;
+                }
+                if all == 0 {
+                    1.0
+                } else {
+                    kept as f32 / all as f32
+                }
+            })
+            .collect()
+    }
+
+    /// A contact sheet of the authored sets through the tube pipeline, for
+    /// looking at: per mask, its stroke pixels dim, the tubes' glass
+    /// brighter and their centrelines white, free ends red. Writes
+    /// artifacts/new-symbols/tubes.png and prints the share of each
+    /// drawing's strokes the tubes keep, least first.
+    #[test]
+    #[ignore = "writes a contact sheet under artifacts/; run with --ignored"]
+    fn authored_tube_sheet() {
+        let sets = parse_authored(AUTHORED_SYMBOLS).unwrap();
+        let masks = authored_masks(&sets);
+        let fields = SymbolFields::new(&masks, SymbolDetail::Tubes).unwrap();
+        let shares = authored_tube_shares(&fields, &masks);
+        let (tw, th) = fields.texels();
+        let (cw, ch) = (tw as usize, th as usize);
+        let (sw, sh) = (16 * cw, NEW_SETS * ch);
+        let mut sheet = vec![0_u8; sw * sh * 3];
+        for (layer, mask) in masks.iter().enumerate() {
+            let (k, n) = (layer / 16, layer % 16);
+            for j in 0..ch {
+                for i in 0..cw {
+                    let t = ((layer * ch + j) * cw + i) * 2;
+                    let (d, end) = (fields.atlas[t].to_f32(), fields.atlas[t + 1].to_f32());
+                    let (x, y) = (
+                        fields.origin[0] + (i / SYMBOL_SCALE) as i32,
+                        fields.origin[1] + (j / SYMBOL_SCALE) as i32,
+                    );
+                    let inked = (0..320).contains(&x)
+                        && (0..200).contains(&y)
+                        && mask[(y * 320 + x) as usize];
+                    let mut rgb = if d < 0.6 {
+                        [255, 255, 255]
+                    } else if d < NEON_RADIUS {
+                        [200, 140, 30]
+                    } else if inked {
+                        [70, 70, 90]
+                    } else {
+                        [0, 0, 0]
+                    };
+                    if end < 1.5 && d < NEON_RADIUS {
+                        rgb = [255, 40, 40];
+                    }
+                    if i == 0 || j == 0 {
+                        rgb = [40, 40, 40];
+                    }
+                    let at = ((k * ch + j) * sw + n * cw + i) * 3;
+                    sheet[at..at + 3].copy_from_slice(&rgb);
+                }
+            }
+        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../artifacts/new-symbols");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = std::fs::File::create(dir.join("tubes.png")).unwrap();
+        let mut png = png::Encoder::new(std::io::BufWriter::new(file), sw as u32, sh as u32);
+        png.set_color(png::ColorType::Rgb);
+        png.set_depth(png::BitDepth::Eight);
+        png.write_header()
+            .unwrap()
+            .write_image_data(&sheet)
+            .unwrap();
+        let mut rows: Vec<(f32, String)> = Vec::new();
+        for (k, set) in sets.iter().enumerate() {
+            for shape in &set.shapes {
+                let layer = k * 16 + shape.mask as usize;
+                rows.push((
+                    shares[layer],
+                    format!("set {} mask {:2} {}", k + 1, shape.mask, shape.label),
+                ));
+            }
+        }
+        rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (share, name) in rows {
+            println!("{:5.1}%  {name}", share * 100.0);
+        }
     }
 
     #[test]
@@ -2297,6 +3038,57 @@ mod tests {
                 assert!(rings.frames[j].state.lit.is_none_or(|n| n == w.mask));
             }
         }
+        // The tune's patterns hold 32 windows each: the order of the tune
+        // that selected each window's first lit frame (in the step before
+        // it) is the same through each run of 32 from the first, and changes
+        // between them. The authored sets take the 7 from window 64.
+        assert_eq!(rings.windows.len(), 321, "symbol windows");
+        let order = |i: usize| rings.replay.music[rings.windows[i].start - 1] >> 8;
+        for (i, _) in rings.windows.iter().enumerate().skip(1) {
+            let same = order(i) == order(i - 1);
+            assert_eq!(same, i % PATTERN_WINDOWS != 0, "order at window {i}");
+        }
+        let last = NEW_SET_FIRST_WINDOW + NEW_SETS * PATTERN_WINDOWS;
+        let start = |i: usize| seconds(rings.windows[i].start);
+        // Their first lit frames; the HD views switch over the frame before.
+        let (from, to) = (start(NEW_SET_FIRST_WINDOW), start(last));
+        assert!(
+            (from - 50.786).abs() < 0.001 && (to - 76.643).abs() < 0.001,
+            "{from} {to}"
+        );
+        // Each set draws every mask its pattern lights, and the controls
+        // show its drawings there and the originals elsewhere.
+        let mut patterns = Vec::new();
+        for k in 0..NEW_SETS {
+            let first = NEW_SET_FIRST_WINDOW + k * PATTERN_WINDOWS;
+            let mut lit: Vec<u8> = rings.windows[first..first + PATTERN_WINDOWS]
+                .iter()
+                .map(|w| w.mask)
+                .collect();
+            lit.sort_unstable();
+            lit.dedup();
+            let set = &rings.symbol_sets[k];
+            for &n in &lit {
+                assert!(
+                    set.shapes.iter().any(|s| s.mask == n),
+                    "set {} ({}) has no drawing of mask {n}, which its pattern lights",
+                    k + 1,
+                    set.title
+                );
+            }
+            patterns.push((start(first), order(first), lit));
+        }
+        for (i, w) in rings.windows.iter().enumerate() {
+            let t = seconds(w.start) + 0.5 / FRAME_RATE as f64;
+            let layers = rings.controls(t).symbol_layers;
+            assert_eq!(
+                layers[0],
+                window_layer(i, w.mask, false) as f32,
+                "layer at window {i}"
+            );
+            let new = (NEW_SET_FIRST_WINDOW..last).contains(&i);
+            assert_eq!(layers[0] >= ORIGINAL_SYMBOLS as f32, new, "window {i}");
+        }
         println!(
             "Part 6: clip frames {}..{} ({:.3}–{:.3} s); bands {:?}",
             rings.start,
@@ -2313,6 +3105,18 @@ mod tests {
             rings.windows.len(),
             share * 100.0
         );
+        println!(
+            "  originals again from {:.3} s; the last window from {:.3} s",
+            seconds(rings.windows[last].start),
+            seconds(rings.windows[rings.windows.len() - 1].start)
+        );
+        for (k, (at, order, lit)) in patterns.iter().enumerate() {
+            println!(
+                "  set {} ({}) from {at:.3} s, order {order:02X}: masks {lit:?}",
+                k + 1,
+                rings.symbol_sets[k].title
+            );
+        }
         println!(
             "  {} of {running} ring frames show a stale page; {} of the {lit_frames} with \
              visible rings (skipped in HD; clip frames): {:?}",
