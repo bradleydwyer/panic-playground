@@ -44,7 +44,8 @@ struct Uniforms {
     /// shutter open to now) and the authored wall strength.
     backdrop_motion: [f32; 4],
     /// Authored wall waves (`ScrollerPreview::waves_at`): depth (0 when off),
-    /// the exposure in seconds, the side light's strength, and an unused slot.
+    /// the exposure in seconds, the side light's strength, and the swing
+    /// (`ScrollerPreview::wave_swing`).
     waves: [f32; 4],
     // Part 6 (`rings::RingsPreview::controls`); all zero before it. The WGSL
     // declaration below documents each field.
@@ -90,7 +91,7 @@ struct Controls {
     // authored wall strength, unused.
     backdrop_motion: vec4f,
     // Authored wall waves: depth (0 when off), exposure in seconds, side
-    // light strength, unused.
+    // light strength, swing (1 at the depth, -1 turned over; see clip.rs).
     waves: vec4f,
     // Part 6 (Rings), all zero before it; rings_common.wgsl reads them.
     // During part 6 the scroller's fields are reused for the bump wall:
@@ -667,7 +668,8 @@ impl Renderer {
             ];
             let reveal = clip.transition.as_ref().map_or(0, |cut| cut.start_tick);
             let [depth, light] = scroll.waves_at(time, reveal);
-            waves = [depth, (WALL_SHUTTER_TICKS / 70.0) as f32, light, 0.0];
+            let swing = scroll.wave_swing(time, reveal);
+            waves = [depth, (WALL_SHUTTER_TICKS / 70.0) as f32, light, swing];
         }
         let u = Uniforms {
             screen: [size.0 as f32, size.1 as f32, time as f32, comparison as f32],
