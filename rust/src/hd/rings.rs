@@ -1499,8 +1499,6 @@ pub struct RingsPreview {
     pub picture: Vec<u8>,
     /// The selected style; see [`RingsStyle`].
     pub style: RingsStyle,
-    /// Where the styles' neon falters; see [`NeonFlicker`].
-    pub flicker: NeonFlicker,
     /// Each frame's ring centres on screen (source pixels), per layer.
     centres: [Vec<[f64; 2]>; 2],
     replay: Replay,
@@ -1594,7 +1592,6 @@ impl RingsPreview {
             symbols,
             picture,
             style: RingsStyle::FaithfulPlus,
-            flicker: NeonFlicker::Last,
             replay: Replay {
                 checkpoints,
                 music: positions,
@@ -1689,7 +1686,6 @@ impl RingsPreview {
         // original's own frame and each frame time shows exactly that frame's
         // symbol: during the frame before, the times below are negative.
         let mut symbol = [-1.0, -1.0, 0.0, -1.0];
-        let mut flicker = 1.0;
         let ahead = self.frame_at(time + 1.0 / FRAME_RATE as f64).unwrap_or(0);
         let current = self.windows.partition_point(|w| w.start <= ahead);
         if let Some(w) = current.checked_sub(1).map(|i| self.windows[i]) {
@@ -1697,8 +1693,6 @@ impl RingsPreview {
                 symbol[0] = w.mask as f32;
                 symbol[2] = (time - seconds(w.start)) as f32;
                 symbol[3] = (seconds(w.end) - time) as f32;
-                let unsteady = self.flicker.unsteady(intensity, peak);
-                flicker = neon_flicker(time, w.start, time - seconds(w.start), unsteady);
                 if let Some(p) = current.checked_sub(2).map(|i| self.windows[i])
                     && p.end == w.start
                 {
@@ -1725,12 +1719,7 @@ impl RingsPreview {
                 self.bands.matched as f32,
                 0.0,
             ],
-            ring_fades: [
-                intensity as f32,
-                picture as f32,
-                peak as f32,
-                flicker as f32,
-            ],
+            ring_fades: [intensity as f32, picture as f32, peak as f32, 0.0],
             symbol,
             symbol_atlas: [
                 self.symbols.origin[0] as f32,
@@ -1820,113 +1809,6 @@ impl std::str::FromStr for RingsStyle {
             _ => Err("Use --rings-style faithful-plus, glass, pool, room or volume".into()),
         }
     }
-}
-
-/// Where the styles' neon falters (authored: the original's symbols switch
-/// cleanly). Faithful HD never flickers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NeonFlicker {
-    /// Steady throughout.
-    Off,
-    /// Until the rings first show, like a sign warming up.
-    First,
-    /// As the rings fade out and after, like a sign dying.
-    Last,
-    /// Both.
-    Both,
-}
-
-impl NeonFlicker {
-    pub const ALL: [Self; 4] = [Self::Off, Self::First, Self::Last, Self::Both];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::First => "first",
-            Self::Last => "last",
-            Self::Both => "both",
-        }
-    }
-
-    /// How unsteady the neon is, 0..1, from the rings' intensity and the
-    /// most they have been lit so far: the first part is before they reach
-    /// full intensity, the last after they start to fade.
-    pub fn unsteady(self, intensity: f64, peak: f64) -> f64 {
-        let first = 1.0 - peak;
-        let last = peak - intensity;
-        let u = match self {
-            Self::Off => 0.0,
-            Self::First => first,
-            Self::Last => last,
-            Self::Both => first.max(last),
-        };
-        u.clamp(0.0, 1.0)
-    }
-}
-
-impl std::str::FromStr for NeonFlicker {
-    type Err = String;
-    fn from_str(value: &str) -> Result<Self, String> {
-        Self::ALL
-            .into_iter()
-            .find(|f| f.name() == value)
-            .ok_or_else(|| "Use --neon-flicker off, first, last or both".into())
-    }
-}
-
-/// Authored: the flicker's slots, two of the original's frames, in seconds.
-const NEON_SLOT: f64 = 2.0 / FRAME_RATE as f64;
-/// Authored: the neon's spells, in seconds, and the share of them that are
-/// troubled. The symbols themselves switch every eight frames or so, so the
-/// flicker belongs to the sign, not to each symbol.
-const NEON_SPELL: f64 = 0.6;
-const NEON_TROUBLE: f64 = 0.3;
-/// Authored: the chance in each slot of the tube sputtering out, in a calm
-/// spell and in a troubled one.
-const NEON_SPUTTER: [f64; 2] = [0.03, 0.35];
-/// Authored: the chance that a newly lit symbol strikes a slot late, in a
-/// calm spell and in a troubled one.
-const NEON_LATE: [f64; 2] = [0.0, 0.4];
-/// Authored: how far the tube's level wavers otherwise.
-const NEON_BUZZ: f64 = 0.12;
-
-/// How lit a lit symbol is, 0..1, at clip time `time`, `since` seconds into
-/// its lit window (which began at part-6 frame `start`), when the neon is
-/// `unsteady` (0 steady, 1 fully unreliable). Calm spells and troubled ones
-/// come and go: in either the tube sputters out for a slot now and then,
-/// far more often in a troubled spell, and otherwise wavers a little; in a
-/// troubled spell a symbol often strikes late, dark for its first slot. Authored,
-/// and a pure function of its arguments, so seeking and captures agree.
-pub fn neon_flicker(time: f64, start: usize, since: f64, unsteady: f64) -> f64 {
-    if unsteady <= 0.0 {
-        return 1.0;
-    }
-    let slot = (time.max(0.0) / NEON_SLOT) as u64;
-    let spell = (time.max(0.0) / NEON_SPELL) as u64;
-    let troubled = flicker_roll(1, spell) < NEON_TROUBLE;
-    let level = if since < NEON_SLOT && flicker_roll(2, start as u64) < NEON_LATE[troubled as usize]
-    {
-        0.0
-    } else if flicker_roll(3, slot) < NEON_SPUTTER[troubled as usize] {
-        0.25 * flicker_roll(4, slot)
-    } else {
-        1.0 - NEON_BUZZ * flicker_roll(5, slot)
-    };
-    1.0 - unsteady.min(1.0) * (1.0 - level)
-}
-
-/// A uniform roll in 0..1 for stream `stream`, number `n` (SplitMix64's
-/// finaliser).
-fn flicker_roll(stream: u64, n: u64) -> f64 {
-    let mut x = stream
-        .wrapping_mul(0x9e37_79b9_7f4a_7c15)
-        .wrapping_add(n.wrapping_mul(0xd1b5_4a32_d192_ed03));
-    x ^= x >> 30;
-    x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    x ^= x >> 27;
-    x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
-    x ^= x >> 31;
-    (x >> 11) as f64 / (1u64 << 53) as f64
 }
 
 /// One part-6 style: its WGSL, whether it has a half-resolution prepass and
@@ -2395,61 +2277,6 @@ mod tests {
             assert_eq!(alias.parse(), Ok(RingsStyle::FaithfulPlus));
         }
         assert!("disco".parse::<RingsStyle>().is_err());
-    }
-
-    #[test]
-    fn neon_flickers_only_where_chosen_and_holds_otherwise() {
-        // Before the rings (peak 0), at full intensity, and after them.
-        let moments = [(0.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
-        let unsteady = |f: NeonFlicker| moments.map(|(i, p)| f.unsteady(i, p));
-        assert_eq!(unsteady(NeonFlicker::Off), [0.0, 0.0, 0.0]);
-        assert_eq!(unsteady(NeonFlicker::First), [1.0, 0.0, 0.0]);
-        assert_eq!(unsteady(NeonFlicker::Last), [0.0, 0.0, 1.0]);
-        assert_eq!(unsteady(NeonFlicker::Both), [1.0, 0.0, 1.0]);
-        for f in NeonFlicker::ALL {
-            assert_eq!(f.name().parse(), Ok(f));
-        }
-        assert!("flaky".parse::<NeonFlicker>().is_err());
-
-        // Symbols switching every eight frames, as the original's do, over
-        // a minute, one sample per slot, from the start of a spell.
-        let per_spell = (NEON_SPELL / NEON_SLOT).round() as usize;
-        let levels = |unsteady: f64| -> Vec<f64> {
-            (0..100 * per_spell)
-                .map(|k| {
-                    let spell = 70 + k / per_spell;
-                    let within = ((k % per_spell) as f64 + 0.5) / per_spell as f64;
-                    let time = (spell as f64 + within) * NEON_SPELL;
-                    let frame = (time * FRAME_RATE as f64) as usize;
-                    let start = frame / 8 * 8;
-                    let since = time - start as f64 / FRAME_RATE as f64;
-                    neon_flicker(time, start, since, unsteady)
-                })
-                .collect()
-        };
-        // Steady neon is simply on.
-        assert!(levels(0.0).iter().all(|&l| l == 1.0));
-        let shaky = levels(1.0);
-        // The same every time, and in range.
-        assert_eq!(shaky, levels(1.0));
-        assert!(shaky.iter().all(|&l| (0.0..=1.0).contains(&l)));
-        // Mostly lit.
-        let mean = shaky.iter().sum::<f64>() / shaky.len() as f64;
-        assert!((0.7..0.92).contains(&mean), "mean {mean}");
-        // In spells: some calm, with no sputter at all, and some troubled.
-        let dark: Vec<usize> = shaky
-            .chunks(per_spell)
-            .map(|c| c.iter().filter(|&&l| l < 0.5).count())
-            .collect();
-        let share = |f: &dyn Fn(usize) -> bool| {
-            dark.iter().filter(|&&n| f(n)).count() as f64 / dark.len() as f64
-        };
-        assert!(share(&|n| n == 0) > 0.2, "calm spells {dark:?}");
-        assert!(share(&|n| n >= 4) > 0.15, "troubled spells {dark:?}");
-        // Half as unsteady, half as far from on.
-        for (a, b) in shaky.iter().zip(&levels(0.5)) {
-            assert!((1.0 - b - 0.5 * (1.0 - a)).abs() < 1e-12);
-        }
     }
 
     #[test]

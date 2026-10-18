@@ -4,7 +4,7 @@ use panic_demo::{
     hd::{
         clip::{Clip, ScrollerBackdrop, ScrollerLighting},
         renderer::{Renderer, View},
-        rings::{NeonFlicker, RingsStyle},
+        rings::RingsStyle,
     },
 };
 use sdl2::{
@@ -35,8 +35,6 @@ struct Options {
     /// Continue through part 6 (Rings) to part 5's first frame.
     rings: bool,
     rings_style: RingsStyle,
-    /// Where the part-6 styles' neon falters (N).
-    neon_flicker: NeonFlicker,
     scroller_lighting: ScrollerLighting,
     scroller_backdrop: ScrollerBackdrop,
     wall_shape: f32,
@@ -69,7 +67,6 @@ impl Options {
             scroller: false,
             rings: false,
             rings_style: RingsStyle::FaithfulPlus,
-            neon_flicker: NeonFlicker::Last,
             scroller_lighting: ScrollerLighting::Studio,
             scroller_backdrop: ScrollerBackdrop::Chrome,
             wall_shape: 0.5,
@@ -147,15 +144,6 @@ impl Options {
                     o.rings_style = args
                         .next()
                         .ok_or("--rings-style needs faithful-plus, glass, pool, room or volume")?
-                        .parse()?;
-                    o.rings = true;
-                    o.scroller = true;
-                    o.modern = true;
-                }
-                "--neon-flicker" => {
-                    o.neon_flicker = args
-                        .next()
-                        .ok_or("--neon-flicker needs off, first, last or both")?
                         .parse()?;
                     o.rings = true;
                     o.scroller = true;
@@ -240,7 +228,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings) to part 5's first frame\n  --rings-style S  Part 6 style: faithful-plus (default), glass, pool, room or volume\n  --neon-flicker M Where part 6's neon falters: off, first, last (default) or both\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light\n1-5: part 6 style (faithful-plus, glass, pool, room, volume) · N: neon flicker\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings) to part 5's first frame\n  --rings-style S  Part 6 style: faithful-plus (default), glass, pool, room or volume\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light\n1-5: part 6 style (faithful-plus, glass, pool, room, volume)\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6."
                     );
                     std::process::exit(0);
                 }
@@ -313,7 +301,6 @@ fn run() -> Result<(), String> {
         };
         if let Some(rings) = &mut clip.rings {
             rings.style = o.rings_style;
-            rings.flicker = o.neon_flicker;
         }
         let scroll = clip.scroller.as_mut().unwrap();
         scroll.backdrop_style = o.scroller_backdrop;
@@ -570,14 +557,6 @@ fn run() -> Result<(), String> {
                             };
                             rings.style = RingsStyle::ALL[pick];
                             println!("Part 6 style {}", rings.style.name());
-                        }
-                    }
-                    Keycode::N => {
-                        if let Some(rings) = &mut clip.rings {
-                            let all = NeonFlicker::ALL;
-                            let i = all.iter().position(|&f| f == rings.flicker).unwrap_or(0);
-                            rings.flicker = all[(i + 1) % all.len()];
-                            println!("Neon flicker {}", rings.flicker.name());
                         }
                     }
                     Keycode::P => o.fps = !o.fps,

@@ -401,7 +401,6 @@ optical simulation. All fields are generated locally in memory.
 | , / . | Depth of the waves |
 | ; / ' | Strength of the waves' side light and shadows |
 | 1 to 5 | Part 6 style: faithful-plus, glass, pool, room, volume |
-| N | Part 6 neon flicker: off, first, last, both |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
@@ -419,8 +418,7 @@ cargo run --release --locked --features hires --bin panic-hd -- --rings-style gl
 `--rings` continues past part 2 through part 6, the interference rings and
 flashing symbols, to the first frame of part 5, with the music unbroken.
 `--rings-style` chooses its style and implies `--rings`; **1** to **5** switch
-styles while playing, and the title shows the one in use. `--neon-flicker`
-(or **N**) chooses where the styles' neon falters; see below. `--faithful` (or
+styles while playing, and the title shows the one in use. `--faithful` (or
 **M**) shows faithful HD, and `--split` (or **C**) the original on the left,
 as in the earlier parts. Part 5 itself is outside the preview: the clip ends
 on the PSTART picture as part 5 begins, at 81.27 seconds, and holds there.
@@ -440,17 +438,6 @@ and black where both or neither are. They fade in over 64 frames from 50.33
 seconds (the fade counter starts at -100 at 07:1F, so the 08:00 downbeat
 lands mid-fade), fade out from 72.99 to 73.89, and the symbols carry on alone
 until the PSTART picture fades in over 64 frames from 80.36.
-
-The styles' neon isn't always steady; this is authored, as the original's
-symbols switch cleanly. By default it falters as the rings fade out and
-after, like a dying sign. In calm spells, 0.6 seconds each, it sputters out
-for two frames now and then and otherwise wavers a little; in troubled ones,
-about three in ten, it cuts out far more often, and a new symbol often
-strikes two frames late. `--neon-flicker first` moves it to before the rings
-first fade in, like a sign warming up; `both` uses both and `off` turns it
-off, and **N** cycles them while playing. It follows the rings' own fades
-and depends only on the time, so seeking and captures agree. The tubes,
-their light and their reflections flicker together; faithful HD never does.
 
 The preview keeps part 6 as compact state per frame, read from the scene's
 counters through `Rings::hd_state` and `Rings::hd_offsets`, rather than its
@@ -628,8 +615,6 @@ The helpers in `rings_common.wgsl` include:
   (`neon_mask()`, `neon_previous()`, `neon_on()`, `neon_previous_on()`,
   `neon_since()`, `neon_until()`). The symbol switches are the original's
   own cues, on its tracker rows. Before 43.41 seconds the original is black.
-  `neon_on()` includes the authored flicker below; `neon_switch()` is the
-  original's timing alone, which faithful HD uses.
 - Music cues measured from the PCM, as the intro and scroller use them:
   `cue_energy()`, `cue_onset()`, `cue_low()`, `cue_accent()`, `cue_level()`,
   `cue_bass()`, `cue_treble()`, and `musical_lighting()` for the viewer's

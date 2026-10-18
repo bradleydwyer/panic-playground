@@ -24,7 +24,7 @@ fn faithful_rings(px:RingsPixel)->vec3f {
     var c=ring_xor(a,b);
     for(var k=0;k<2;k++) {
         let mask=select(neon_mask(),neon_previous(),k==1);
-        let on=select(neon_switch(),neon_previous_on(),k==1);
+        let on=select(neon_on(),neon_previous_on(),k==1);
         if on>0.0 {
             let d=symbol_field(mask,s).x;
             let cover=clamp(d/max(fwidth(d),1e-3)*.75+.5,0.0,1.0)*on;

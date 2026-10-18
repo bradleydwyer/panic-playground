@@ -217,15 +217,11 @@ fn neon_until()->f32 {return u.symbol.w;}
 // its first lit frame, as the old one goes off (an authored cross-fade; the
 // original switches between frames), so at each frame's own time the HD
 // views show that frame's symbol. Steady in between: they show the
-// original's 35 Hz flicker as its average. neon_switch is that timing
-// alone, as faithful HD shows it; neon_on adds the styles' authored flicker
-// of unreliable neon (rings::neon_flicker, 1 when steady), which the tubes,
-// their light and their reflections all follow.
-fn neon_switch()->f32 {
+// original's 35 Hz flicker as its average.
+fn neon_on()->f32 {
     if u.symbol.x<0.0 {return 0.0;}
     return clamp(u.symbol.z*70.0+1.0,0.0,1.0);
 }
-fn neon_on()->f32 {return neon_switch()*u.ring_fades.w;}
 fn neon_previous_on()->f32 {
     if u.symbol.y<0.0 {return 0.0;}
     return 1.0-clamp(u.symbol.z*70.0+1.0,0.0,1.0);
