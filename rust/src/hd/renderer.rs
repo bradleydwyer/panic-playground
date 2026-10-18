@@ -1322,7 +1322,7 @@ mod tests {
         for constant in [
             format!("const SYMBOL_SCALE={SYMBOL_SCALE}.0;"),
             format!("const SYMBOL_LIMIT={SYMBOL_LIMIT:.1};"),
-            format!("const NEON_RADIUS={NEON_RADIUS};"),
+            format!("const NEON_RADIUS={NEON_RADIUS:?};"),
             format!(
                 "const RING_WINDOW=vec4f({},{},{},{});",
                 RING_WINDOW[0], RING_WINDOW[1], RING_WINDOW[2], RING_WINDOW[3]

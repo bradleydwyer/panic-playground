@@ -39,11 +39,14 @@ pub const SYMBOL_LIMIT: f32 = 12.0;
 /// (as for the scroller's letters, which use 0.65): it rounds the hand-drawn
 /// strokes' one-pixel stair steps. An authored interpretation.
 pub const SYMBOL_SMOOTHING: f32 = 0.85;
-/// Authored outer radius of the neon tubes' glass, in source rows (about the
-/// original strokes' half-width); the glowing gas fills the middle half of
-/// it. The light map is built from the glass. rings_common.wgsl repeats it
-/// as NEON_RADIUS.
-pub const NEON_RADIUS: f32 = 2.2;
+/// Authored outer radius of the neon tubes' glass, in source rows; the
+/// glowing gas fills the middle half of it. The light map is built from the
+/// glass. rings_common.wgsl repeats it as NEON_RADIUS.
+pub const NEON_RADIUS: f32 = 3.0;
+/// The original strokes' half-width, about, in source rows (an
+/// interpretation of the masks). The tubes' runs are measured against it:
+/// what is too short to keep, and the air left between crossing tubes.
+pub const NEON_STROKE: f32 = 2.2;
 /// The neon light map covers this source-pixel rectangle (the 320 × 200
 /// frame and a wide margin) at one texel per pixel, with a full mip chain.
 pub const LIGHT_ORIGIN: [i32; 2] = [-96, -92];
@@ -792,8 +795,9 @@ const HOOK: f32 = 4.0;
 const STRAIGHT: f32 = 2.0;
 /// The coarser key-point tolerance for freehand curves, in rows.
 const FREEHAND: f32 = 1.8;
-/// The gap, in rows, where a loop's two ends turn into the backing board.
-const RETURN: f32 = 3.0 * NEON_RADIUS;
+/// The gap, in rows, where a loop's two ends turn into the backing board:
+/// both ends' glass and a stroke's half-width of air.
+const RETURN: f32 = 2.0 * NEON_RADIUS + NEON_STROKE;
 
 /// Redraw a traced run as a clean curve (authored; the neon symbols are
 /// recreated from the originals rather than traced): a closed run that is
@@ -1336,26 +1340,27 @@ fn break_junctions(skeleton: &mut [bool], w: usize, h: usize, point: impl Fn(usi
                 continue;
             }
             // Clear the through run's glass, the cut tube's own rounded end
-            // and a gap of a tube radius between them, measured across the
-            // run: further along an oblique branch.
+            // and a stroke's half-width of air between them, measured across
+            // the run: further along an oblique branch.
             let d = directions[k];
             let sin = ((d[0] * through[1] - d[1] * through[0]) / tl)
                 .abs()
                 .max(0.5);
-            let gap = 3.0 * NEON_RADIUS / sin;
+            let gap = (2.0 * NEON_RADIUS + NEON_STROKE) / sin;
             let cut = walk(skeleton, exit, gap);
             for &i in &cut {
                 if branches(skeleton, w, i) < 3 {
                     skeleton[i] = false;
                 }
             }
-            // Drop what is left of the branch if it is no longer than a tube's width.
+            // Drop what is left of the branch if it is no longer than two
+            // strokes' widths.
             if let Some(&last) = cut.last()
                 && let Some(&rest) = skeleton_neighbours(skeleton, w, last).first()
             {
                 let mut piece = vec![rest];
                 let mut seen = std::collections::HashSet::from([rest]);
-                let limit = (4.0 * NEON_RADIUS * SYMBOL_SCALE as f32) as usize;
+                let limit = (4.0 * NEON_STROKE * SYMBOL_SCALE as f32) as usize;
                 let mut i = 0;
                 while i < piece.len() && piece.len() <= limit {
                     for m in skeleton_neighbours(skeleton, w, piece[i]) {
@@ -1373,10 +1378,10 @@ fn break_junctions(skeleton: &mut [bool], w: usize, h: usize, point: impl Fn(usi
             }
         }
     }
-    // Fragments the cuts left shorter than a tube's width go; parts of the
+    // Fragments the cuts left shorter than a stroke's width go; parts of the
     // shape that were that small to begin with (dots) stay.
     let after = skeleton_parts(skeleton, w);
-    let short = (2.0 * NEON_RADIUS * SYMBOL_SCALE as f32) as usize;
+    let short = (2.0 * NEON_STROKE * SYMBOL_SCALE as f32) as usize;
     let mut size = std::collections::HashMap::new();
     for part in after.iter().flatten() {
         *size.entry(*part).or_insert(0_usize) += 1;

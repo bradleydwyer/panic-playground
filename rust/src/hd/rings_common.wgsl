@@ -40,7 +40,7 @@ const RING_WINDOW=vec4f(32,8,288,192);
 // authored tube radius the light map was built with, in rows).
 const SYMBOL_SCALE=2.0;
 const SYMBOL_LIMIT=12.0;
-const NEON_RADIUS=2.2;
+const NEON_RADIUS=3.0;
 // The default camera, as the scroller's: the eye 550 rows in front of the
 // screen plane z = 0, where the 4:3 frame is 200 rows high. Styles may use
 // their own.

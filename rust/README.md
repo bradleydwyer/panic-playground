@@ -486,18 +486,21 @@ helpers; everything seen is authored.
 The lit symbol is a yellow neon tube along its stroke's centreline, from the
 shared tubes in `rings_common.wgsl`, and the shared HDR bloom makes it glow.
 Following the owner's direction and photographs of neon signs, each tube is a
-clear glass tube about as wide as the original stroke, with a column of
-glowing gas down its middle: white hot along the centre once tonemapped,
+clear glass tube a little bolder than the original stroke (radius 3 rows to
+the stroke's 2.2, `NEON_RADIUS`), with a column of glowing gas down its
+middle: white hot along the centre once tonemapped,
 where a line of sight crosses the most gas, and a saturated amber yellow at
 its edge, warmer than the original's lemon. The glass carries a little of
 that light, gathers a bright line along each wall and catches a lamp's
 highlight, and what lies behind shows through it, bent. As in a real sign,
 each tube is a single run that bends but never branches: where the original's
 strokes meet or cross, the two branches that continue each other most nearly
-straight stay one run, and the others stop short of it with a gap of about a
-tube's radius, glowing to their rounded ends (their electrodes bend away
-behind the sign; `NEON_ELECTRODE` shows them instead). Fragments shorter than
-a tube's width go. A haze of scattered light follows the tubes' shape. The
+straight stay one run, and the others stop short of it with an air gap of
+about a stroke's half-width, glowing to their rounded ends (their electrodes
+bend away behind the sign; `NEON_ELECTRODE` shows them instead). Fragments
+shorter than a stroke's width go. What is too short to keep is measured
+against the original strokes (`NEON_STROKE`), not the glass, so thicker
+tubes keep the drawing's small strokes. A haze of scattered light follows the tubes' shape. The
 neon's light is an approximation: a prefiltered map of the tubes, not traced
 light.
 
