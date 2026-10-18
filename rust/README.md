@@ -504,32 +504,32 @@ mask its pattern lights.
 The drawings are authored for this remake, not recovered from the demo, so
 unlike the original's data they are kept in Git, in
 `src/hd/rings_symbols.txt`: one line per drawing of its set, mask, label and
-runs, open polylines in a 100-unit box on a 0 to 1000 grid. The file's
-header describes the format. Some are neon tracings of company logos
+runs, polylines in a 100-unit box on a 0 to 1000 grid. The file's header
+describes the format. Some are neon tracings of company logos
 (Claude, ChatGPT, Apple and Bitcoin in set 5; YouTube, Instagram, X,
 WhatsApp, Facebook, Reddit, LinkedIn and TikTok in set 6). Those logos are
 trademarks of their owners; their use here implies no affiliation or
 endorsement.
 
-When the preview loads, each drawing becomes a 320 by 200 mask like an
-original's: its box 110 rows high on the screen's centre, round on the 4:3
-display, with pixels set within the original strokes' half-width of 2.2
-rows (`NEON_STROKE`) of a run. The tubes are then made from the mask exactly
-as from the originals, through thinning, the runs and their crossing gaps,
-the clean curves and the light map. So the drawings' own runs aren't kept:
-where strokes meet, one runs through and the others stop short of it, and
-a branch that is left shorter than about two strokes' widths goes. Together
-with what thinning takes from a free end, a branch that reaches less than
-about 21 rows (19 units) from a junction disappears: the pins of the
-microchips, the joystick's stick, the monitor's stand, the anchor's crossbar
-and the crosses of the Mercury and Venus symbols, for example. A closed run that
-is nearly a circle becomes one, so Instagram's rounded square is drawn round.
+The drawings' runs are the tubes as drawn: each run is a tube's centreline,
+in a box 155 rows high on the screen's centre (`AUTHORED_BOX`), round on the
+4:3 display. That stands them about as tall as the originals, whose masks
+are 43 to 157 rows tall, 123 at the median; the drawings come to 31 to 153,
+124 at the median, and every one stays inside the 4:3 frame with its tubes'
+glass, which a default test checks. The originals' redrawing doesn't apply
+to them: there is no thinning or tracing, no gap where runs cross or meet,
+so their tubes simply overlap, nothing short is dropped and no near-circle
+is made a circle. A run whose last point is its first is a closed loop with
+no ends, and a run of one point is a dot. The atlas measures the distances
+to the runs and their free ends, and the light map is made from them, as for
+the originals; a default test checks that every point of every run lies on
+its tube.
 
 The neon alone draws them, so their 112 layers keep only the two fields the
-tubes use, the centreline and free-end distances, over their own smaller
-rectangle, and a light map at half the resolution each way (one texel per 2
-by 2 pixels, `SymbolDetail::Tubes`). They take 59 MB, against 30 MB for the
-original's 16 layers, and are built in about 0.2 seconds. Below about 1.2
+tubes use, the centreline and free-end distances, over their own rectangle,
+and a light map at half the resolution each way (one texel per 2 by 2
+pixels, `SymbolDetail::Tubes`). They take 86 MB, against 30 MB for the
+original's 16 layers, and are built in about 0.02 seconds. Below about 1.2
 pixels their light map is blurrier than asked, which shows only where the
 pool's reflections soften.
 

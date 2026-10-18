@@ -12,8 +12,8 @@
 // - Decoded locally from the data at load time: the 16 symbol masks, M.DAT's
 //   band geometry and the PSTART picture.
 // - Authored: the 7 new symbol sets (rings_symbols.txt) that the neon shows
-//   in the middle of the part in place of the original masks, drawn into
-//   masks like the originals at load time.
+//   in the middle of the part in place of the original masks; their runs are
+//   the tubes as drawn (rings::SymbolFields::authored).
 // - Interpretation: the analytic band model fitted to M.DAT (98% of its
 //   pixels), smooth outlines and centrelines of the masks, interpolation
 //   between the original's 70 Hz frames and the symbols' averaged flicker.
@@ -213,9 +213,9 @@ fn ring_xor(a:f32,b:f32)->vec3f {
 // distance to the nearest free end of a stroke's centreline, all in source
 // rows (scene units). Beyond the atlas, or with no layer (-1), the distances
 // read as at least SYMBOL_LIMIT. The authored sets keep only the centreline
-// and free-end distances; their strokes are drawn NEON_STROKE wide, so the
-// half-width reads as that and the outline as that less the centreline
-// distance (approximate: it ignores the gaps cut into the runs).
+// and free-end distances; their strokes are taken as NEON_STROKE round the
+// runs, so the half-width reads as that and the outline as that less the
+// centreline distance.
 fn symbol_field(layer:i32,s:vec2f)->vec4f {
     let far=vec4f(-SYMBOL_LIMIT,SYMBOL_LIMIT,0,SYMBOL_LIMIT);
     if layer<0 {return far;}
