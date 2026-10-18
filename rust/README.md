@@ -405,6 +405,50 @@ PANIC_DATA=/path/to/imported-data PANIC_FIXTURES=/path/to/reference-rust \
 The importer doesn't create those reference files, and they aren't distributed
 here. Don't commit any binary fixtures, including audio.
 
+### Look check
+
+`tools/look_check.py` renders a fixed list of shots with `panic-hd --headless`
+and compares them with an earlier set, to catch unintended changes to the look
+while the shaders change. It needs only the Python standard library and your
+imported data, and writes everything under `artifacts/look-check/`, which Git
+ignores. Its 23 shots cover the modern intro letters, the plate and doors, the
+logo, the laser cut, the scroller with each backdrop and lighting mode,
+faithful HD and the original view, at 960 × 540. Their times are authored test
+points, not cues from the original. `list` shows them, and `--only` selects
+shots or groups by name, with wildcards (`--only scroller,laser` or
+`--only 'intro-7*'`).
+
+```sh
+python3 tools/look_check.py render baseline --bin /path/to/older/panic-hd
+python3 tools/look_check.py check baseline   # renders "current", then compares
+python3 tools/look_check.py compare baseline current
+```
+
+Each set records the binary and its SHA-256, `git describe` for the checkout
+the tool ran in, the GPU, each shot's flags and the size. Data comes from
+`--data`, `PANIC_DATA` or `artifacts/local-data`. `--size` and
+`--extra='--wall-strength 0.8'` apply to every shot. A shot that needs a flag
+missing from the binary's `--help` is skipped, so older builds still give a
+partial baseline.
+
+For each shot the comparison reports the largest channel difference, the mean
+RGB difference (both in 1/255 steps), and how many pixels differ at all and by
+more than the tolerance. A shot is *identical*; *noise*, when no more than
+0.01% of its pixels differ by more than 2/255 and the mean stays at or below
+0.25/255; or *changed*. `--tolerance`, `--max-changed` and `--max-mean` adjust
+those limits. Changed shots, failed renders and size mismatches give exit
+status 1. Each shot that differs gets a heatmap, and changed shots go on a
+sheet of before, after and difference panels, in
+`artifacts/look-check/reports/`.
+
+On an Apple M5 Max the captures were deterministic: two runs of one build, and
+builds of the same source from two checkouts, matched byte for byte.
+Reassociating the arithmetic in one scroller expression moved a single pixel
+by 1/255 in each of two shots, which counts as noise. Sets from different GPUs
+or drivers aren't expected to match. Rendering takes about 0.2 to 0.5 seconds
+a shot. Comparing takes under a second for each changed 960 × 540 shot, and
+shots are compared in parallel.
+
 ## Timing and platform notes
 
 The player runs on a fixed 70 Hz scene timer with 16 kHz stereo audio mixed in
