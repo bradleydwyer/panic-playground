@@ -35,6 +35,10 @@ struct Options {
     scroller_backdrop: ScrollerBackdrop,
     wall_shape: f32,
     wall_strength: f32,
+    /// The authored wall waves (W), their depth and their side light.
+    waves: bool,
+    wave_depth: f32,
+    wave_light: f32,
     fps: bool,
     vsync: bool,
     seconds: Option<f64>,
@@ -61,6 +65,9 @@ impl Options {
             scroller_backdrop: ScrollerBackdrop::Chrome,
             wall_shape: 0.5,
             wall_strength: 0.6,
+            waves: false,
+            wave_depth: 0.5,
+            wave_light: 0.5,
             fps: false,
             vsync: true,
             seconds: None,
@@ -167,13 +174,35 @@ impl Options {
                         .filter(|v: &f32| (0.0..=1.0).contains(v))
                         .ok_or("Use --wall-strength with a value from 0 to 1")?;
                 }
+                "--wall-waves" => {
+                    // An optional depth follows.
+                    if let Some(depth) = args.next_if(|arg| !arg.starts_with('-')) {
+                        o.wave_depth = depth
+                            .parse()
+                            .ok()
+                            .filter(|v: &f32| (0.1..=1.0).contains(v))
+                            .ok_or("Use --wall-waves with a depth from 0.1 to 1")?;
+                    }
+                    o.waves = true;
+                    o.scroller = true;
+                    o.modern = true;
+                }
+                "--wave-light" => {
+                    o.wave_light = args
+                        .next()
+                        .ok_or("--wave-light needs a value from 0 to 1")?
+                        .parse()
+                        .ok()
+                        .filter(|v: &f32| (0.0..=1.0).contains(v))
+                        .ok_or("Use --wave-light with a value from 0 to 1")?;
+                }
                 "--logo" => {
                     o.seek = f64::MAX;
                     o.paused = true;
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall, depth 0.1 to 1; default 0.5\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: seek 1s · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition."
                     );
                     std::process::exit(0);
                 }
@@ -244,6 +273,9 @@ fn run() -> Result<(), String> {
         scroll.backdrop_style = o.scroller_backdrop;
         scroll.wall_shape = o.wall_shape;
         scroll.wall_strength = o.wall_strength;
+        scroll.waves = o.waves;
+        scroll.wave_depth = o.wave_depth;
+        scroll.wave_light = o.wave_light;
         clip
     } else if o.transition {
         Clip::load_transition(&data)?
@@ -316,7 +348,7 @@ fn run() -> Result<(), String> {
     let (mut renderer, format) = pollster::block_on(Renderer::new(&instance, Some(&surface)))?;
     println!("GPU: {}", renderer.adapter_name);
     println!(
-        "Space pause · arrows seek · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength"
+        "Space pause · arrows seek · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength · W wall waves · ,/. wave depth · ;/' wave light"
     );
     let (width, height) = window.drawable_size();
     let mut config = wgpu::SurfaceConfiguration {
@@ -453,6 +485,30 @@ fn run() -> Result<(), String> {
                             println!("Wall strength {:.1}", scroll.wall_strength);
                         }
                     }
+                    Keycode::W => {
+                        if let Some(scroll) = &mut clip.scroller {
+                            scroll.waves = !scroll.waves;
+                            println!("Wall waves {}", if scroll.waves { "on" } else { "off" });
+                        }
+                    }
+                    Keycode::Comma | Keycode::Period => {
+                        if let Some(scroll) = &mut clip.scroller {
+                            let step = if key == Keycode::Comma { -0.1 } else { 0.1 };
+                            scroll.wave_depth = (((scroll.wave_depth + step) * 10.0).round()
+                                / 10.0)
+                                .clamp(0.1, 1.0);
+                            println!("Wave depth {:.1}", scroll.wave_depth);
+                        }
+                    }
+                    Keycode::Semicolon | Keycode::Quote => {
+                        if let Some(scroll) = &mut clip.scroller {
+                            let step = if key == Keycode::Semicolon { -0.1 } else { 0.1 };
+                            scroll.wave_light = (((scroll.wave_light + step) * 10.0).round()
+                                / 10.0)
+                                .clamp(0.0, 1.0);
+                            println!("Wave light {:.1}", scroll.wave_light);
+                        }
+                    }
                     Keycode::P => o.fps = !o.fps,
                     Keycode::V => {
                         o.vsync = !o.vsync;
@@ -529,8 +585,14 @@ fn run() -> Result<(), String> {
                 .as_ref()
                 .map(|s| {
                     format!(
-                        " · {:?} · {:?} {:.1}/{:.1}",
-                        s.lighting, s.backdrop_style, s.wall_shape, s.wall_strength
+                        " · {:?} · {:?} {:.1}/{:.1} · waves {} {:.1}/{:.1}",
+                        s.lighting,
+                        s.backdrop_style,
+                        s.wall_shape,
+                        s.wall_strength,
+                        if s.waves { "on" } else { "off" },
+                        s.wave_depth,
+                        s.wave_light
                     )
                 })
                 .unwrap_or_default();

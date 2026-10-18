@@ -233,6 +233,14 @@ pub struct ScrollerPreview {
     pub wall_shape: f32,
     /// Authored presence of the bump wall, 0 to 1: its overall brightness.
     pub wall_strength: f32,
+    /// Authored waves across the bump wall, lit by a grazing side light; off
+    /// by default. The original's wall is flat; see
+    /// [`ScrollerPreview::waves_at`].
+    pub waves: bool,
+    /// The swell's depth, 0.1 (barely visible) to 1 (far too deep).
+    pub wave_depth: f32,
+    /// The side light's strength, and so its shadows', 0 (none) to 1.
+    pub wave_light: f32,
     /// The 8x8 background image behind palette entries 64..=127 at each frame,
     /// linear RGB, unfiltered: the image `palette()` read for that frame.
     /// Before the first call the original still shows the intro's flat grey
@@ -432,6 +440,9 @@ impl Clip {
                     backdrop_style: ScrollerBackdrop::Chrome,
                     wall_shape: 0.5,
                     wall_strength: 0.6,
+                    waves: false,
+                    wave_depth: 0.5,
+                    wave_light: 0.5,
                     backdrop: walls
                         .iter()
                         .map(|(_, image)| {
@@ -525,6 +536,40 @@ pub fn oscillator_lead_in(start: [[i16; 2]; 2], frames: usize) -> Vec<[[i16; 2];
         *slot = state;
     }
     lead_in
+}
+
+/// Seconds over which the waves settle before part 2's fade.
+const WAVE_SETTLE: f64 = 1.5;
+
+/// Authored ease for the wall waves, 0 to 1: in from `reveal`, when the
+/// laser cut starts to open, until `start`, when the text begins; then out
+/// over [`WAVE_SETTLE`] seconds until `end`, when part 2 fades. In seconds.
+pub fn wave_envelope(time: f64, reveal: f64, start: f64, end: f64) -> f32 {
+    let ease = |x: f64| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    let rise = ease((time - reveal) / (start - reveal).max(1e-3));
+    (rise * ease((end - time) / WAVE_SETTLE)) as f32
+}
+
+impl ScrollerPreview {
+    /// The wall waves at a clip time, as `u.waves.x` and `u.waves.z` take
+    /// them: depth and side light, each times [`wave_envelope`]; both zero
+    /// when the waves are off. `reveal` is the laser cut's first tick.
+    pub fn waves_at(&self, time: f64, reveal: usize) -> [f32; 2] {
+        if !self.waves {
+            return [0.0; 2];
+        }
+        let seconds = |tick: usize| tick as f64 / FRAME_RATE as f64;
+        let ease = wave_envelope(
+            time,
+            seconds(reveal),
+            seconds(self.start_tick),
+            seconds(self.end_tick),
+        );
+        [self.wave_depth * ease, self.wave_light * ease]
+    }
 }
 
 /// 6-bit VGA DAC value to linear light, as the reference scanout expands it.
@@ -1241,6 +1286,62 @@ mod tests {
     }
 
     #[test]
+    fn wave_envelope_eases_in_with_the_reveal_and_out_before_the_fade() {
+        let at = |t| wave_envelope(t, 18.0, 22.0, 40.0);
+        assert_eq!(at(10.0), 0.0);
+        assert_eq!(at(18.0), 0.0);
+        assert_eq!(at(22.0), 1.0);
+        assert_eq!(at(30.0), 1.0);
+        assert_eq!(at(40.0 - WAVE_SETTLE), 1.0);
+        assert_eq!(at(40.0), 0.0);
+        assert_eq!(at(45.0), 0.0);
+        assert!((at(20.0) - 0.5).abs() < 1e-6);
+        let mut previous = 0.0;
+        for step in 0..=3000 {
+            let t = 17.0 + step as f64 * 0.01;
+            let value = at(t);
+            assert!((value - previous).abs() < 0.011, "jump at {t}");
+            assert!(if t < 30.0 {
+                value >= previous
+            } else {
+                value <= previous
+            });
+            previous = value;
+        }
+    }
+
+    #[test]
+    fn wall_waves_ease_their_depth_and_light_and_vanish_when_off() {
+        let mut scroll = ScrollerPreview {
+            start_tick: 280,
+            end_tick: 840,
+            lighting: ScrollerLighting::Studio,
+            scroll: Vec::new(),
+            glyphs: ScrollerGlyphs::new(&synthetic_font(), &vec![0; 768]).unwrap(),
+            backdrop_style: ScrollerBackdrop::Chrome,
+            wall_shape: 0.5,
+            wall_strength: 0.6,
+            waves: false,
+            wave_depth: 0.7,
+            wave_light: 0.3,
+            backdrop: Vec::new(),
+            oscillator: Vec::new(),
+        };
+        for step in 0..1300 {
+            let time = step as f64 * 0.01;
+            assert_eq!(scroll.waves_at(time, 70), [0.0; 2]);
+        }
+        scroll.waves = true;
+        for step in 0..1300 {
+            let time = step as f64 * 0.01;
+            let ease = wave_envelope(time, 1.0, 4.0, 12.0);
+            assert_eq!(scroll.waves_at(time, 70), [0.7 * ease, 0.3 * ease]);
+        }
+        assert_eq!(scroll.waves_at(6.0, 70), [0.7, 0.3]);
+        assert_eq!(scroll.waves_at(0.5, 70), [0.0; 2]);
+    }
+
+    #[test]
     fn scroller_cues_keep_accents_in_a_loud_mix_and_release_to_silence() {
         let pcm: Vec<i16> = (0..SAMPLE_RATE * 4)
             .flat_map(|i| {
@@ -1649,6 +1750,9 @@ mod tests {
             backdrop_style: ScrollerBackdrop::Chamber,
             wall_shape: 0.5,
             wall_strength: 0.4,
+            waves: false,
+            wave_depth: 0.5,
+            wave_light: 0.5,
             backdrop: Vec::new(),
             oscillator: Vec::new(),
         });

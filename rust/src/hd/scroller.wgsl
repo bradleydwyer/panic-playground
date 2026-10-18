@@ -6,7 +6,8 @@
 // Depth, extrusion, the arc the rows follow, glass and lighting are new; none
 // of it is a recovered 3D model. The tile wall's layout, image and motion are
 // read from the port (see the backdrop section); the chrome bumps and their
-// lighting, and the wall's lead-in motion before part 2's scroll, are authored.
+// lighting, the wall's lead-in motion before part 2's scroll and its optional
+// waves are authored.
 // The uniform block `u: Controls` (binding 0) is prepended by renderer::wgsl.
 @group(0) @binding(4) var linear:sampler;
 @group(0) @binding(5) var glyph_atlas:texture_2d<f32>;
@@ -329,6 +330,100 @@ fn grid_point(p:vec3f)->vec3f {
 }
 fn grid_direction(d:vec3f)->vec3f {return vec3f(d.x*15.0,-d.y*12.5,d.z*15.0)/wall_scale();}
 fn world_normal(n:vec3f)->vec3f {return normalize(vec3f(n.x*15.0,-n.y*12.5,n.z*15.0));}
+// ---- Wall waves (optional) ----
+// Authored, with nothing like it in the original, whose wall is flat: the
+// bumps ride a slow swell, lit from the side so its crests cast shadows. The
+// waves are a pure function of the clip time, so seeking and captures agree.
+// They are anchored to the screen, and the wall's sway carries the bumps
+// through them. Heights and positions are in tile widths from the screen
+// centre, y up. u.waves.x: the depth, eased in with the reveal, 0 when off;
+// .y: the exposure in seconds; .z: the side light's strength, eased likewise.
+// At depth 1 (far too deep) a swell 2.6 tile widths high, about 15 tiles from
+// crest to crest, rolls to the right every 5.5 seconds; a slow one, 32 tiles
+// long, varies it along its crests. The default depth is 0.5.
+const SWELL=vec4f(.40,.12,1.15,2.6); // Wave number x and y, radians per second, height.
+const DRIFT=vec4f(-.10,.17,.30,.7);
+// The waves' greatest curvature at depth 1: each height times its wave number squared.
+const BEND=.48;
+fn waving()->bool {return u.waves.x>0.0;}
+// Height, slope and rate of rise (per second).
+struct Wave { h:f32, slope:vec2f, rate:f32 }
+// One long-crested travelling wave.
+fn swell(m:vec2f,t:f32,w:vec4f)->Wave {
+    let phase=dot(w.xy,m)-w.z*t;
+    let a=w.w*u.waves.x;
+    let c=a*cos(phase);
+    return Wave(a*sin(phase),w.xy*c,-w.z*c);
+}
+// The waves at m, `lag` seconds before the frame.
+fn wave_field(m:vec2f,lag:f32)->Wave {
+    let t=u.screen.z-lag;
+    let a=swell(m,t,SWELL);let b=swell(m,t,DRIFT);
+    return Wave(a.h+b.h,a.slope+b.slope,a.rate+b.rate);
+}
+// Just the height, for marching towards the side light.
+fn wave_height(m:vec2f,lag:f32)->f32 {
+    let t=u.screen.z-lag;
+    let phase=vec2f(dot(SWELL.xy,m)-SWELL.z*t,dot(DRIFT.xy,m)-DRIFT.z*t);
+    return (SWELL.w*sin(phase.x)+DRIFT.w*sin(phase.y))*u.waves.x;
+}
+// The waves at this pixel, found once at the middle of its exposure
+// (find_waves): the field at wave_m, its world normal there and how much of
+// the side light its crests leave it.
+var<private> wave_here:Wave;
+var<private> wave_m:vec2f;
+var<private> wave_up:vec3f;
+var<private> wave_lit:f32;
+var<private> wave_lag:f32; // Seconds before the frame, per exposure sample.
+// Wave coordinates of grid point g. The screen centre is at grid
+// ((164,106)+oscillator)/8, and a tile is 1.2 tile widths tall.
+fn wave_point(g:vec2f)->vec2f {
+    let o=(vec2f(164,106)+u.backdrop.xy+wall_shift)/8.0;
+    return vec2f(g.x-o.x,1.2*(o.y-g.y));
+}
+// The waves at grid point g, at this sample's moment: height and slope along
+// grid x and y.
+fn grid_wave(g:vec2f)->vec3f {
+    let w=wave_field(wave_point(g),wave_lag);
+    return vec3f(w.h,w.slope.x,-1.2*w.slope.y);
+}
+// The pixel's tangent plane to the waves, carried to this sample's time to
+// first order: its height at grid point g. It bounds the bumps near the
+// pixel and is the backing between them.
+fn wave_plane(g:vec2f)->f32 {
+    let w=wave_here;
+    return w.h-(wave_lag-u.waves.y*.5)*w.rate+dot(w.slope,wave_point(g)-wave_m);
+}
+// How far the centre of a tile near the pixel (within 1.6 tiles) can lie
+// above or below the pixel's plane, and the most its slope can differ.
+fn wave_reach()->vec2f {
+    let bend=BEND*u.waves.x;
+    return vec2f(.5*bend*1.6*1.6,bend*1.6);
+}
+// The bumps' height above the plane near the pixel, with a margin: a tilted
+// bump stands taller, by up to the secant of its tilt in the stretched space.
+fn wave_top(shape:Bump)->f32 {
+    let s=length(wave_here.slope)+wave_reach().y;
+    return (shape.radius*shape.flat*.5+.02)*sqrt(1.0+2.4*s*s);
+}
+// The rotation taking +z to the unit vector n, and its inverse.
+fn tilt_from(n:vec3f,v:vec3f)->vec3f {
+    let k=dot(n.xy,v.xy);
+    return vec3f(v.xy-n.xy*(k/(1.0+n.z)-v.z),n.z*v.z-k);
+}
+fn tilt_to(n:vec3f,v:vec3f)->vec3f {
+    return vec3f(v.xy-n.xy*(dot(n.xy,v.xy)/(1.0+n.z)+v.z),dot(n,v));
+}
+// A bump resting rigidly on the waves at the centre of tile (x,y), the same
+// for every pixel: its base on their tangent plane there, tilted with it.
+// Gives the tilt and the ray's start in the bump's own space; `start` is in
+// stretched tile space, as in wall_trace.
+struct Rest { n:vec3f, start:vec3f }
+fn rest(tile:vec2f,start:vec3f,stretch:vec3f)->Rest {
+    let w=grid_wave(tile+.5);
+    let n=normalize(vec3f(-w.yz*stretch.z/stretch.xy,1));
+    return Rest(n,tilt_to(n,start-vec3f(0,0,w.x*stretch.z)));
+}
 // Authored bump profile from u.backdrop.w, in a tile space where the 7/8
 // tile body spans -.875..+.875. A rounded box, intersected with a dome
 // through its top centre and the body's base corners. 0 gives a low cushion
@@ -421,25 +516,42 @@ fn bump_hit(ro:vec3f,rd:vec3f,shape:Bump)->vec4f {
 }
 struct WallHit { hit:bool, bump:bool, t:f32, n:vec3f, at:vec3f }
 // Each ray tests only the tiles it crosses inside the bumps' height: one to
-// four for camera rays, up to 3x3 for rays leaving the wall.
+// four for camera rays, up to 3x3 for rays leaving the wall. With waves, each
+// bump rests rigidly on the waves at its own tile's centre (rest), and the
+// backing between the bumps is the pixel's tangent plane. The slab follows
+// that plane, widened by how far the waves curve away from it, so a ray
+// still crosses only a few tiles.
 fn wall_trace(origin:vec3f,ray:vec3f,from_wall:bool)->WallHit {
     let shape=bump();
     let g=grid_point(origin);let dg=grid_direction(ray);
+    let stretch=vec3f(2.0,2.0/shape.tall,2.0/shape.flat);
     // Start a little above the bumps: a ray starting on the flat top face
     // could otherwise miss it by rounding.
-    let top=shape.radius*shape.flat*.5+.02;
+    var top=shape.radius*shape.flat*.5+.02;
+    // With waves: the plane's slope in grid units, how far the bumps can lie
+    // from it, its height under the ray's origin, and how far a tilted bump
+    // can reach past its own tile.
+    var lift=vec2f(0);var reach=0.0;var base=0.0;var lean=0.0;
+    if waving() {
+        lift=vec2f(wave_here.slope.x,-1.2*wave_here.slope.y);
+        top=wave_top(shape);
+        reach=wave_reach().x;
+        base=wave_plane(g.xy);
+        lean=.03;
+    }
+    // How fast the ray drops towards the plane.
+    let fall=dg.z-dot(lift,dg.xy);
     var t0=0.0;var t1=0.0;
     if from_wall {
-        if dg.z<=0.0 {return WallHit(false,false,0.0,vec3f(0,0,1),g);}
-        t1=max((top-g.z)/dg.z,0.0);
+        if fall<=0.0 {return WallHit(false,false,0.0,vec3f(0,0,1),g);}
+        t1=max((base+top+reach-g.z)/fall,0.0);
     } else {
-        if dg.z>=0.0 {return WallHit(false,false,0.0,vec3f(0,0,1),g);}
-        t0=(top-g.z)/dg.z;t1=-g.z/dg.z;
+        if fall>=0.0 {return WallHit(false,false,0.0,vec3f(0,0,1),g);}
+        t0=(base+top+reach-g.z)/fall;t1=(base-reach-g.z)/fall;
     }
     let a=g+dg*t0;let b=g+dg*t1;
-    let lo=max(floor(min(a.xy,b.xy)),floor(a.xy)-1.0);
-    let hi=min(floor(max(a.xy,b.xy)),floor(a.xy)+1.0);
-    let stretch=vec3f(2.0,2.0/shape.tall,2.0/shape.flat);
+    let lo=max(floor(min(a.xy,b.xy)-lean),floor(a.xy)-1.0);
+    let hi=min(floor(max(a.xy,b.xy)+lean),floor(a.xy)+1.0);
     let l=dg*stretch;let scale=length(l);let ld=l/scale;
     // A reflected ray must not find the bump it leaves.
     let home=floor(a.xy);
@@ -448,7 +560,18 @@ fn wall_trace(origin:vec3f,ray:vec3f,from_wall:bool)->WallHit {
         for(var x=lo.x;x<=hi.x;x+=1.0) {
             if from_wall && x==home.x && y==home.y {continue;}
             let start=vec3f(a.xy-vec2f(x,y)-.5,a.z)*stretch;
-            let hit=bump_hit(start,ld,shape);
+            var hit=vec4f(-1);
+            if waving() {
+                let on=rest(vec2f(x,y),start,stretch);
+                let dir=tilt_to(on.n,ld);
+                hit=bump_hit(on.start,dir,shape);
+                // The bump's half below its base is inside the wall; tilted,
+                // it could otherwise show past the bump's edge.
+                if (on.start+dir*hit.w).z< -.002 {hit=vec4f(-1);}
+                hit=vec4f(tilt_from(on.n,hit.xyz),hit.w);
+            } else {
+                hit=bump_hit(start,ld,shape);
+            }
             if hit.w>=0.0 && hit.w<best {
                 best=hit.w;
                 normal=hit.xyz*stretch;
@@ -460,7 +583,43 @@ fn wall_trace(origin:vec3f,ray:vec3f,from_wall:bool)->WallHit {
         return WallHit(true,true,t,world_normal(normal),g+dg*t);
     }
     if from_wall {return WallHit(false,false,0.0,vec3f(0,0,1),g);}
+    if waving() {
+        let t=(base-g.z)/fall;
+        return WallHit(true,false,t,wave_up,g+dg*t);
+    }
     return WallHit(true,false,t1,vec3f(0,0,1),b);
+}
+// Whether p, in a bump's own stretched space, lies inside it, above its base.
+fn in_bump(p:vec3f,shape:Bump)->bool {
+    let outside=length(max(abs(p)-vec3f(shape.inner,shape.inner,0),vec3f(0)))-shape.radius;
+    let dome=length(p-vec3f(0,0,shape.dome_z))-shape.dome;
+    return max(outside,dome)<.002 && p.z>-.002;
+}
+// Whether the side light reaches grid point g past the bumps within a tile
+// or so: a short ray towards it (grid direction d). Further crests are left
+// to the waves' own shadow (wave_lit). The bump g lies on can't block it, as
+// the bumps are convex and the light is on its side.
+fn bumps_pass(g:vec3f,d:vec3f)->f32 {
+    let shape=bump();
+    let stretch=vec3f(2.0,2.0/shape.tall,2.0/shape.flat);
+    let lift=vec2f(wave_here.slope.x,-1.2*wave_here.slope.y);
+    let rise=d.z-dot(lift,d.xy);
+    if rise<=0.0 {return 0.0;}
+    let t1=min((wave_plane(g.xy)+wave_top(shape)+wave_reach().x-g.z)/rise,1.2/length(d.xy));
+    if t1<=0.0 {return 1.0;}
+    let b=g+d*t1;
+    let lo=floor(min(g.xy,b.xy)-.03);let hi=floor(max(g.xy,b.xy)+.03);
+    let l=d*stretch;let ld=l/length(l);
+    for(var y=lo.y;y<=hi.y;y+=1.0) {
+        for(var x=lo.x;x<=hi.x;x+=1.0) {
+            let on=rest(vec2f(x,y),vec3f(g.xy-vec2f(x,y)-.5,g.z)*stretch,stretch);
+            let dir=tilt_to(on.n,ld);
+            // The later of the two solids' entries is a hit only inside both.
+            let hit=bump_hit(on.start,dir,shape);
+            if hit.w>1e-3 && in_bump(on.start+dir*hit.w,shape) {return 0.0;}
+        }
+    }
+    return 1.0;
 }
 // The bump wall is drawn as a defocused, motion-blurred background: soft,
 // dim and low in contrast, so the letters stay the brightest and sharpest
@@ -531,12 +690,13 @@ fn reflected(p:vec3f,r:vec3f)->vec3f {
     return env;
 }
 // Light from a bump with normal n, before it is pulled towards the level.
-fn bump_light(n:vec3f,p:vec3f,ray:vec3f,metal:vec3f)->vec3f {
+// up: how far n faces away from the backing (n.z on a flat wall).
+fn bump_light(n:vec3f,p:vec3f,ray:vec3f,metal:vec3f,up:f32)->vec3f {
     let r=reflect(ray,n);
     let fresnel=metal+(1.0-metal)*pow(1.0-max(dot(n,-ray),0.0),5.0)*.5;
     let c=fresnel*studio(r,p.x)+wall_glint(p,n,-ray,metal);
     // Faint occlusion where a bump meets the backing.
-    return c*mix(.55,1.0,smoothstep(.0,.5,n.z));
+    return c*mix(.55,1.0,smoothstep(.0,.5,up));
 }
 // Shading of one wall sample, without the letter reflections.
 fn wall_surface(hit:WallHit,p:vec3f,ray:vec3f)->vec3f {
@@ -545,7 +705,9 @@ fn wall_surface(hit:WallHit,p:vec3f,ray:vec3f)->vec3f {
     // towards it, for roughly the original's subtle relief.
     let level=metal*studio(vec3f(0,0,1),p.x);
     if !hit.bump {return level*.45;}
-    return mix(level,bump_light(hit.n,p,ray,metal),.6);
+    // On waves, the bump's base faces along the wave's normal.
+    let up=select(hit.n.z,dot(hit.n,wave_up),waving());
+    return mix(level,bump_light(hit.n,p,ray,metal,up),.6);
 }
 // Soft contact shadow of the letters on the chamber or wall point p: the
 // letters seen straight on (the cached field is indexed by surface x on the
@@ -572,6 +734,49 @@ fn wall_presence(p:vec3f,darken:f32)->f32 {
     // .58: the calm level the row bands used to give, now applied evenly.
     return u.backdrop_motion.z*.9*.58*vignette*mix(.55,1.0,entrance)*(1.0-letter_shadow(p)*darken);
 }
+// The wall's own grazing side light, for the waves only (authored): from the
+// left, the scene's cool side, a little above the horizontal and 18 degrees
+// over the wall, so the crests throw shadows across the troughs. The letters'
+// lamps and the studio are unchanged.
+const SIDE=vec3f(-.919,.246,.309);
+const SIDE_COLOR=vec3f(.72,.86,1.0);
+// The waves at the pixel at screen point xy (a screen unit is 15 tile widths
+// both ways), once, at the middle of its exposure, where its ray meets them.
+// Then how much of the side light the crests leave it: the steepest rise of
+// the waves towards the light, with the bumps on top, against the light's
+// elevation, softened over the light's breadth.
+fn find_waves(xy:vec2f) {
+    let lag=u.waves.y*.5;
+    // A raised point lies nearer the centre along the pixel's ray: by its
+    // height over 82.5 tile widths, 15 to a screen unit times the 5.5 focal
+    // length.
+    wave_m=xy*15.0;
+    wave_m*=1.0-wave_field(wave_m,lag).h/82.5;
+    wave_here=wave_field(wave_m,lag);
+    wave_up=normalize(vec3f(-wave_here.slope,1));
+    let toward=normalize(SIDE.xy);let rise=SIDE.z/length(SIDE.xy);
+    var horizon=-9.0;
+    for(var i=1;i<=6;i++) {
+        let s=f32(i*i)*.45+.6;
+        horizon=max(horizon,(wave_height(wave_m+toward*s,lag)+.12-wave_here.h)/s);
+    }
+    wave_lit=1.0-smoothstep(rise-.08,rise+.08,horizon);
+}
+// The side light on one sample of rough metal: a little diffuse catch on
+// the faces turned to it and a broad sheen between it and the eye, cut off by
+// the bumps (bumps_pass). `spread` moves it over the light's breadth. It
+// follows the waves' slope more than each bump's, so the bumps don't sparkle.
+fn side_light(hit:WallHit,p:vec3f,ray:vec3f,spread:vec2f)->vec3f {
+    let l=normalize(SIDE+vec3f(spread,0));
+    if dot(hit.n,l)<=0.0 {return vec3f(0);}
+    let clear=bumps_pass(grid_point(p+hit.n*.002),grid_direction(l));
+    if clear<=0.0 {return vec3f(0);}
+    let n=normalize(hit.n+wave_up*1.5);
+    let sheen=pow(max(dot(n,normalize(l-ray)),0.0),6.0);
+    var c=SIDE_COLOR*wall_metal(hit.at)*(max(dot(n,l),0.0)*.35+sheen*.9);
+    if !hit.bump {c*=.45;}
+    return c*clear;
+}
 fn wall_point(ray:vec3f)->vec3f {return vec3f(0,0,5.5)+ray*(6.4/-ray.z);}
 // Eight samples per pixel spread over a small defocus disc (about a tenth of
 // a tile) and over the exposure, so the wall blurs along its own motion. The
@@ -580,18 +785,31 @@ fn wall_pixel(xy:vec2f)->vec3f {
     let eye=vec3f(0,0,5.5);
     let defocus=.0075; // Screen units; a tile is .067 wide.
     var c=vec3f(0);
+    var side=vec3f(0);
+    if waving() {find_waves(xy);}
     for(var i=0;i<8;i++) {
         let f=f32(i);
         let disc=sqrt((f+.5)/8.0)*defocus*vec2f(cos(f*2.39996),sin(f*2.39996));
         // Stratified in time, in an order that doesn't follow the disc.
         wall_shift=-u.backdrop_motion.xy*fract((f*5.0+.5)/8.0);
+        wave_lag=u.waves.y*fract((f*5.0+.5)/8.0);
         let ray=normalize(vec3f(xy+disc,-5.5));
         let hit=wall_trace(eye,ray,false);
         c+=wall_surface(hit,eye+ray*hit.t,ray);
+        // Every other sample takes the side light, each from another part of
+        // it, about 9 degrees across; none reaches a pixel deep in a crest's
+        // shadow.
+        if waving() && i%2==0 && wave_lit*u.waves.z>0.0 {
+            side+=side_light(hit,eye+ray*hit.t,ray,disc*(.08/defocus));
+        }
     }
     c*=.125;
+    // The side light takes over from the studio as it strengthens, so the
+    // wall's level stays calm and the shadows read.
+    if waving() {c=c*mix(1.0,.1,u.waves.z)+side*(.25*wave_lit*u.waves.z);}
     let ray=normalize(vec3f(xy,-5.5));
     wall_shift=-u.backdrop_motion.xy*.5;
+    wave_lag=u.waves.y*.5;
     let hit=wall_trace(eye,ray,false);
     let p=eye+ray*hit.t;
     if hit.bump && u.state.x>=8.0 {
@@ -612,7 +830,7 @@ fn wall_soft(ray:vec3f)->vec3f {
     let metal=wall_metal(vec3f(.5,.5,0));
     let level=metal*studio(vec3f(0,0,1),p.x);
     var bumps=vec3f(0);
-    for(var i=0;i<5;i++) {bumps+=bump_light(normalize(vec3f(SOFT_TILT[i],1)),p,ray,metal);}
+    for(var i=0;i<5;i++) {let n=normalize(vec3f(SOFT_TILT[i],1));bumps+=bump_light(n,p,ray,metal,n.z);}
     // About a quarter of a tile is the dimmer backing between bumps.
     return mix(mix(level,bumps*.2,.6),level*.45,.3)*wall_presence(p,GLASS_SHADOW);
 }

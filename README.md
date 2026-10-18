@@ -85,14 +85,17 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 | `--scroller-backdrop chamber` | Dark chamber with the original tile wall faintly visible |
 | `--wall-shape 0.5` | Bump shape, from 0 (a cushion like the original tile) to 1 (a hemisphere); 0.5 by default |
 | `--wall-strength 0.6` | Presence of the bump wall, from 0 (dark) to 1; 0.6 by default |
+| `--wall-waves 0.5` | Waves across the bump wall, lit from the side so the crests cast shadows; off by default. The value is their depth, from 0.1 to 1; 0.5 if omitted |
+| `--wave-light 0.5` | Strength of the waves' side light and shadows, from 0 to 1; 0.5 by default |
 | `--faithful` | Faithful HD: the original look, with smooth letters and dots |
 
 The scroller includes the laser transition and continues to the end of
 part 2, around 42 seconds. Omit `--seek` for the complete intro; use `--seek 18`
 to watch the tiles reveal the new scene. Add `--split` for the original on the
 left. In the app, **L** switches lighting, **B** cycles the backdrop,
-**[ / ]** change the bump shape and **- / =** the wall's strength, without
-restarting the music.
+**[ / ]** change the bump shape and **- / =** the wall's strength. **W** turns
+the wall's waves on or off, **, / .** change their depth and **; / '** their
+light, without restarting the music.
 
 Glass was chosen from three presets. The other two,
 coated titanium ribbons and straight sculpted extrusions, were removed from the
@@ -130,6 +133,14 @@ oscillator backwards and joins the original's motion seamlessly when the
 text begins. The chrome bumps, their lighting and their reflections of
 the letters are authored. They are drawn as a dim, slightly out-of-focus
 background, blurred along the wall's motion, so the fast sway doesn't strobe.
+
+`--wall-waves` (or **W**) is a further experiment: the original's wall is
+flat, so its waves are authored, not recovered. A slow swell rolls across the
+bumps, lit by a grazing light from the left, so the crests cast shadows
+across the troughs and the bumps on the lit slopes catch it. The light is the
+wall's own: the letters are lit as before. The waves ease in as the laser cut
+reveals the wall and settle before part 2 fades. They depend only on the
+time, so seeking and captures show the same waves.
 
 | Key | Action |
 | --- | --- |

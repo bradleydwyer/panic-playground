@@ -41,6 +41,9 @@ struct Uniforms {
     /// Bump wall: oscillator movement over its exposure (source pixels, from
     /// shutter open to now) and the authored wall strength.
     backdrop_motion: [f32; 4],
+    /// Authored wall waves (`ScrollerPreview::waves_at`): depth (0 when off),
+    /// the exposure in seconds, the side light's strength, and an unused slot.
+    waves: [f32; 4],
 }
 
 /// The only WGSL declaration of [`Uniforms`] and its binding. [`wgsl`]
@@ -72,6 +75,9 @@ struct Controls {
     // Bump wall: oscillator movement over its exposure (source pixels), the
     // authored wall strength, unused.
     backdrop_motion: vec4f,
+    // Authored wall waves: depth (0 when off), exposure in seconds, side
+    // light strength, unused.
+    waves: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: Controls;
 ";
@@ -517,6 +523,7 @@ impl Renderer {
         let mut glyphs = [0.0; 4];
         let mut backdrop = [0.0; 4];
         let mut backdrop_motion = [0.0; 4];
+        let mut waves = [0.0; 4];
         if let Some(scroll) = &clip.scroller {
             self.upload_glyphs(scroll);
             if let Some([upper, lower, overlay]) = clip.scroll_at(time) {
@@ -577,6 +584,9 @@ impl Renderer {
                 scroll.wall_strength,
                 0.0,
             ];
+            let reveal = clip.transition.as_ref().map_or(0, |cut| cut.start_tick);
+            let [depth, light] = scroll.waves_at(time, reveal);
+            waves = [depth, (WALL_SHUTTER_TICKS / 70.0) as f32, light, 0.0];
         }
         let u = Uniforms {
             screen: [size.0 as f32, size.1 as f32, time as f32, comparison as f32],
@@ -607,6 +617,7 @@ impl Renderer {
             glyphs,
             backdrop,
             backdrop_motion,
+            waves,
         };
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
@@ -1103,6 +1114,7 @@ mod tests {
             glyphs,
             backdrop,
             backdrop_motion,
+            waves,
         ];
         // A field missing from this list leaves bytes unaccounted for.
         let last = size_of::<[f32; 4]>();
