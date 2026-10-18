@@ -1667,13 +1667,20 @@ impl RingsPreview {
         let state = self.frames[j].state;
         let now = self.centres_at(time);
         let open = self.centres_at(time - RING_SHUTTER_TICKS / FRAME_RATE as f64);
-        let intensity = self.lerp_at(time, |f| {
+        let level = |f: &RingsFrame| {
             if f.state.phase == 1 {
                 f.state.intensity.max(0) as f64 / 64.0
             } else {
                 0.0
             }
-        });
+        };
+        let intensity = self.lerp_at(time, level);
+        // The most the rings have been lit so far: 0 before the fade-in, up
+        // with it, then 1 to the end of the part, through the fade-out.
+        let peak = self.frames[..=j]
+            .iter()
+            .map(level)
+            .fold(intensity, f64::max);
         let picture = self.lerp_at(time, |f| f.state.picture.map_or(0.0, |l| l as f64 / 64.0));
         // The windows as of the next frame, so that a switch completes on the
         // original's own frame and each frame time shows exactly that frame's
@@ -1712,7 +1719,7 @@ impl RingsPreview {
                 self.bands.matched as f32,
                 0.0,
             ],
-            ring_fades: [intensity as f32, picture as f32, 0.0, 0.0],
+            ring_fades: [intensity as f32, picture as f32, peak as f32, 0.0],
             symbol,
             symbol_atlas: [
                 self.symbols.origin[0] as f32,
@@ -2362,6 +2369,15 @@ mod tests {
                     }
                     if seen(&events, "rings fading out") && state.intensity == 0 {
                         note(&mut events, "rings gone", j);
+                    }
+                    // The most they have been lit so far: none until they
+                    // show, all of it from full intensity on.
+                    let peak = rings.controls(seconds(j)).ring_fades[2];
+                    if !seen(&events, "rings visible") {
+                        assert_eq!(peak, 0.0, "ring peak at {j}");
+                    }
+                    if seen(&events, "rings at full intensity") {
+                        assert!(peak > 0.999, "ring peak at {j}");
                     }
                     // The lit symbol: exactly its mask's pixels are yellow.
                     let lit: Vec<bool> =

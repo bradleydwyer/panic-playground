@@ -533,12 +533,15 @@ dark where the original is black, and rises or sinks where only one layer is
 set. The waves fill the whole screen, widescreen included, rather than the
 original's 256 by 184 window. A low lamp hangs over each source, cool over
 the first and warm over the second, so each source's waves catch its colour
-and their crests shade the waves beyond. The lamps come up and go out with
-the original's ring fades, but the waves stay: before and after the fades
-they are seen only by the neon symbols hovering just above, whose
-reflections they bend. (`POOL_DARK_WAVES` at 0 lets them settle into a still
-black mirror between the fades instead.) It is exposed over a whole 60 Hz
-frame so the fringes don't flicker. It takes about 1.8 ms a frame at
+and their crests shade the waves beyond. The neon symbols hover just above
+the surface, and each wave mirrors the tubes themselves, traced to where
+its reflection meets them. Until the rings first fade in there is no pool,
+only the neon on black; the pool comes up with the fade, waves, lamps and
+reflections together. When the rings fade out the lamps go out, but the
+waves stay, seen only by the neon they reflect. (`POOL_DARK_WAVES` at 0 lets
+them settle into a still black mirror instead.) It is exposed over a whole
+60 Hz frame, its samples spread across each pixel as well, so the fringes
+don't flicker and the reflections stay sharp. It takes about 2 ms a frame at
 2560 × 1440.
 
 Room (**4**) keeps part 2's chrome bump wall, seen with the scroller's camera,
@@ -601,7 +604,9 @@ in source rows.
 The helpers in `rings_common.wgsl` include:
 
 - Timing: `rings_seconds()`, `rings_phase()` (0 waiting, 1 rings, 2 picture),
-  `ring_intensity()`, `picture_level()`, and the symbol windows
+  `ring_intensity()`, `ring_peak()` (the most the rings have been lit so
+  far: 0 before the fade-in, 1 after it, through the fade-out),
+  `picture_level()`, and the symbol windows
   (`neon_mask()`, `neon_previous()`, `neon_on()`, `neon_previous_on()`,
   `neon_since()`, `neon_until()`). The symbol switches are the original's
   own cues, on its tracker rows. Before 43.41 seconds the original is black.

@@ -89,6 +89,10 @@ fn rings_phase()->f32 {return u.rings.w;}
 // The rings' palette intensity, 0..1: off until 50.33 s, up over 64 frames
 // by 51.23, down from 72.99 to 73.89 s. Interpolated between frames.
 fn ring_intensity()->f32 {return u.ring_fades.x;}
+// The most the rings have been lit so far, 0..1: 0 before the fade-in, up
+// with it, then 1 to the end of the part, through the fade-out. For a style
+// whose scene stays once the rings have shown it.
+fn ring_peak()->f32 {return u.ring_fades.z;}
 // The PSTART palette level, 0..1 (63/64 at most), from 80.36 s.
 fn picture_level()->f32 {return u.ring_fades.y;}
 // Authored music cues measured from the clip's PCM, each 0..1, as the intro

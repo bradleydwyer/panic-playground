@@ -106,7 +106,8 @@ struct Controls {
     ring_open: vec4f,
     // Band width, first edge radius, the model's match with M.DAT, unused.
     ring_bands: vec4f,
-    // Ring intensity 0..1, PSTART level 0..1, unused, unused.
+    // Ring intensity 0..1, PSTART level 0..1, the most the rings have been
+    // lit so far (0..1), unused.
     ring_fades: vec4f,
     // Lit mask (-1 none), previous mask, seconds since the lit window began
     // (or since the last ended), seconds until it ends (-1 none lit); the

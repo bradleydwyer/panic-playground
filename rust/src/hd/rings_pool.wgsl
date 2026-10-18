@@ -29,11 +29,12 @@
 //   that is seen.
 //
 // The timing follows the original exactly: black before the first symbol,
-// the lamps' power following ring_intensity, so the fades are the lamps
-// coming up and going out. By default the waves stay whole with the lamps
-// off, seen only by the neon on them (POOL_DARK_WAVES; at 0 their height
-// follows ring_intensity too, and between the fades the pool is a still
-// black mirror showing only the neon). From 80.36 s the PSTART
+// then the neon on black, with no pool, until the rings fade in. The pool
+// comes up with them, waves, lamps and reflections together, and the lamps'
+// power follows ring_intensity, so the fade-out is the lamps going out. By
+// default the waves stay whole after it, seen only by the neon they reflect
+// (POOL_DARK_WAVES; at 0 their height follows ring_intensity down too, and
+// the pool settles into a still black mirror). From 80.36 s the PSTART
 // picture at its fade level, placed with tonemap_inverse as faithful-plus
 // places it, so that at 81.27 s the screen shows the picture part 5 opens on.
 
@@ -41,10 +42,10 @@
 // The waves' depth: each layer's crest height at full intensity, in rows
 // (source rows on the 4:3 display). About 1 keeps them liquid; 2 is choppy.
 const POOL_DEPTH=.8;
-// How much of that height the waves keep with the lamps off, before and
-// after the rings' fades: 0 lets them settle into a still black mirror, as
-// the original is black; 1 keeps them whole, seen only by the neon on their
-// flanks, as the glass style's rods catch it.
+// How much of that height the waves keep once the rings have faded out: 0
+// lets them settle into a still black mirror, as the original is black; 1
+// keeps them whole with the lamps off, seen only by the neon they reflect.
+// Before the rings first fade in there is no pool, only the neon on black.
 const POOL_DARK_WAVES=1.0;
 // Sharpening of each layer's profile, from a sine (0) towards the
 // original's square bands: steeper flanks at the band edges, flatter
@@ -96,6 +97,11 @@ const POOL_SOFTBOX_AT=vec3f(-.50,.62,.60);
 const POOL_ROOM=.10;
 // The neon tubes' height above the level surface, in rows.
 const POOL_NEON_HEIGHT=8.0;
+// How the exposure's samples, each at its own point in the pixel, resolve
+// the neon's reflection: the share of a pixel each antialiases the tubes'
+// image over, and the share of the pixel's spread of normals that still
+// blurs it (0: the samples resolve it; about 2 is what one sample needs).
+const POOL_NEON_SHARP=vec2f(.4,0.0);
 
 // ---- Waves -----------------------------------------------------------------
 // One layer's profile across its bands, from the phase (rings_common's
@@ -117,7 +123,7 @@ fn pool_layer(layer:u32,s:vec2f,shutter:f32)->vec3f {
     let g=POOL_METRIC*d/(r*2.0*ring_width())*p.y;
     return vec3f(p.x,g.x/COLUMN,-g.y);
 }
-fn pool_amp()->f32 {return POOL_DEPTH*mix(POOL_DARK_WAVES,1.0,ring_intensity());}
+fn pool_amp()->f32 {return POOL_DEPTH*mix(ring_intensity(),ring_peak(),POOL_DARK_WAVES);}
 // Where the waves run at source point s: 1 in them, antialiased over `blur`
 // pixels at the ring window's edge, or everywhere when they fill the screen.
 fn pool_window(s:vec2f,blur:f32)->f32 {
@@ -188,6 +194,23 @@ fn pool_power()->f32 {
     return ring_intensity()*mix(1.0,.6+.5*cue_level()+.9*cue_bass(),musical_lighting());
 }
 
+// The lit tubes as the surface mirrors them from scene point p along unit
+// r: the tubes themselves where the reflected ray meets their plane, as
+// sharp as the reflection is. `spread` (radians) is how far the chrome's
+// roughness and the pixel's spread of normals scatter the ray; measured
+// where it meets the plane (hence the obliquity), with the pixel's own
+// footprint. Past about two source pixels, the light map blurred as far.
+// Through the fade-in it comes up with the rings (ring_peak).
+fn pool_neon(p:vec3f,r:vec3f,pixel:f32,spread:f32)->vec3f {
+    let hit=neon_plane_hit(p,r,POOL_NEON_HEIGHT);
+    if hit.w<0.0 {return vec3f(0);}
+    let footprint=pixel+spread*hit.w/max(r.z,.05);
+    let soft=neon_reflection(p,r,POOL_NEON_HEIGHT,max(footprint,.6)/hit.w);
+    if footprint>2.0 {return soft*ring_peak();}
+    let sharp=neon_emission(source_of_scene(hit.xy),footprint);
+    return mix(sharp,soft,smoothstep(.8,2.0,footprint))*ring_peak();
+}
+
 // ---- The pool ----------------------------------------------------------------
 // The pool's radiance at source point s, seen along the pixel's ray.
 fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
@@ -199,14 +222,14 @@ fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
     let window=pool_window(s,px.pixel*1.5);
     // Level: a black mirror showing only the neon (and, faintly, the room).
     if pool_amp()<=0.0 || window<=0.0 {
-        return f0*(neon_reflection(flat_p,flat_r,POOL_NEON_HEIGHT,POOL_ROUGH*.6/max(flat_r.z,.05))
+        return f0*(pool_neon(flat_p,flat_r,px.pixel,POOL_ROUGH*.6)
             +pool_room(flat_r,POOL_ROUGH)*pool_power());
     }
     let mid=pool_wave(s,.5*POOL_EXPOSURE,window);
     let here=vec3f(flat_p.xy,mid.x);
-    // How fast the normal turns across a pixel: it widens the highlights and
-    // blurs the neon's reflection where the waves would otherwise shrink
-    // them below a pixel and alias.
+    // How fast the normal turns across a pixel: it widens the lamps'
+    // highlights where the waves would otherwise shrink them below a pixel
+    // and alias (and blurs the neon's reflection by POOL_NEON_SHARP.y).
     let e=.5;
     let wx=pool_wave(s+vec2f(e,0),.5*POOL_EXPOSURE,window).yz-mid.yz;
     let wy=pool_wave(s+vec2f(0,e),.5*POOL_EXPOSURE,window).yz-mid.yz;
@@ -222,15 +245,18 @@ fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
         +warm*pool_lamp_light(mid_n,v,here,pool_lamp(1u,.5*POOL_EXPOSURE),sheen_alpha))*POOL_SHEEN.x*f32(POOL_SHUTTER);
     for(var i=0;i<POOL_SHUTTER;i++) {
         let t=(f32(i)+.5)/f32(POOL_SHUTTER)*POOL_EXPOSURE;
-        let w=pool_wave(s,t,window);
+        // Each sample at its own point in the pixel too (an R2 sequence), so
+        // the samples resolve the neon's reflection across the pixel.
+        let o=(fract(f32(i+1)*vec2f(.7548777,.5698403))-.5)*px.pixel;
+        let q=s+vec2f(o.x/COLUMN,o.y);
+        let w=pool_wave(q,t,window);
         let n=normalize(vec3f(-w.yz,1));
         let r=reflect(ray,n);
-        let p=vec3f(here.xy,w.x);
+        let p=vec3f(scene_of_source(q),w.x);
         let f=POOL_METAL+(1.0-POOL_METAL)*pow(1.0-max(dot(n,v),0.0),5.0);
-        // The neon reflected, blurred by the chrome's roughness and by the
-        // pixel's spread of normals, measured where the reflected ray meets
-        // the tubes' plane (hence the obliquity).
-        let neon=neon_reflection(p,r,POOL_NEON_HEIGHT,(POOL_ROUGH*.6+2.0*turn)/max(r.z,.05));
+        // The neon reflected, blurred by the chrome's roughness and by what
+        // is left of the pixel's spread of normals between the samples.
+        let neon=pool_neon(p,r,px.pixel*POOL_NEON_SHARP.x,POOL_ROUGH*.6+POOL_NEON_SHARP.y*turn);
         c+=f*(neon+pool_room(r,alpha)*power);
         let sharp=1.0-POOL_SHEEN.x;
         c+=cool*pool_lamp_light(n,v,p,pool_lamp(0u,t),alpha)*sharp;
@@ -242,8 +268,10 @@ fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
 fn style_color(px:RingsPixel)->vec3f {
     if rings_phase()<.5 {return vec3f(0);}
     if rings_phase()>1.5 {return tonemap_inverse(picture_color(px.source,picture_level()));}
-    let behind=pool_surface(px,px.source);
     let tubes=neon_glass(px.source,px.pixel);
+    // Until the rings first show, no pool: the neon on black.
+    if ring_peak()<=0.0 {return neon_over(vec3f(0),vec3f(0),tubes)+neon_haze(px.source);}
+    let behind=pool_surface(px,px.source);
     // Through the glass, the pool a little to the side.
     var seen=behind;
     if tubes.glass>0.0 {seen=pool_surface(px,px.source+tubes.bend);}
