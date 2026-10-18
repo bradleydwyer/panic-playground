@@ -1879,13 +1879,131 @@ fn room_controls(controls: &RingsControls, time: f64) -> [[f32; 4]; 4] {
 pub static VOLUME: StyleInfo = StyleInfo {
     name: "volume",
     source: include_str!("rings_volume.wgsl"),
-    prepass: false,
+    prepass: true,
     controls: volume_controls,
 };
 
-/// The volume style's `u.rings_style` values.
+/// The volume style's camera drifts off the original's axis only while the
+/// rings are at full intensity: from the first frame at 64 (clip frame 3586,
+/// 51.23 s) to the last before the fade-out (5108, 72.97 s), as a run of the
+/// port shows them (observed with the imported data, not derived here).
+/// Clip times in seconds.
+const VOLUME_DRIFT: (f64, f64) = (3586.0 / FRAME_RATE as f64, 5108.0 / FRAME_RATE as f64);
+/// Authored: the seconds the camera takes to leave the axis and to return,
+/// its greatest tilt (radians), the direction it first leans (radians from
+/// screen right, anticlockwise) and how fast that direction turns (radians a
+/// second), and its distance from the pivot at the centre of the ring window
+/// (scene rows): a long lens on the axis, so the haze stays crisp when seen
+/// flat, closing in as it tilts. The focal length follows the distance, so
+/// the plane z = 0 keeps its size at the pivot.
+const VOLUME_EASE: f64 = 6.0;
+const VOLUME_TILT: f64 = 0.42;
+const VOLUME_LEAN: f64 = -2.3;
+const VOLUME_TURN: f64 = 0.15;
+const VOLUME_DISTANCE: (f64, f64) = (1100.0, 800.0);
+
+/// The volume camera at a clip time (authored, a pure function of time):
+/// eye, right, up and forward in scene axes (rows, y up, z towards the
+/// viewer), and its distance from the pivot; on the original's axis outside
+/// the drift.
+fn volume_pose(time: f64) -> ([[f64; 3]; 4], f64) {
+    let smoother = |x: f64| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * x * (x * (x * 6.0 - 15.0) + 10.0)
+    };
+    let (start, end) = VOLUME_DRIFT;
+    let lean = smoother((time - start) / VOLUME_EASE) * smoother((end - time) / VOLUME_EASE);
+    let tilt = VOLUME_TILT * lean;
+    let turn = VOLUME_LEAN + VOLUME_TURN * (time - start).clamp(0.0, end - start);
+    let distance = VOLUME_DISTANCE.0 + (VOLUME_DISTANCE.1 - VOLUME_DISTANCE.0) * lean;
+    let eye = [
+        distance * tilt.sin() * turn.cos(),
+        distance * tilt.sin() * turn.sin(),
+        distance * tilt.cos(),
+    ];
+    let forward = eye.map(|v| -v / distance);
+    // Right = forward x (0, 1, 0), up = right x forward: no roll.
+    let right = [-forward[2], 0.0, forward[0]];
+    let norm = (right[0] * right[0] + right[2] * right[2]).sqrt();
+    let right = right.map(|v| v / norm);
+    let up = [
+        right[1] * forward[2] - right[2] * forward[1],
+        right[2] * forward[0] - right[0] * forward[2],
+        right[0] * forward[1] - right[1] * forward[0],
+    ];
+    ([eye, right, up, forward], distance)
+}
+
+/// The volume style's `u.rings_style` values: its camera (eye and focal
+/// length, right, up, forward). All zero when part 6 isn't shown, which the
+/// shader takes as the default camera.
 fn volume_controls(controls: &RingsControls, time: f64) -> [[f32; 4]; 4] {
-    no_controls(controls, time)
+    if controls.rings[0] == 0.0 {
+        return no_controls(controls, time);
+    }
+    let (pose, distance) = volume_pose(time);
+    let [eye, right, up, forward] = pose.map(|v| v.map(|x| x as f32));
+    [
+        [eye[0], eye[1], eye[2], distance as f32],
+        [right[0], right[1], right[2], 0.0],
+        [up[0], up[1], up[2], 0.0],
+        [forward[0], forward[1], forward[2], 0.0],
+    ]
+}
+
+#[cfg(test)]
+mod volume_tests {
+    use super::*;
+
+    #[test]
+    fn volume_camera_is_the_original_view_outside_its_drift() {
+        let flat = (
+            [
+                [0.0, 0.0, VOLUME_DISTANCE.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, -1.0],
+            ],
+            VOLUME_DISTANCE.0,
+        );
+        let (start, end) = VOLUME_DRIFT;
+        for time in [0.0, 50.5, start, end, end + 0.9, 90.0] {
+            assert_eq!(volume_pose(time), flat, "{time}");
+        }
+        let mut shown = RingsControls::default();
+        assert_eq!(volume_controls(&shown, 60.0), [[0.0; 4]; 4]);
+        shown.rings[0] = 1.0;
+        assert_eq!(volume_controls(&shown, 40.0)[0], [0.0, 0.0, 1100.0, 1100.0]);
+        // In between: an orthonormal frame looking at the pivot, moving
+        // smoothly (no step in position or velocity between 1/600 s steps),
+        // as far as the greatest tilt.
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let mut most: f64 = 0.0;
+        let step = 1.0 / 600.0;
+        let mut previous = volume_pose(start).0[0];
+        let mut speed = 0.0;
+        for k in 1..((end - start) / step) as usize {
+            let time = start + k as f64 * step;
+            let ([eye, right, up, forward], distance) = volume_pose(time);
+            for (a, b, expected) in [
+                (right, right, 1.0),
+                (up, up, 1.0),
+                (forward, forward, 1.0),
+                (right, up, 0.0),
+                (right, forward, 0.0),
+                (up, forward, 0.0),
+            ] {
+                assert!((dot(a, b) - expected).abs() < 1e-9, "{time}");
+            }
+            assert!((dot(eye, forward) + distance).abs() < 1e-6, "{time}");
+            assert!(right[1] == 0.0 && up[1] > 0.0, "no roll at {time}");
+            most = most.max((-forward[2]).acos());
+            let moved = (0..3).map(|i| eye[i] - previous[i]).sum::<f64>().abs();
+            assert!((moved - speed).abs() < 0.05, "smooth at {time}");
+            (previous, speed) = (eye, moved);
+        }
+        assert!((most - VOLUME_TILT).abs() < 1e-3, "{most}");
+    }
 }
 
 // ---------------------------------------------------------------------------
