@@ -289,9 +289,17 @@ impl Renderer {
                     .unwrap_or(caps.formats[0])
             })
             .unwrap_or(wgpu::TextureFormat::Rgba8UnormSrgb);
+        // Part 5's smoke binds more storage buffers to a compute pass than
+        // wgpu's default of 8 (field_frame_smoke.rs); ask for the adapter's.
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Panic HD GPU"),
+                required_limits: wgpu::Limits {
+                    max_storage_buffers_per_shader_stage: adapter
+                        .limits()
+                        .max_storage_buffers_per_shader_stage,
+                    ..Default::default()
+                },
                 ..Default::default()
             })
             .await
@@ -1573,7 +1581,6 @@ mod tests {
 
     #[test]
     fn part5_block_matches_its_wgsl_declaration() {
-        use super::super::field_render::FluidStep;
         macro_rules! fields {
             ($($field:ident),* $(,)?) => {
                 vec![$((stringify!($field).to_owned(), offset_of!(FieldBlock, $field))),*]
@@ -1606,19 +1613,6 @@ mod tests {
         let (members, span) = wgsl_members(&module, "FieldBlock");
         assert_eq!(members, expected);
         assert_eq!(span, size_of::<FieldBlock>());
-        let (step, span) = wgsl_members(&module, "FluidStep");
-        assert_eq!(
-            step,
-            [
-                ("block".to_owned(), offset_of!(FluidStep, block)),
-                ("step".to_owned(), offset_of!(FluidStep, step))
-            ]
-        );
-        assert_eq!(span, size_of::<FluidStep>());
-        assert!(
-            size_of::<FluidStep>() <= 512,
-            "a fluid step's controls fit their slot"
-        );
     }
 
     /// The constants the part-5 shaders repeat from hd/field.rs and clip.rs.
@@ -1693,9 +1687,9 @@ mod tests {
 
     /// The fluid hook reaches the same state whether the clip plays on,
     /// seeks back to a kept state or starts afresh at a moment, as video
-    /// export does: each moment's latest state and the one before match a
-    /// new renderer's byte for byte, and the stand-in's step counter shows
-    /// the steps the moment needs.
+    /// export does: each moment's state matches a new renderer's byte for
+    /// byte (by a hash of the whole state), and is the state the moment
+    /// needs, one step past it.
     #[test]
     #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
     fn part5_fluid_is_the_same_however_it_is_reached() {
@@ -1726,20 +1720,14 @@ mod tests {
             );
             r.field.as_ref().unwrap().read_fluid(&r.device, &r.queue)
         };
-        let w = |bytes: &[u8]| half::f16::from_le_bytes([bytes[6], bytes[7]]).to_f32();
         let mut playing = renderer();
         let end = field.seconds(field.frames.len());
         for offset in [0.5, 5.0, 30.0, 3.0, 4.0, 47.0, 20.0, 0.01, 47.5] {
             let time = (start + offset).min(end);
-            let states = read(&mut playing, time);
-            assert!(states == read(&mut renderer(), time), "fluid at {time}");
+            let state = read(&mut playing, time);
+            assert!(state == read(&mut renderer(), time), "fluid at {time}");
             let steps = ((time - start) * FLUID.rate).floor() as usize + 1;
-            for (k, state) in states.iter().enumerate() {
-                let want = ((steps - k) % 1000) as f32;
-                for texel in state.chunks(8) {
-                    assert_eq!(w(texel), want, "step counter at {time}");
-                }
-            }
+            assert_eq!(state.1, steps, "steps at {time}");
         }
     }
 

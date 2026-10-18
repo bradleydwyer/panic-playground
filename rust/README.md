@@ -801,14 +801,113 @@ during the terrain, as `--bench` measures it, CPU and waiting for the GPU
 included (it gives part 6's faithful HD 0.7 ms).
 
 The modern view is three authors' work, each in their own files; see
-"Adding to part 5" below. Until they fill them in, each draws a plain
-stand-in: the frame is the PSTART picture, smoothly upscaled, with no smoke;
-the window is faithful HD's; and the mountain is the fitted relief, marched
-with the code's camera and projection and lit plainly in MAP.PAL's ramp by
-height. Those take about 2.0 ms a frame during the zoom and 4.6 to 4.8 ms
-during the terrain at 2560 × 1440, the shared bloom included. The stand-ins
-only show that the framework runs end to end; the modern look is to be
-authored.
+"Adding to part 5" below. The metal frame and its smoke are in. Until the
+other two fill theirs in, each draws a plain stand-in: the window
+is faithful HD's, and the mountain is the fitted relief, marched with the
+code's camera and projection and lit plainly in MAP.PAL's ramp by height.
+The stand-ins only show that the framework runs end to end; their modern
+look is to be authored.
+
+The frame is dark polished gunmetal. It is drawn exactly where the PSTART
+picture has it, as nothing is displaced, and is lit by what is round it.
+Its shape is made from the user's own picture when the renderer loads
+(`frame_shape` in `field_frame.rs`, in about 25 ms), and nothing derived from
+it is stored:
+
+- Measured from the picture: on each side, the frame's outer edge and the
+  crease between its outer face and its inner bevel, read from the runs of
+  colour outward from the window's edge. On the imported data the outer
+  edge runs from (67, 17) to (253, 175), and the crease is 15.5 pixels out
+  from the window on every side. Also measured: the bands of lighter
+  shading across the middle of each side.
+- Interpretation: the ornaments' relief. The picture shades them as rounded
+  metal, lighter where they stand out, so their height is the picture's
+  lightness, smoothed so that its 16 tones don't show as terraces, falling
+  to nothing at outlines smoothed from its pixels. Their normals come from
+  that height. The bevels are clean planes between the measured lines.
+- Authored: the bevels' profile (a steep foot at the window, the inner
+  bevel at 55 degrees, a rounded crest, the outer face at 24 degrees and a
+  rounded lip); the material (each side brushed along its length, with its
+  highlights drawn out along the brushing, polished bands, and cast
+  ornaments that are darker in their recesses); and the lights. The lights
+  are a dim key from the upper left, as the picture is shaded, with a small
+  bright light beside it for the catch-lights on edges, a dim cool fill from
+  the lower right and a dim ambient. Then come the window's light, which
+  the inner bevel reflects through the opening, and the lava's, each from
+  the other author's values or a stand-in until they give them (below).
+  The mountain's silhouette over each column, as the relief marched with
+  the code's camera shows it (the frame's prepass), shadows the frame from
+  the lava and the key and darkens it near the mountain's base.
+
+Part 6's PSTART fade brings the lit frame in (`FRAME_TAKES_PART6_FADE`),
+its lights rising as the picture's level did, so the hand-over into part 5
+is seamless. Part 6 is unchanged before 80.36 seconds. After the last
+terrain pixel the window is dark, and the frame holds, lit only by the
+room's dim lights, until part 3 takes it. At 2560 × 1440 on an Apple M5 Max,
+the frame costs about 0.2 ms a frame at 85, 98.2, 105 and 129 seconds, as
+`--bench` measures it against the same build drawing no frame. That is less
+than the flat picture it replaces cost.
+
+Round the frame is smoke, a real fluid simulation: stable fluids (Stam
+1999) on a 3D grid, with MacCormack advection, buoyancy, vorticity
+confinement and a multigrid pressure solve. It is lifted from a separate
+prototype, kept locally, whose kernels it adapts to the real scene
+(`field_frame_smoke.rs` and its `field_frame_smoke/*.wgsl` kernels). The
+velocity grid is 208 × 124 × 64 cells over the 16:9 screen, with margins.
+Density and temperature are at twice that each way, stored as f16. It
+steps 60 times a second from part 6's fade, after an unseen pre-roll of 8
+seconds. Its light is computed each frame toward the window and the lava,
+and drawn in two layers, behind the frame and in front of it.
+
+- Driven by the scene's own state, through the part-5 block at each
+  step: the zoom, the mountain's rise, level, camera and orbit, the
+  window's clear, the sinking and the last terrain pixel, as the preview
+  observes them, so the no-music timeline works too. The lights are the
+  other authors' (or the frame's stand-ins for them).
+- Derived from the user's picture: the obstacles. The frame and its window
+  are a solid plate up to the bevels' tops. The ornaments are smoothed into
+  solid ribbons, as the cells are coarser than the filigree, and their
+  softened coverage shadows the smoke.
+- Interpretation: the lava's heat rises in a band below the mountain's
+  outline over each column. The outline is the fitted relief marched with
+  the code's camera and projection, as the mountain's stand-in is drawn.
+- Authored: the emitters, the heat, the air's movement, the lights' placing
+  and strength, and the solver's parameters. The smoke is kept mostly
+  behind and beside the frame, secondary to it and the mountain. Its heat
+  lies behind the picture plane, or near it beside the frame, and a draft
+  toward the back keeps the window and the mountain clear. Smoke in front
+  of the frame draws behind the mountain.
+
+`SMOKE` in `field_frame_smoke.rs` picks the smoke: `Volume` (the default,
+above), `SoftVolume` (density and temperature at the velocity grid's own
+resolution, softer) or `Flat` (the prototype's 2D fallback, 512 × 288,
+which reads as ink in water). At 2560 × 1440 on an Apple M5 Max, `Volume`
+costs about 5 ms a frame during the zoom and 6 to 7 ms during the terrain
+and after it, as `--bench` measures it against the frame without smoke. A
+step takes about 4.4 ms, and the light the rest. With the other stand-ins,
+a whole frame takes about 6 ms during the zoom and 9 ms during the terrain,
+the shared bloom included. The mountain's own cost replaces its
+stand-in's, about 2 ms of that. Timings on a busy machine run higher.
+
+The simulation is a pure function of the step, so it reaches the same
+state however a moment is reached, which an ignored test checks by a hash
+of the whole state. It is chaotic, so changing a kernel or a parameter
+changes every later frame. Bit-exactness holds on one machine, GPU and
+driver. Seeking and memory, for `Volume`:
+
+- A fresh process, as a one-frame export is, simulates from the fade's
+  pre-roll: about 9 seconds to reach 105 seconds and 15 to reach the end.
+- A state is kept every 3 seconds as it is first reached: 76 MB each, up
+  to 17 of them (1.3 GB), on the GPU. The simulation's own working set is
+  about 0.4 GB.
+- Seeking back runs at most 179 steps from a kept state, about 0.8 seconds
+  at worst; onto a kept state it is immediate.
+- Scrubbing stays exact. Forward through time not yet simulated, a quarter
+  second a frame costs about 75 ms a displayed frame. Backward, a second a
+  frame costs 0.2 to 0.9 seconds a frame. Playing on runs a step a frame.
+
+The renderer asks the GPU for its full number of storage buffers per
+shader stage, as the smoke's solver binds more than wgpu's default of 8.
 
 ### Adding to part 5
 
@@ -817,7 +916,7 @@ file of their own in `src/hd/`:
 
 | Author | Files | Draws |
 | --- | --- | --- |
-| Frame | `field_frame.wgsl`, `field_frame.rs` | The metal frame and the smoke behind and round it, with the fluid hook |
+| Frame | `field_frame.wgsl`, `field_frame.rs`, and the smoke's `field_frame_smoke.rs` and `field_frame_smoke/*.wgsl` | The metal frame and the smoke behind and round it, with the fluid hook |
 | Zoom | `field_zoom.wgsl`, `field_zoom.rs` | What the window shows |
 | Mountain | `field_mountain.wgsl`, `field_mountain.rs` | The mountain |
 
@@ -852,9 +951,25 @@ Each Rust file holds its author's `AuthorInfo`: set `prepass: true` to have
 texture `<name>_prepass_at(uv)` reads. Its controls function returns four
 spare vec4s at each moment, read as `fc.frame_style`, `fc.zoom_style` or
 `fc.mountain_style`. `field_frame.rs` also holds the fluid's settings
-(`FLUID`) and `FRAME_TAKES_PART6_FADE`; `field_mountain.rs` holds the
+(`FLUID`), `FRAME_TAKES_PART6_FADE` (set) and `frame_shape`. That is the
+frame's shape, baked from the picture when the renderer loads, which
+`field_render.rs` binds at group 0, binding 13, for `field_frame.wgsl`;
+its layout is documented on `FrameShape`. `field_mountain.rs` holds the
 relief's resolution (`RELIEF_SIZE`, 1024 by default, about 5 texels a map
 unit).
+
+The frame reflects light from the other two authors. Each value counts as
+given once any of its four components is non-zero, so w can mark a dark
+light as given; until then the frame draws a stand-in:
+
+- `fc.zoom_style[0]`: the window's light, rgb, its average colour times its
+  intensity, as linear HDR radiance. The stand-in is a cool blue that goes
+  out when the window is cleared.
+- `fc.mountain_style[0]`: the lava's light, x and y in source pixels, scene
+  z, and its spread (the glow's radius in rows).
+- `fc.mountain_style[1]`: the lava's radiance, rgb, linear HDR; this one
+  says whether the lava is given. The stand-in is an orange glow over the
+  plateau, in front of the frame, rising and sinking with the terrain.
 
 `px` gives the pixel in the same spaces as part 6's: `uv`, `xy` (the
 screen), `source` (the original's 320 by 200 pixels, continuing beyond the
@@ -913,30 +1028,28 @@ controls, so they work in both. They include:
 - Music cues measured from the PCM, as in the earlier parts: `cue_energy()`,
   `cue_onset()`, `cue_low()` and `cue_accent()` (fragments only).
 
-The fluid hook runs `frame_fluid` as a compute pass over a grid of
-`FLUID.size` texels (Rgba16Float) covering the source rectangle
-`FLUID.region`, one step every 1 / `FLUID.rate` seconds (70 by default, one a
-frame of the original) from part 5's start, or from part 6's PSTART fade
-(80.36 seconds) with `FluidStart::PictureFade`. State n is the fluid at its
-start plus n steps; each step reads the one before it (`fluid_load`,
-`fluid_sample`) and the part-5 block at its own start, and nothing else that
-varies, so it is deterministic. A moment shows the state just past it and
-the one before (`fluid_blend` mixes them). Playing on runs a step or two a
-frame; a seek forward runs the steps it skips; a seek back starts again from
-the latest state kept every `FLUID.checkpoint` steps (256 by default) on the
-GPU, or from the start. Playback, seeking, scrubbing and a single exported
-frame therefore reach the same state, which an ignored test checks byte for
-byte on the GPU; a fresh process, as one-frame export uses, runs from the
-start. The step is a compute shader: use `textureSampleLevel` or
-`textureLoad`, not `textureSample`, `fwidth`, the music cues or
-`fluid_blend`. The stand-in draws nothing and only counts its steps, which
-the test reads back.
+The fluid hook is the frame author's `FrameFluid` (`field_frame_smoke.rs`),
+which `field_render.rs` creates with the frame's shape and the relief, and
+brings to each moment shown. It owns its GPU state, its steps (one every 1
+/ `FLUID.rate` seconds from `FLUID.start`, part 6's PSTART fade), the
+states it keeps every `FLUID.checkpoint` steps for seeking back, and its
+lighting. Its two light layers, `FLUID.size` texels over the source
+rectangle `FLUID.region` (rows from the top), are bound for the fragments
+as `fluid_state` (the smoke behind the frame) and `fluid_previous` (in
+front of it); `fluid_uv` maps a source point onto them. `u.field.fluid`
+holds the state shown, its fraction past the one before, the step's length
+and the seconds since the fluid's start. The groundwork's single-texture
+step, `frame_fluid` and `frame_fluid_init` with `field_style.wgsl`'s
+`field_fluid`, remains but is unused, as do the helpers for it
+(`fluid_load`, `fluid_blend`, `fluid_cell` and the step's own).
 
 Two hand-overs frame the part. Part 6 ends on the PSTART picture, and its
-look is part 6's own; setting `FRAME_TAKES_PART6_FADE` lets part 5's modern
-view draw part 6's fade instead, from 80.36 seconds, so the frame author can
-bring the lit metal frame in there: `picture_level()` rises from 0 to 1 over
-it and `field_seconds()` is negative. Part 5 must end on the frame with a
+look is part 6's own. Setting `FRAME_TAKES_PART6_FADE`, as the frame now
+does, lets part 5's modern view draw part 6's fade instead, from 80.36
+seconds, so the frame author can bring the lit metal frame in there:
+`picture_level()` rises from 0 to 1 over it and `field_seconds()` is
+negative. The fade is part 5's only with `--field`; `--rings` alone still
+ends on part 6's own picture, as the look check's part-6 shots show it. Part 5 must end on the frame with a
 dark, empty window, which part 3 will zoom into: the window is cleared at
 98.11 seconds, and from then on the zoom's layer should stay dark. Check the
 look with `tools/look_check.py`, whose part-5 shots show each phase.
@@ -974,8 +1087,10 @@ intro's reference pixels and PCM against the existing engine, sampled fly-by
 projection heights, the transition's complete reference frames, audio and
 tile schedule, the scroller's letters and positions against every part-2
 frame, part 6's state, replayed frames and PCM against every part-6 frame,
-and part 5's against every part-5 frame. Another, which needs a GPU, checks
-that part 5's fluid hook reaches the same state however a moment is reached:
+and part 5's against every part-5 frame; one bakes the frame's shape from
+PSTART and checks what it measures. Another, which needs a GPU, checks
+that part 5's smoke reaches the same state however a moment is reached (it
+re-simulates from the start at each of nine moments, a minute and a half):
 
 ```sh
 cargo test --release --locked --features hires
@@ -985,6 +1100,7 @@ PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --featu
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires scroller_glyphs_and_positions_rebuild_every_reference_frame -- --ignored
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part6_state_matches_every_engine_frame -- --ignored --nocapture
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part5_state_matches_every_engine_frame -- --ignored --nocapture
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires frame_is_measured_from_pstart -- --ignored --nocapture
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part5_fluid_is_the_same_however_it_is_reached -- --ignored
 ```
 

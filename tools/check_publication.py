@@ -40,6 +40,15 @@ RESEARCH_FILES = {
     'rust/src/hd/field_common.wgsl', 'rust/src/hd/field_style.wgsl',
     'rust/src/hd/field_faithful.wgsl',
     'rust/src/hd/field_frame.wgsl', 'rust/src/hd/field_frame.rs',
+    # The frame author's smoke: its host code and its compute kernels
+    # (authored, lifted from a local prototype; no demo data).
+    'rust/src/hd/field_frame_smoke.rs',
+    'rust/src/hd/field_frame_smoke/solver3d.wgsl',
+    'rust/src/hd/field_frame_smoke/multigrid.wgsl',
+    'rust/src/hd/field_frame_smoke/light3d.wgsl',
+    'rust/src/hd/field_frame_smoke/solver2d.wgsl',
+    'rust/src/hd/field_frame_smoke/light2d.wgsl',
+    'rust/src/hd/field_frame_smoke/terrain.wgsl',
     'rust/src/hd/field_zoom.wgsl', 'rust/src/hd/field_zoom.rs',
     'rust/src/hd/field_mountain.wgsl', 'rust/src/hd/field_mountain.rs',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
