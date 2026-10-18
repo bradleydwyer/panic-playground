@@ -7,6 +7,10 @@ This repository has two parts with different licensing:
 | Resource tools | Resource directory inspector/extractor, synthetic tests, release metadata and documentation | MIT, see [LICENSE](../LICENSE) |
 | Rust port and intro experiment | Rust player, modern intro renderer, their tests and build files, `tools/import_panic.py`, `tools/unpack_panic.py` | No licence granted while rights are reviewed; see [rust/NOTICE](../rust/NOTICE) |
 
+`rust/src/hd/scroller.wgsl` also contains third-party code: a ray / rounded box
+intersection adapted from Inigo Quilez, under his MIT License. That notice,
+in [rust/NOTICE](../rust/NOTICE) and beside the code, covers his code only.
+
 This repository starts with a source snapshot of the intro experiment built
 on [the Rust port](https://github.com/bradleydwyer/panic), based on commit
 `b48ef86`, plus the modern renderer work. It has fresh Git history and contains

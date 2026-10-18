@@ -227,7 +227,9 @@ grid, 40 by 25 tiles in the 4:3 frame, continued across the wide screen.
 `wall` tints them with the tile image; `chrome` leaves them plain. `--wall-shape`
 (0 to 1, default 0.5; **[** and **]** in steps of 0.1) runs from a low cushion
 that fills the tile, like the original's shaded square, to a round hemisphere.
-Each sample intersects the bumps it can reach analytically. A dense, bright
+Each sample intersects the bumps it can reach analytically, with a ray /
+rounded box test adapted from Inigo Quilez's MIT-licensed code (see
+[NOTICE](NOTICE)). A dense, bright
 grid moving this fast reads as op art, so the wall is treated as a defocused
 background: eight samples per pixel spread over a small disc and over a
 1/100 s exposure blur it along the oscillator's own motion. The metal is rough,
@@ -343,7 +345,7 @@ optical simulation. All fields are generated locally in memory.
 | L | Scroller lighting: studio or musical |
 | B | Cycle the scroller backdrop: chamber, wall, chrome |
 | [ / ] | Bump shape for the wall backdrops |
-| - / = | Strength of the wall backdrops |
+| - / = (keypad - / +) | Strength of the wall backdrops |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |

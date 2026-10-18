@@ -436,9 +436,17 @@ fn run() -> Result<(), String> {
                             println!("Bump shape {:.1}", scroll.wall_shape);
                         }
                     }
-                    Keycode::Minus | Keycode::Equals => {
+                    // Plus is the main keyboard's raise key on layouts without
+                    // a separate = key; KpEquals is on Mac extended keypads.
+                    Keycode::Minus
+                    | Keycode::KpMinus
+                    | Keycode::Equals
+                    | Keycode::Plus
+                    | Keycode::KpPlus
+                    | Keycode::KpEquals => {
                         if let Some(scroll) = &mut clip.scroller {
-                            let step = if key == Keycode::Minus { -0.1 } else { 0.1 };
+                            let lower = matches!(key, Keycode::Minus | Keycode::KpMinus);
+                            let step = if lower { -0.1 } else { 0.1 };
                             scroll.wall_strength = (((scroll.wall_strength + step) * 10.0).round()
                                 / 10.0)
                                 .clamp(0.0, 1.0);

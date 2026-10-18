@@ -204,5 +204,11 @@ unpacking helpers; their rights status remains unresolved. The existing scope
 is retained from the Rust port. See [NOTICE](NOTICE), [rust/NOTICE](rust/NOTICE)
 and [the publication notes](docs/publication.md).
 
+The scroller's bump wall uses a ray / rounded box intersection adapted from
+Inigo Quilez's [Rounded Box - intersection](https://www.shadertoy.com/view/WlSXRW),
+which he published under the MIT License. His notice is in
+[rust/NOTICE](rust/NOTICE) and beside the code; it covers his code, not the
+rest of `rust/`.
+
 Importing the original files yourself doesn't grant any extra rights to use or
 share them.
