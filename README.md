@@ -85,7 +85,7 @@ cargo run --release --locked --features hires --bin panic-hd -- --scroller --see
 | `--scroller-backdrop chamber` | Dark chamber with the original tile wall faintly visible |
 | `--wall-shape 0.5` | Bump shape, from 0 (a cushion like the original tile) to 1 (a hemisphere); 0.5 by default |
 | `--wall-strength 0.6` | Presence of the bump wall, from 0 (dark) to 1; 0.6 by default |
-| `--wall-waves 0.5` | Waves across the bump wall, lit from the side so the crests cast shadows; off by default. The value is their depth, from 0.1 to 1; 0.5 if omitted |
+| `--wall-waves 0.5` | Waves across the bump wall, lit from the side so the crests cast shadows; on by default, their height swinging from the depth to its opposite and back. The value is the depth, from 0.1 to 1, 0.5 by default; 0 turns them off |
 | `--wave-light 0.5` | Strength of the waves' side light and shadows, from 0 to 1; 0.5 by default |
 | `--faithful` | Faithful HD: the original look, with smooth letters and dots |
 
@@ -134,10 +134,13 @@ text begins. The chrome bumps, their lighting and their reflections of
 the letters are authored. They are drawn as a dim, slightly out-of-focus
 background, blurred along the wall's motion, so the fast sway doesn't strobe.
 
-`--wall-waves` (or **W**) is a further experiment: the original's wall is
-flat, so its waves are authored, not recovered. A slow swell rolls across the
-bumps, lit by a grazing light from the left, so the crests cast shadows
-across the troughs and the bumps on the lit slopes catch it. The light is the
+The wall's waves are a further experiment, on by default; **W** or
+`--wall-waves 0` turns them off. The original's wall is flat, so its waves
+are authored, not recovered. A slow swell rolls across the bumps, lit by a
+grazing light from the left, so the crests cast shadows across the troughs
+and the bumps on the lit slopes catch it. Every 7.36 seconds its height
+swings from the set depth through flat to the opposite, the crests sinking
+into troughs, and back. The light is the
 wall's own: the letters are lit as before. The waves ease in as the laser cut
 reveals the wall and settle before part 2 fades. They depend only on the
 time, so seeking and captures show the same waves.

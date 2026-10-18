@@ -169,12 +169,13 @@ uses the original pixels during this transition.
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --scroller-backdrop wall --seek 27
-cargo run --release --locked --features hires --bin panic-hd -- --scroller --wall-waves --seek 27
+cargo run --release --locked --features hires --bin panic-hd -- --scroller --wall-waves 0 --seek 27
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --faithful --seek 27
 ```
 
 By default the scroller uses glass lettering with studio lighting, on the
-arc described below, over the chrome bump wall (shape 0.5, strength 0.6); the
+arc described below, over the chrome bump wall (shape 0.5, strength 0.6)
+with its waves; the
 glass has approximate tinted transmission and reflective edges. The vertical
 sine overlay passes in front of the lower row and behind the upper row. It
 follows the arc, with its depth crossover in the gap between rows. The
@@ -248,15 +249,19 @@ normals, never its tiles, so the letters don't look textured. `--wall-strength` 
 default 0.6; **-** and **=** in steps of 0.1) sets how present the wall is.
 All of this is authored, not recovered from the original.
 
-`--wall-waves` adds waves to the `chrome` and `wall` backdrops. They are off
-by default, and **W** turns them on and off while playing. The original's wall
-is flat, an image moved by palette changes, so the waves and their light are
-authored, not recovered. A swell about 15 tiles from crest to crest rolls
-across the wall every 5.5 seconds, varied along its crests by a slower, longer
-one. The waves are anchored to the screen, and the wall's sway carries the
-bumps through them. They ease in from the laser cut's first opening to the
-start of the text, and settle over the 1.5 seconds before part 2's fade. They
-depend only on the time, so seeking, pausing and captures agree.
+The `chrome` and `wall` backdrops have waves. They are on by default; **W**
+turns them on and off while playing, and `--wall-waves 0` starts without
+them. The original's wall is flat, an image moved by palette changes, so the
+waves and their light are authored, not recovered. A swell about 15 tiles
+from crest to crest rolls across the wall every 5.5 seconds, varied along its
+crests by a slower, longer one. Their height swings too, from the set depth
+through flat to its opposite, the crests sinking into troughs, and back again
+every 7.36 seconds: about two of the tune's patterns at their pace in part 6,
+but not timed to them. The waves are anchored to the screen, and the wall's
+sway carries the bumps through them. They ease in from the laser cut's first
+opening to the start of the text, and settle over the 1.5 seconds before part
+2's fade. They depend only on the time, so seeking, pausing and captures
+agree.
 
 With the waves on, a grazing light of the wall's own lights it from the left,
 the scene's cool side, a little above the horizontal and 18 degrees over the
@@ -270,10 +275,10 @@ changes at all.
 Two controls adjust them while playing, each in steps of 0.1, and both
 appear in the window title:
 
-- Depth, the swell's height: `--wall-waves 0.5` sets it, from 0.1 (barely
-  there) to 1 (far too deep), 0.5 by default; **,** and **.** step it. At 0.5
-  the swell rises and falls 1.3 tile widths, about six times the bumps' own
-  height.
+- Depth, how far the swell's height swings each way: `--wall-waves 0.5` sets
+  it, from 0.1 (barely there) to 1 (far too deep), 0.5 by default; **,** and
+  **.** step it. At 0.5, at the ends of its swing, the swell rises and falls
+  1.3 tile widths, about six times the bumps' own height.
 - Light, the side light's strength and so its shadows': `--wave-light 0.5`
   sets it, from 0 (the studio alone) to 1 (stark), 0.5 by default; **;**
   and **'** step it.
