@@ -544,6 +544,20 @@ overlaps come from an authored subtraction rather than from the light. The
 bump shape and wall strength keys apply, and musical lighting (**L**) lets
 the lamps flare on the bass. It took 4.1 to 4.5 ms a frame on a quiet GPU.
 
+Volume (**5**) turns the two ring layers into spherical waves in haze. Each
+layer's centre is an emitter in the screen plane, and shells at the
+original's band radii hold the haze, so the plane cuts them in the
+original's rings and the moiré extends into depth; layer 0's shells are
+cool, layer 1's warm, and where both are set the haze is dark, as the
+original's XOR palette is. Each band's haze is lens-shaped, thin at its edges
+so the bands stay sharp from any angle, and deepens round the emitters into
+nested spheres; a side light from the upper left shades and shadows it, and
+the neon symbols light the shells near them. The camera keeps the original's
+view while the rings fade in and out, and drifts up to 24 degrees off the
+axis while they are at full intensity, an authored move that depends only on
+the clip time. The haze is ray-marched at half resolution in closed form,
+without noise, in about 2 ms a frame.
+
 ### Adding a part-6 style
 
 Each style is one WGSL file, `src/hd/rings_<name>.wgsl`, which defines two

@@ -168,7 +168,9 @@ ring layers into edge-lit glass plates, one glowing cool and the other warm,
 with the neon reflected in their rods. Pool makes them two sets of waves
 interfering on liquid chrome under a cool and a warm lamp. Room projects them
 in cool and warm onto the scroller's bump wall, left in the dark and lit by
-the neon. In the app, **1** to **5** switch styles and
+the neon. Volume makes them spherical waves in haze, with the camera
+drifting off the original's axis while the rings are at full strength. In
+the app, **1** to **5** switch styles and
 **M** shows faithful HD, the original's look at display resolution. The
 [renderer notes](rust/README.md#part-6-rings) say what is read from the port,
 what is interpreted and what is authored, and how to add a style.
