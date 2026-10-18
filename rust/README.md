@@ -505,11 +505,14 @@ The drawings are authored for this remake, not recovered from the demo, so
 unlike the original's data they are kept in Git, in
 `src/hd/rings_symbols.txt`: one line per drawing of its set, mask, label and
 runs, polylines in a 100-unit box on a 0 to 1000 grid. The file's header
-describes the format. Some are neon tracings of company logos
-(Claude, ChatGPT, Apple and Bitcoin in set 5; YouTube, Instagram, X,
-WhatsApp, Facebook, Reddit, LinkedIn and TikTok in set 6). Those logos are
-trademarks of their owners; their use here implies no affiliation or
-endorsement.
+describes the format. It is exported from the drawings' sources in
+`tools/symbols/` (`pattern_1.py` to `pattern_7.py`, drawn with `neon.py`;
+`render.py` previews them) by `tools/symbols/export_symbols.py`, which needs
+numpy and Pillow for the kit; a Python test checks that the two agree.
+Some are neon tracings of company logos (Claude, ChatGPT, Apple and Bitcoin
+in set 5; YouTube, Instagram, X, WhatsApp, Facebook, Reddit, LinkedIn and
+TikTok in set 6). Those logos are trademarks of their owners; their use here
+implies no affiliation or endorsement.
 
 The drawings' runs are the tubes as drawn: each run is a tube's centreline,
 in a box 155 rows high on the screen's centre (`AUTHORED_BOX`), round on the

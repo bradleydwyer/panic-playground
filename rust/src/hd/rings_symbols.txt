@@ -27,6 +27,9 @@
 # hd/rings.rs uses each run, as drawn, as a neon tube's centreline: a run
 # whose last point is its first is a closed loop, and where runs cross or
 # meet their tubes overlap.
+#
+# Made by tools/symbols/export_symbols.py from the drawings in tools/symbols/;
+# edit those and export again rather than editing this file.
 
 set	1	Water
 1	0	drop	500,80 686,448 697,487 700,528 688,588 671,624 646,657 615,684 579,704 541,716 500,720 459,716 421,704 385,684 354,657 329,624 312,588 300,528 303,487 314,448 500,80 | 100,880 900,880

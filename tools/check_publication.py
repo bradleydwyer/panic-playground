@@ -40,6 +40,14 @@ RESEARCH_FILES = {
     'rust/src/scenes/ending.rs',
     'tools/import_panic.py', 'tools/unpack_panic.py', 'tests/test_import_panic.py',
     'tools/look_check.py', 'tests/test_look_check.py',
+    # Part 6's authored symbols (not demo data): the drawings, their kit and
+    # previewer, and the exporter that writes rust/src/hd/rings_symbols.txt.
+    'tools/symbols/neon.py', 'tools/symbols/render.py',
+    'tools/symbols/pattern_1.py', 'tools/symbols/pattern_2.py',
+    'tools/symbols/pattern_3.py', 'tools/symbols/pattern_4.py',
+    'tools/symbols/pattern_5.py', 'tools/symbols/pattern_6.py',
+    'tools/symbols/pattern_7.py', 'tools/symbols/export_symbols.py',
+    'tests/test_symbols.py',
 }
 # Research files since removed from the tree: earlier commits may hold them,
 # the index may not. Part 6's other four styles, tried and dropped.
