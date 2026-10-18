@@ -179,6 +179,17 @@ follows the arc, with its depth crossover in the gap between rows. The
 existing laser transition reveals the wall; the preview ends after part 2's
 fade. `--scroller glass` is still accepted.
 
+The glass lets through a blurred view of the backdrop's light behind each
+letter, tinted blue towards the left and orange towards the right. Seen
+through a letter, its own soft shadow on the backdrop is lighter, as that
+light came through the glass. Lamp light gathered by each face leaves in a
+band just inside its bevel, so the letters glow along their edges while the
+bevel line stays crisp, and the sine text's light spreads through any letter
+it passes. Part 2's whole scene then has an exposure of 1.2 before the shared
+tonemap. These are authored looks, set by constants in `scroller.wgsl`
+(`GLASS_LIGHT`, `GLASS_RIM`, `GLASS_EDGE_ROWS`, `FILAMENT_IN_GLASS`,
+`GLASS_SHADOW` and `SCROLLER_EXPOSURE`), not a model of the original.
+
 Glass was chosen from three presets. The other two were `ribbons`, coated
 titanium lettering with curved row ends, and `sculpted`, the same material on
 straight extrusions. They have been removed from the code but remain in the
@@ -225,8 +236,9 @@ on screen.
 Softened reflections of the letters themselves come from a short march through
 the letters' shapes, once per pixel, over the depth the rows' arc occupies in
 front of the wall. The letters' soft contact
-shadows fall on the wall as they do in the chamber. The glass letters show
-only the wall's average colour, so they don't look textured. `--wall-strength` (0 to 1,
+shadows fall on the wall as they do in the chamber. Through the glass letters
+the wall shows only its light at low frequency, averaged over a few bump
+normals, never its tiles, so the letters don't look textured. `--wall-strength` (0 to 1,
 default 0.6; **-** and **=** in steps of 0.1) sets how present the wall is.
 All of this is authored, not recovered from the original.
 
