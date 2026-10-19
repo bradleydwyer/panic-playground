@@ -1396,7 +1396,8 @@ mod tests {
             );
             last = z[2];
         }
-        // At full speed a level takes 64 frames.
+        // At full speed a level takes about 64 frames (63 in the code, as the
+        // frame that swaps lowers the scale a second time).
         let level = |j: usize| at(j as f64).zoom[2];
         assert!((level(150) - level(86) - 1.0).abs() < 0.05);
         // Part 5's first frame shows no zoom yet; later frames do.

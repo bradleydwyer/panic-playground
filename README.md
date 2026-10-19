@@ -8,8 +8,8 @@ Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
 So far this covers the opening through the PANIC logo, the square transition,
 experiments with the following double scroller, part 6's interference
-rings as a pool of liquid chrome under neon, and the groundwork for part 5's
-zoom and mountain. The idea is to keep the
+rings as a pool of liquid chrome under neon, and part 5's deep Mandelbrot
+zoom and molten Mandelbrot mountain. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
 letters that refract the stars behind them, a mirrored plate that reflects the
 warp, motion blur, a starfield that ramps into warp, a heated metal logo with
@@ -17,7 +17,7 @@ slowly moving surface reflections, and lighting that pulses and breathes with
 the music.
 
 This builds on the [Rust port of Panic](https://github.com/bradleydwyer/panic).
-It's a work in progress, with modern treatments for the intro, scroller and part 6. The original
+It's a work in progress, with modern treatments for the intro, scroller, part 6 and part 5. The original
 player is included as a reference. The new letterforms and block motion are
 authored approximations, not recovered original 3D models.
 
@@ -216,21 +216,40 @@ cargo run --release --locked --features hires --bin panic-hd -- --field --seek 8
 
 Part 5 starts at 81.27 seconds on the PSTART picture part 6 faded in. In its
 window an endless zoom dives into a blue field, a level twice as fine every
-0.91 seconds at full speed, until it brakes and stops at 96.96 after about
+0.90 seconds at full speed, until it brakes and stops at 96.96 after about
 81,000 times. Then a mountain of fire colours rises in front of the frame,
 the window goes dark at 98.11, and the camera circles the mountain until it
 sinks from 121.83; the frame holds with its dark window until 130.03. All of
-that is read from the port and checked against it frame by frame. Faithful
-HD (**M**) shows it at display resolution: the zoom from the port's own
-buffers, smoothly, and the mountain marched pixel by pixel through the
-original height map with the port's camera. As the research found, the
-height map looks like a Mandelbrot mountain, the set as its plateau and its
-slopes following the set's potential; the preview fits that when it starts,
-which is an interpretation, and keeps nothing fitted. The modern look is
-still to come, in three parts: the metal frame and smoke round it, the zoom
-and the mountain, each in its own files. For now each draws a plain
-stand-in. The [renderer notes](rust/README.md#part-5-field) say what is read,
-what is interpreted and what is authored, and how the three plug in.
+that is read from the port and checked against it frame by frame. As the
+research found, the original's height map looks like a Mandelbrot mountain,
+the set as its plateau and its slopes following the set's potential; the
+preview fits that when it starts, which is an interpretation, and keeps
+nothing fitted.
+
+The modern look keeps that timing and changes the rest:
+
+- The picture's frame and ornaments become dark gunmetal, shaped from the
+  picture itself, with real 3D fluid smoke billowing round them, lit blue by
+  the window and then orange by the lava.
+- The window's zoom becomes a dive into the Mandelbrot set from a view
+  3.3e-50 high, past rings of lace and spiral stars, onto a minibrot (a
+  small copy of the set) that lands upright, filling the window, as the zoom
+  stops. It is computed by perturbation from a high-precision reference
+  orbit, in f32 on the GPU, a level per doubling as the original builds its
+  own buffers.
+- The mountain becomes the Mandelbrot set itself as molten rock: a
+  convecting lava lake on the plateau spilling over its rim, and lava that
+  runs down the set's field lines, crusting as it cools. The mountain
+  computes the set where it is near, so its edge stays sharp however close
+  the camera passes.
+
+The target, the lava, the metal, the smoke and all the lighting are
+authored. Faithful HD (**M**) shows the original's look at display
+resolution: the zoom from the port's own buffers, smoothly, and the
+mountain marched pixel by pixel through the original height map with the
+port's camera. The [renderer notes](rust/README.md#part-5-field) say what is
+read, what is interpreted and what is authored, and how the three parts plug
+in.
 
 ### Keys
 

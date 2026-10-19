@@ -12,11 +12,15 @@
 // - Derived: the motion (the level, the camera and the projection's morph,
 //   through the shared helpers, and within the exposure from the code's
 //   formulas) and the shape (the fitted relief, and near the set the fitted
-//   formula, base + slope sqrt(G(c)), evaluated per pixel).
+//   formula, base + slope sqrt(G(c)), evaluated per pixel), whose fall lines
+//   the lava follows.
 // - Interpretation: reading the projection as 3D, a height unit as
 //   MOUNTAIN_K map units.
-// - Authored: the materials (crust, lava channels, the lake and its plates),
-//   the lighting, the exposure and the detail method.
+// - Authored: the lava (its light as a temperature, its flow down the
+//   slopes and its crust, the lake's convection), the materials, the
+//   lighting, the exposure and the detail method. Nothing of the lava's
+//   look or motion is from the original, which doesn't move its terrain's
+//   colours.
 //
 // The detail method (authored). Rays march the baked relief, skipping
 // space by its coarse cells, and in the band round the set, where the
@@ -31,7 +35,8 @@
 // set's external angle, along which the lava runs down. Where the surface
 // moves across the screen within the exposure, more samples are taken along
 // it, each what the prepass saw where its ray points at the middle of the
-// exposure, shaded with the middle's surface carried over to first order.
+// exposure, shaded with the middle's surface carried over to first order
+// and its detail smoothed along the motion only.
 
 // Map units a height unit, to light the projection as 3D: at full
 // perspective (q = 248) a height unit shows 62 / z rows and a map unit
@@ -39,8 +44,9 @@
 // (derived from the code's projection; the 3D reading is interpretation).
 const MOUNTAIN_K=0.29;
 // The most samples across the exposure, and the screen motion, in target
-// pixels, each sample covers (authored).
-const MOUNTAIN_SAMPLES=6;
+// pixels, each sample covers (authored). Each sample's detail is smoothed
+// along the motion over the samples' spacing, so a few suffice.
+const MOUNTAIN_SAMPLES=4;
 const MOUNTAIN_SAMPLE_PIXELS=4.5;
 // Where the prepass stops: the ray's margin, in its pixels, above which it
 // counts as near the mountain (authored).
@@ -400,12 +406,36 @@ fn mountain_fbm(p:vec2f,seed:u32,octaves:i32,period:i32)->f32 {
     }
     return .5+.5*sum/norm;
 }
-// Ridged octaves, 0 to 1, sharp creases at the noise's zero lines.
-fn mountain_ridged(p:vec2f,seed:u32,octaves:i32,period:i32)->f32 {
-    var sum=0.0;var amp=.5;var q=p;var norm=0.0;var per=period;
+// Gradient noise with its gradient, (value, d/dx, d/dy), as mountain_gnoise
+// (the quintic fade's derivative), so that bumps need no extra samples.
+fn mountain_grad(g0:vec2i,seed:u32,period:i32)->vec2f {
+    var g=g0;
+    if period>0 {g.x=((g.x%period)+period)%period;}
+    return mountain_hash2(g,seed)*2.0-1.0;
+}
+fn mountain_gnoise_d(p:vec2f,seed:u32,period:i32)->vec3f {
+    let i=vec2i(floor(p));let f=p-floor(p);
+    let u=f*f*f*(f*(f*6.0-15.0)+10.0);
+    let du=30.0*f*f*(f*(f-2.0)+1.0);
+    let ga=mountain_grad(i,seed,period);
+    let gb=mountain_grad(i+vec2i(1,0),seed,period);
+    let gc=mountain_grad(i+vec2i(0,1),seed,period);
+    let gd=mountain_grad(i+vec2i(1,1),seed,period);
+    let va=dot(ga,f);let vb=dot(gb,f-vec2f(1,0));
+    let vc=dot(gc,f-vec2f(0,1));let vd=dot(gd,f-vec2f(1,1));
+    let k=va-vb-vc+vd;
+    let n=va+u.x*(vb-va)+u.y*(vc-va)+u.x*u.y*k;
+    let g=ga+u.x*(gb-ga)+u.y*(gc-ga)+u.x*u.y*(ga-gb-gc+gd)+du*vec2f(vb-va+u.y*k,vc-va+u.x*k);
+    return 1.9*vec3f(n,g);
+}
+// Ridged octaves, 0 to 1, sharp creases at the noise's zero lines, with
+// their gradient.
+fn mountain_ridged_d(p:vec2f,seed:u32,octaves:i32,period:i32)->vec3f {
+    var sum=vec3f(0);var amp=.5;var q=p;var norm=0.0;var per=period;var scale=1.0;
     for(var o=0;o<octaves;o++) {
-        sum+=amp*(1.0-abs(mountain_gnoise(q,seed+u32(o)*5u,per)));
-        norm+=amp;amp*=.5;q=q*2.1+vec2f(0.0,11.7);per*=2;
+        let n=mountain_gnoise_d(q,seed+u32(o)*5u,per);
+        sum+=amp*vec3f(1.0-abs(n.x),-sign(n.x)*scale*n.yz);
+        norm+=amp;amp*=.5;q=q*2.1+vec2f(0.0,11.7);per*=2;scale*=2.1;
     }
     return sum/norm;
 }
@@ -521,9 +551,22 @@ fn mountain_detail(m:vec2f)->MountainDetail {
 }
 
 // ---- Shading -------------------------------------------------------------------------
-// The lava's colour at heat 0..1: the original's terrain ramp (MAP.PAL's
-// entries 128 to 191 during the terrain), dark red to yellow.
-fn mountain_lava(heat:f32)->vec3f {return palette_color(128.0+63.0*clamp(heat,0.0,1.0));}
+// The lava's light at temperature tc, in degrees C, as linear HDR radiance
+// (authored, after a blackbody's): deep red about 700, orange about 950 and
+// yellow-white about 1150, where it is 12, far brighter than anything else
+// in the scene, for the shared bloom. Its brightness follows exp(-B / T),
+// Wien's approximation to Planck's law, with B 14,080 K, about 0.6 of the
+// physical value at 600 nm, so that dull red to white fits the tonemap. Its
+// green over its red rises from 0.02 at 700 to 0.35 at 1150 (Planck's law
+// gives 0.02 to 0.13 in linear sRGB; the rest stands for a camera's
+// saturation), with a little blue above 900.
+fn mountain_glow(tc:f32)->vec3f {
+    let k=max(tc,0.0)+273.15;
+    let r=12.0*exp(-14080.0*(1.0/k-1.0/1423.15));
+    let x=clamp((tc-600.0)/550.0,0.0,1.3);
+    let y=clamp((tc-900.0)/250.0,0.0,1.3);
+    return r*vec3f(1.0,.35*x*sqrt(x),.04*y*y);
+}
 // The prepared terrain at map point m smoothed by a cubic B-spline (four
 // bilinear taps), so that thresholds drawn in it stay round.
 fn mountain_terrain_smooth(m:vec2f)->vec4f {
@@ -556,13 +599,16 @@ fn mountain_original(m:vec2f,filtered:bool)->vec2f {
     return vec2f(clamp((index-128.0)/63.0,0.0,1.0),speck);
 }
 // How far the crust has formed on the lake: none as the mountain rises
-// molten out of the zoom's set, fully two seconds after it has risen
+// molten out of the zoom's set, fully a second after it has risen
 // (authored).
-fn mountain_crusting()->f32 {return smoothstep(time_risen()-.3,time_risen()+2.2,field_seconds());}
-// How far the lake has spilled over its rim: not at all while the mountain
-// rises, so that the molten set stands out against a dark rim, and fully a
-// second after it has risen (authored).
-fn mountain_spill()->f32 {return smoothstep(time_risen()-.25,time_risen()+1.0,field_seconds());}
+fn mountain_crusting()->f32 {return smoothstep(time_risen()-.4,time_risen()+1.1,field_seconds());}
+// When the lake begins to spill over its rim, in part-5 seconds: not while
+// the mountain rises, so that the molten set stands out against a dark rim,
+// but just before it has risen (authored). Its lava then runs down the
+// channels, its front reaching each height as long after this as lava takes
+// to fall there.
+fn mountain_spill_time()->f32 {return time_risen()-.25;}
+fn mountain_spill()->f32 {return smoothstep(mountain_spill_time(),time_risen()+1.0,field_seconds());}
 // The camera-relative key: cool and dim, from above and behind the
 // camera's left (authored), to show the crust's form. The lava is the main
 // light.
@@ -627,158 +673,374 @@ fn mountain_detail_near(d0:MountainDetail,m0:vec2f,m:vec2f)->MountainDetail {
     e.grad=d0.grad*sqrt(max(d0.g,1e-30))/root;
     return e;
 }
-// The slow masks the shading draws with, which the exposure's samples share
-// with its middle: where lava flows on the slopes (by the angle and height),
-// and where the lake's plates gather.
-fn mountain_masks(m:vec2f,sd:MountainDetail)->vec2f {
+
+// ---- Filtering ------------------------------------------------------------------------
+// The pixel's footprint on a surface with normal n seen along v (towards the
+// viewer): its two axes in world space (map x, map y and height as
+// MOUNTAIN_K map units), across the view and along it, the second longer
+// where the view grazes the surface, each widened by `blur` along the
+// exposure's motion between its samples (x across the screen, y up it),
+// so that a sample is smoothed along the motion only.
+struct MountainFootprint { a:vec3f, b:vec3f }
+fn mountain_footprint(n:vec3f,v:vec3f,fp_map:f32,blur:vec2f)->MountainFootprint {
+    var across=cross(n,v);
+    if dot(across,across)<1e-10 {across=vec3f(1,0,0);}
+    let a=normalize(across);
+    let b=normalize(cross(a,n));
+    return MountainFootprint(a*fp_map*blur.x,b*fp_map*blur.y/max(abs(dot(n,v)),.05));
+}
+// How far a coordinate with map gradient g changes across the footprint.
+fn mountain_spans(f:MountainFootprint,g:vec2f)->f32 {return length(vec2f(dot(g,f.a.xy),dot(g,f.b.xy)));}
+// How much of a footprint f wide, centred d from a line (d >= 0), a band w
+// either side of the line covers: a box filter across a straight band.
+fn mountain_band(d:f32,w:f32,f:f32)->f32 {
+    let r=.5*max(f,1e-4);
+    return clamp((min(d+r,w)-max(d-r,-w))/(2.0*r),0.0,1.0);
+}
+// A crack network's coverage: cracks w either side of the plates' edges, e
+// from the nearest edge and the footprint f across it, both in cells. Past
+// about a cell the footprint holds many cracks and the coverage tends to
+// their mean: cells of unit density have about 2 units of edge a unit of
+// area, so 4 w.
+fn mountain_cracks(e:f32,w:f32,f:f32)->f32 {
+    return mix(mountain_band(e,w,f),min(4.0*w,1.0),smoothstep(.35,1.1,f));
+}
+// Plates of crust: the Voronoi cells of a jittered grid. The distance from
+// p to the edge between the nearest two centres, in cells, the nearest
+// cell's id and centre, and the unit direction across that edge. `period`:
+// the cells along x after which it repeats, or 0.
+struct MountainPlate { edge:f32, id:f32, centre:vec2f, across:vec2f }
+fn mountain_plates(p:vec2f,seed:u32,period:i32)->MountainPlate {
+    let i=vec2i(floor(p));
+    var d1=9.0;var d2=9.0;var c1=vec2f(0);var c2=vec2f(1);var id=0.0;
+    for(var j=-1;j<=1;j++) {
+        for(var k=-1;k<=1;k++) {
+            let o=i+vec2i(k,j);
+            var g=o;
+            if period>0 {g.x=((g.x%period)+period)%period;}
+            let hu=mountain_hashu(g,seed);
+            let cpt=vec2f(o)+.1+.8*vec2f(f32(hu&0xffffu),f32(hu>>16u))/65536.0;
+            let e=p-cpt;
+            let d=dot(e,e);
+            if d<d1 {d2=d1;c2=c1;d1=d;c1=cpt;id=f32((hu*0x9e3779b9u)>>8u)/16777216.0;}
+            else if d<d2 {d2=d;c2=cpt;}
+        }
+    }
+    let n=normalize(c2-c1+vec2f(1e-6,0.0));
+    return MountainPlate(max(dot(.5*(c1+c2)-p,n),0.0),id,c1,n);
+}
+
+// ---- The lake ----------------------------------------------------------------------------
+// A convecting lava lake on the plateau (authored). Hot lava wells up along
+// a wavering seam down the set's real axis, through the main cardioid and
+// the period-2 bulb, and spreads away from it on either side at
+// MOUNTAIN_LAKE_SPEED map units a second, so the plates of crust it carries
+// are as old as their distance from the seam over that speed: thin and
+// glowing, with wide cracks, by the seam; dark and thick, with fine cracks,
+// towards the rim, where they founder in a bright margin. Cracks pulse open
+// and shut, and now and then gas bursts through, throwing open a disc of
+// bright lava that crusts over within a second. Until the crust has formed,
+// as the mountain rises, the plates are a bright orange skin.
+const MOUNTAIN_LAKE_SPEED=4.0;
+// A plate's size, map units.
+const MOUNTAIN_LAKE_PLATE=4.2;
+// Bursts: cells of this many map units, each with a chance of one burst in
+// each period, seconds.
+const MOUNTAIN_BURST_CELL=9.0;
+const MOUNTAIN_BURST_PERIOD=2.9;
+fn mountain_lake(c:MountainCamera,m:vec2f,v:vec3f,fp_map:f32,blur:vec2f,full:bool)->vec3f {
     let t=field_seconds();
-    if sd.inside {return vec2f(0.0,mountain_fbm(m*.07+vec2f(3.0,.015*t),9u,3,0));}
-    let n=normalize(vec3f(-MOUNTAIN_K*sd.grad,1.0));
-    let heat=mix(mountain_original(m,false).x,.42,smoothstep(.3,.8,1.0-n.z));
-    let along=(mountain_top()-sd.height)-t*5.0;
-    return vec2f(smoothstep(.42,.70,mountain_fbm(vec2f(sd.angle*32.0,along*.008+5.0),10u,2,32)+.25*heat-.1),0.0);
+    let top=mountain_top();
+    let crusting=mountain_crusting();
+    // The seam, along map y (the real axis is at map x 100 - im scale).
+    let along=m.y;
+    let seam=100.0-mandel_centre().y*mandel_scale()+3.5*sin(.16*along+.13*t)+2.0*sin(.37*along-.21*t+1.3);
+    let y=m.x-seam;
+    let side=select(0u,1u,y<0.0);
+    let dist=abs(y);
+    let age=dist/MOUNTAIN_LAKE_SPEED;
+    // The plates, moving away from the seam on either side.
+    let qp=vec2f(along,dist-MOUNTAIN_LAKE_SPEED*t)/MOUNTAIN_LAKE_PLATE;
+    let pl=mountain_plates(qp,51u+side,0);
+    let fpt=mountain_footprint(vec3f(0,0,1),v,fp_map,blur);
+    let qa=fpt.a.yx/MOUNTAIN_LAKE_PLATE;
+    let qb=fpt.b.yx/MOUNTAIN_LAKE_PLATE;
+    let fq=length(vec2f(dot(pl.across,qa),dot(pl.across,qb)));
+    // A plate's cracks open now and then.
+    let pulse=smoothstep(.6,1.0,sin(6.2832*(.21*t+3.0*pl.id)));
+    let cw=.018+.12*exp(-age/.6)+.05*pulse;
+    let crack=mountain_cracks(pl.edge,cw,fq);
+    // The seam itself, where the lava wells up, about a map unit wide.
+    let seam_w=.55*(.7+.6*mountain_gnoise(vec2f(along*.4,.4*t),52u,0));
+    let open_seam=mountain_band(dist,seam_w,max(abs(fpt.a.x),abs(fpt.b.x)));
+    // The margin, where the plates founder, by the relief's fall at the
+    // set's edge.
+    let margin=smoothstep(top-.2,top-6.0,relief_height(m));
+    // Temperatures: the plates' skin cools in a few seconds; the cracks
+    // and the seam show the hot lava under it.
+    let t_plate=mix(1070.0,mix(1040.0,470.0,smoothstep(.15,2.6,age))-50.0*pl.id,crusting);
+    let t_crack=1145.0-80.0*smoothstep(.5,7.0,age);
+    var e=mix(mountain_glow(t_plate),mountain_glow(t_crack),crack);
+    // Finer cracks across the young plates, glowing dull red.
+    if full {
+        let small=mountain_plates(qp*2.6+vec2f(3.1,7.7),53u,0);
+        let fs=2.6*length(vec2f(dot(small.across,qa),dot(small.across,qb)));
+        let fine=mountain_cracks(small.edge,.03,fs)*(1.0-smoothstep(.5,3.5,age))*crusting;
+        e+=mountain_glow(860.0)*fine*(1.0-crack);
+    }
+    let churn=mountain_gnoise(m*.35+vec2f(.25*t,-.18*t),54u,0);
+    e=mix(e,mountain_glow(1160.0+20.0*churn),open_seam);
+    e=mix(e,mountain_glow(1120.0+30.0*churn),margin);
+    // Gas bursts: in each cell, now and then one at a random place and time.
+    let bc=vec2i(floor(m/MOUNTAIN_BURST_CELL));
+    let phase=t/MOUNTAIN_BURST_PERIOD+mountain_hash(bc,61u);
+    let slot=i32(floor(phase));
+    let hb=mountain_hash2(bc+vec2i(slot*7919,slot*104729),62u);
+    let hp=mountain_hash2(bc+vec2i(slot*7919,slot*104729),63u);
+    let since=fract(phase)*MOUNTAIN_BURST_PERIOD-.4-1.5*hb.y;
+    var burst=0.0;
+    if hb.x<.4 && since>0.0 && since<1.1 {
+        let centre=(vec2f(bc)+.25+.5*hp)*MOUNTAIN_BURST_CELL;
+        let radius=2.6*sqrt(since/.7)+.3;
+        let fm=max(length(fpt.a),length(fpt.b));
+        let fade=1.0-since/1.1;
+        burst=mountain_band(length(m-centre),radius,fm)*fade*crusting;
+        e=mix(e,mountain_glow(1190.0-160.0*since),burst);
+    }
+    // The plates are slightly domed and glossy: the key's highlight, and
+    // the glow of the cracks round them.
+    let skin=crusting*(1.0-crack)*(1.0-open_seam)*(1.0-margin)*(1.0-burst);
+    let dome=(qp-pl.centre)*.35*skin+(vec2f(pl.id,fract(pl.id*7.0))-.5)*.25*skin;
+    let nb=normalize(vec3f(-dome.yx,1.0));
+    let l=mountain_key_dir(c);
+    let fresnel=.04+.96*pow(1.0-max(dot(nb,v),0.0),5.0);
+    e+=MOUNTAIN_KEY*mountain_ggx(nb,v,l,.3)*fresnel*1.2*skin;
+    e+=vec3f(.045,.038,.035)*mountain_glow(1120.0)*.08*skin;
+    return e;
+}
+
+// ---- The slopes ---------------------------------------------------------------------------
+// Lava runs down the slopes in channels (authored). It falls at a rate
+// that depends on the height alone: MOUNTAIN_FALL_FOOT height units a
+// second at the foot, rising exponentially to MOUNTAIN_FALL_TOP at the rim,
+// as the fitted slopes steepen towards the set (their median steepness
+// about triples from the foot to the rim, sampled on the imported data's
+// fit). So the time it has taken from the rim is in closed form, and
+// anything drawn in that time less the clock moves exactly with the flow,
+// without stretching or repeating. Within that, the flow speeds and slows
+// in rapids, MOUNTAIN_RAPIDS of the speed every MOUNTAIN_RAPIDS_PERIOD
+// seconds of travel, so its crust tears open where it speeds up and
+// buckles into ropes where it slows. The channels follow the slopes' fall
+// lines, the set's external angle, meandering a little; each has its own
+// width and speed. A channel's middle is its hottest and fastest; towards
+// its stiff, cooled levees the crust is sheared into streaks. The lava cools
+// as it travels, its skin crusting over within a few seconds, so it runs
+// open and bright over the rim and down the steep walls, and crusts over
+// on the gentler ground below, its cracks still glowing.
+const MOUNTAIN_FALL_TOP=42.0;
+const MOUNTAIN_FALL_FOOT=9.0;
+// ln(MOUNTAIN_FALL_TOP / MOUNTAIN_FALL_FOOT).
+const MOUNTAIN_FALL_K=1.5404;
+const MOUNTAIN_RAPIDS=.45;
+const MOUNTAIN_RAPIDS_PERIOD=3.2;
+// Channel cells a turn of the external angle (a multiple of 4), and the
+// plates of crust across a cell and along a second of travel.
+const MOUNTAIN_CHANNELS=48;
+const MOUNTAIN_PLATES_ACROSS=4;
+const MOUNTAIN_RIVULETS=192;
+const MOUNTAIN_PLATES_ALONG=1.3;
+// The rate lava falls at height h, and the time it takes from the rim
+// there; hs is the slopes' top, where G is 0.
+fn mountain_fall_rate(h:f32,hs:f32)->f32 {return MOUNTAIN_FALL_FOOT*exp(MOUNTAIN_FALL_K*clamp(h/hs,0.0,1.0));}
+fn mountain_fall_time(h:f32,hs:f32)->f32 {
+    let x=clamp(h/hs,0.0,1.0);
+    return hs/(MOUNTAIN_FALL_K*MOUNTAIN_FALL_FOOT)*(exp(-MOUNTAIN_FALL_K*x)-exp(-MOUNTAIN_FALL_K));
+}
+fn mountain_slope(c:MountainCamera,m:vec2f,sd:MountainDetail,v:vec3f,fp_map:f32,blur:vec2f,light:vec2f,full:bool)->vec3f {
+    let t=field_seconds();
+    let h=sd.height;
+    let hs=max(2.0*(mandel_base()-128.0),1.0);
+    let orig=mountain_original(m,full);
+    let heat=orig.x;
+    let speck=orig.y;
+    let n0=normalize(vec3f(-MOUNTAIN_K*sd.grad,1.0));
+    let fpt=mountain_footprint(n0,v,fp_map,blur);
+    let steep=length(sd.grad);
+    let up=sd.grad/max(steep,1e-6);
+    let level=vec2f(-up.y,up.x);
+    // The channel cells and the height the footprint spans.
+    let nch=f32(MOUNTAIN_CHANNELS);
+    let f_x=nch*sd.rate/(2.0*PI)*mountain_spans(fpt,level);
+    let f_h=steep*mountain_spans(fpt,up);
+    // The channel in this cell of the angle, if any.
+    let wander=mountain_gnoise(vec2f(sd.angle*nch*.25,sd.g*7.0),41u,MOUNTAIN_CHANNELS/4);
+    let x=sd.angle*nch+.45*wander;
+    let cell=floor(x);
+    let ci=((i32(cell)%MOUNTAIN_CHANNELS)+MOUNTAIN_CHANNELS)%MOUNTAIN_CHANNELS;
+    let hc=mountain_hash2(vec2i(ci,0),43u);
+    let hd=mountain_hash2(vec2i(ci,1),43u);
+    let he=mountain_hash2(vec2i(ci,2),43u);
+    let live=step(.35,hd.x);
+    // Wider channels carry more lava and stay hot for longer.
+    let vigour=.45+.55*hc.y;
+    // Near the rim, once the lake spills, the channels widen into the
+    // falls that feed them; and each narrows and widens a little down its
+    // length.
+    let spill=mountain_spill();
+    let near_rim=clamp((h-hs+30.0)/27.0,0.0,1.0);
+    let along=mountain_gnoise(vec2f(f32(ci)*1.7,sd.g*20.0),42u,0);
+    let width=mix(.07,.32,hc.y*hc.y)*(.8+.4*along);
+    let half=mix(width,max(width,.3),near_rim*near_rim*spill*live);
+    // Its banks are ragged.
+    let rag_fade=clamp(1.5-f_x*5.0,0.0,1.0);
+    var rag=0.0;
+    if rag_fade>0.0 {rag=.12*rag_fade*mountain_gnoise(vec2f(x*5.0,sd.g*60.0),39u,MOUNTAIN_CHANNELS*5);}
+    let across=x-cell-(.4+.2*hc.x)+rag*width;
+    let w=clamp(across/half,-1.0,1.0);
+    let ww=w*w;
+    let many=smoothstep(.4,1.2,f_x);
+    let inside=mix(mountain_band(abs(across),half,f_x),.25,many);
+    // The flow's time from the rim, with the rapids, and how fast it runs
+    // there against the mean.
+    let speed=.8+.45*hd.y;
+    let tau=mountain_fall_time(h,hs);
+    let kr=2.0*PI/(MOUNTAIN_RAPIDS_PERIOD*(.7+.6*he.x));
+    let pr=kr*tau+6.2832*he.y;
+    let lambda=1.0/(1.0+MOUNTAIN_RAPIDS*cos(pr));
+    let age=(tau+MOUNTAIN_RAPIDS/kr*sin(pr))/speed;
+    let f_age=f_h/(mountain_fall_rate(h,hs)*lambda*speed);
+    // The lava's front after the lake spills: below it the channel still
+    // holds older, crusted lava.
+    let fed=live*smoothstep(-.06,.06,t-mountain_spill_time()-age);
+    // Lower down, stretches of a channel roof over into tubes, the lava
+    // running on unseen beneath a glowing crust.
+    let tube=smoothstep(.25,.55,-along)*smoothstep(50.0,110.0,hs-h);
+    // Plates of crust, carried as a raft down the channel's middle.
+    let pa=f32(MOUNTAIN_PLATES_ACROSS);
+    let qp=vec2f(x*pa,(age-t)*MOUNTAIN_PLATES_ALONG);
+    // Past a plate a pixel each way, only the cracks' mean shows.
+    var pl=MountainPlate(1.0,.5,vec2f(0),vec2f(1,0));
+    var fq=2.0;
+    if min(f_x*pa,f_age*MOUNTAIN_PLATES_ALONG)<1.1 && many<1.0 {
+        pl=mountain_plates(qp,45u,MOUNTAIN_CHANNELS*MOUNTAIN_PLATES_ACROSS);
+        fq=length(pl.across*vec2f(f_x*pa,f_age*MOUNTAIN_PLATES_ALONG));
+    }
+    // Clots of hotter lava ride the flow, holding the crust open.
+    let cf=clamp(1.5-f_x*2.1,0.0,1.0)*clamp(1.5-f_age*2.5,0.0,1.0);
+    let clot=cf*mountain_gnoise(vec2f(x*3.0,(age-t)*1.8),48u,MOUNTAIN_CHANNELS*3);
+    let crust=smoothstep(.1,1.3,age*(1.0+2.5*ww)/vigour)*(1.0-.55*smoothstep(.2,.9,clot));
+    let stretch=max(lambda-1.0,0.0);
+    let squeeze=smoothstep(1.0,.72,lambda);
+    // Rafts of crust ride the channel's middle with open lava between them;
+    // towards the levees the crust closes up.
+    let gap=.07*vigour*(1.0-ww)*smoothstep(.3,1.5,age);
+    let crack=mountain_cracks(pl.edge,.02+.25*exp(-age/.6)+.07*stretch+gap,fq);
+    // Streaks in the open lava, drawn out by the flow and sheared, faster
+    // in the middle than towards the levees, most where it runs fast.
+    let shear=1.0+.8*ww*exp(-age/4.0);
+    let sf=clamp(1.5-f_x*8.0,0.0,1.0)*clamp(1.5-f_age*shear*.9,0.0,1.0);
+    var streak=0.0;
+    if sf>0.0 {streak=sf*mountain_gnoise(vec2f(x*10.0,(age*shear-t)*.7),47u,MOUNTAIN_CHANNELS*10);}
+    // Ropes where the crust buckles as the flow slows, bowed downstream.
+    let rf=clamp(1.5-f_age*3.5*2.0,0.0,1.0)*squeeze*crust;
+    let rope=rf*sin(6.2832*(3.5*(age-t)+.7*ww));
+    // Temperatures: the lava cools as it travels and towards the levees.
+    let t_core=1170.0-(22.0+14.0*(1.0-vigour))*pow(max(age,0.0),.8)-50.0*ww;
+    // Surges along each channel, the same across it, so that the motion's
+    // blur across the screen keeps them: the open lava's thin skin, torn
+    // into streaks, comes and goes with them.
+    let surge=clamp(1.5-f_age*1.6,0.0,1.0)*mountain_gnoise(vec2f(f32(ci)*7.31+.5,(age-t)*1.6),49u,0);
+    let skin_open=smoothstep(0.0,.5,.6*streak+surge);
+    let t_open=t_core-25.0-170.0*skin_open+30.0*clot;
+    let t_skin=mix(t_core-120.0,470.0+60.0*heat,smoothstep(.2,2.2,age));
+    let t_crack=t_core-30.0-(20.0*age+50.0*squeeze)*(1.0-3.0*gap);
+    var e_ch=mix(mountain_glow(t_skin),mountain_glow(t_crack),crack);
+    e_ch=mix(mountain_glow(t_open),e_ch,crust);
+    // The levees: stiff, cooled crust.
+    let levee=smoothstep(.72,.98,abs(w))*(1.0-many);
+    e_ch=mix(e_ch,mountain_glow(560.0+80.0*(1.0-crust)),levee);
+    // How near a channel the point is, for the old crust's glow.
+    let near_any=live*exp(-max(abs(across)-half,0.0)*6.0);
+    // Unfed channels hold older lava, crusted, with a few glowing cracks.
+    let e_old_ch=mix(mountain_glow(520.0),mountain_glow(820.0),crack*.5);
+    // Old flows between the channels: dark crust, with cracks still
+    // glowing where the original is hot and flecks where its speckle is
+    // bright; on the steep walls round the set, where the map's texture
+    // would stretch, ridges down the fall lines.
+    let wall=smoothstep(.55,.9,1.0-n0.z);
+    let turns=sd.rate*fp_map/max(abs(dot(n0,v)),.01)/(2.0*PI);
+    var cracked=0.0;
+    var bump=vec2f(0);
+    let fine_fade=clamp(1.6-fp_map*2.0/max(abs(dot(n0,v)),.01),0.0,1.0);
+    if full {
+        let fade=fine_fade*smoothstep(0.0,20.0,h);
+        if wall<.98 {
+            let wn=mountain_fbm(m*.25,13u,2,0)-.5;
+            let cells=mountain_cells(m*.7+vec2f(wn,-wn)*1.6,0.0,31u);
+            let opened=smoothstep(.55,.72,mountain_fbm(m*.18+3.0,14u,2,0)+.25*heat+.3*near_any);
+            cracked=(1.0-smoothstep(0.0,.02+.03*cells.id+fp_map*.5,cells.edge))*opened*fade*(1.0-wall);
+            bump=mountain_ridged_d(m*.8,12u,2,0).yz*.8*7.0*fade*(1.0-wall);
+        }
+        if wall>.02 {
+            let q=vec2f(sd.angle*512.0,h*.18);
+            let wf=fade*clamp(1.5-turns*512.0*2.5,0.0,1.0);
+            bump+=level*mountain_ridged_d(q,15u,2,512).y*3.0*wf*wall;
+        }
+    }
+    let fleck=smoothstep(.62,.85,speck)*(1.0-wall)*smoothstep(10.0,60.0,h);
+    // Until the lake spills, the rim is cooled crust.
+    let rim_dark=1.0-near_rim*(1.0-spill)*.85;
+    var e_old=mountain_glow(430.0+50.0*heat);
+    e_old=mix(e_old,mountain_glow(720.0+100.0*heat+80.0*near_any),cracked);
+    e_old=mix(e_old,mountain_glow(720.0),fleck*.5);
+    let lava=inside*fed*(1.0-tube);
+    let roof=mix(mountain_glow(600.0),mountain_glow(880.0),crack*.6);
+    var col=mix(e_old,e_ch,lava)+inside*(live-fed)*e_old_ch+inside*fed*tube*roof;
+    // Rivulets between the channels, MOUNTAIN_RIVULETS a turn: thinner and
+    // quicker to crust over, with clots of hotter lava running down them.
+    let nr=f32(MOUNTAIN_RIVULETS);
+    let xr=sd.angle*nr+1.8*wander;
+    let cr=floor(xr);
+    let ri=((i32(cr)%MOUNTAIN_RIVULETS)+MOUNTAIN_RIVULETS)%MOUNTAIN_RIVULETS;
+    let hr=mountain_hash2(vec2i(ri,3),44u);
+    let f_r=f_x*nr/nch;
+    let in_r=step(.62,hr.x)*mix(mountain_band(abs(xr-cr-.3-.4*fract(7.0*hr.x)),mix(.07,.18,hr.y),f_r),.12,smoothstep(.4,1.2,f_r));
+    let age_r=tau/(.6+.5*hr.y);
+    let fed_r=smoothstep(-.06,.06,t-mountain_spill_time()-age_r)*(1.0-inside*live);
+    if in_r*fed_r>0.0 {
+        let clots=mountain_gnoise(vec2f(f32(ri)*3.1,(age_r-t)*1.4),46u,0)*clamp(1.5-f_age*1.4,0.0,1.0);
+        let t_r=1140.0-70.0*pow(age_r,.8);
+        let skin_r=smoothstep(-.15,.45,-clots);
+        let crust_r=smoothstep(.3,2.5,age_r)*skin_r;
+        var e_r=mix(mountain_glow(t_r+30.0*clots),mountain_glow(t_r-190.0),.85*skin_r);
+        e_r=mix(e_r,mountain_glow(500.0)+.2*mountain_glow(t_r-60.0),crust_r);
+        col=mix(col,e_r,in_r*fed_r);
+    }
+    col*=rim_dark*smoothstep(0.0,6.0,h);
+    // The crust's form, lit dimly by the key and by the lava's glow round
+    // it, with the relief's occlusion: dark glassy basalt.
+    let near=fed*near_any;
+    let ropes=up*steep*.35*rope*inside*fed;
+    let n=normalize(vec3f(-MOUNTAIN_K*(sd.grad+bump+ropes),1.0));
+    let l=mountain_key_dir(c);
+    let albedo=vec3f(.045,.038,.035)*(.55+.45*smoothstep(0.0,120.0,h));
+    let nl=max(dot(n,l),0.0);
+    let hot=clamp(lava*(1.0-crust*(1.0-crack)),0.0,1.0);
+    let glow_light=mountain_glow(1080.0)*(.015+.12*near+.08*near_rim*spill)*light.x;
+    col+=albedo*(glow_light+MOUNTAIN_KEY*(nl*1.1*light.y+.06*light.x))*(1.0-hot);
+    col+=MOUNTAIN_KEY*mountain_ggx(n,v,l,.55)*.04*light.y*(1.0-hot);
+    return col;
 }
 // The light leaving a surface sample towards the viewer: linear HDR. `v` is
 // towards the viewer in world space (map x, map y and height as MOUNTAIN_K
-// map units), fp_map the size in map units over which the sample's detail
-// is to be smooth (a pixel, or more under motion), `light` its ambient
-// occlusion and key shadow, `masks` its mountain_masks. `full` for the full
-// detail (the middle of the exposure); the exposure's other samples, which
-// motion smooths, take fewer octaves.
-fn mountain_shade(c:MountainCamera,m:vec2f,sd:MountainDetail,v:vec3f,fp_map:f32,light:vec2f,masks:vec2f,full:bool)->vec3f {
-    let t=field_seconds();
-    let top=mountain_top();
-    let l=mountain_key_dir(c);
-    let orig=mountain_original(m,true);
-    let heat=orig.x;
-    let speck=orig.y;
-    let fine_fade=clamp(1.6-fp_map*2.0,0.0,1.0);
-    let oct=select(1,0,full);
-    if sd.inside {
-        // The lake: molten, with dark plates of crust drifting and cracking
-        // on it (authored). Near the rim, where the relief falls below the
-        // plateau, it wells up and stays molten.
-        let r=relief_height(m);
-        let crusting=mountain_crusting();
-        let flow=masks.y;
-        let warp=vec2f(mountain_fbm(m*.04+vec2f(.01*t,1.0),3u,2-oct,0),mountain_fbm(m*.04+vec2f(5.2,-.008*t),4u,2-oct,0))-.5;
-        let q=m*.2+warp*2.5;
-        let cell=mountain_cells(q,t*.6,21u);
-        let crack=1.0-smoothstep(0.0,.07+fp_map*.2,cell.edge);
-        var crack_fine=0.0;
-        if full {
-            let small=mountain_cells(q*2.7+3.1,t*.9,22u);
-            crack_fine=(1.0-smoothstep(0.0,.06+fp_map*.55,small.edge))*fine_fade;
-        }
-        let rim=smoothstep(top-.2,top-10.0,r);
-        // Plates where the slow flow gathers them; open lava elsewhere.
-        let gather=smoothstep(.40,.62,flow+.22*(cell.id-.5)+.12*crusting);
-        let skin=gather*crusting*(1.0-rim)*(1.0-crack);
-        let molten=.70+.22*mountain_fbm(m*.5-vec2f(.04*t,0.0),6u,2-oct,0)+.08*rim;
-        var col=mountain_lava(molten)*(2.2+3.0*molten*molten+2.0*rim);
-        let plate=vec3f(.045,.022,.012)+mountain_lava(.40)*(.18+.9*crack_fine);
-        col=mix(col,plate,skin);
-        col+=mountain_lava(.92)*7.0*crack*gather*crusting*(1.0-rim);
-        // The plates are slightly domed, and glossy: the key's highlight.
-        let dome=(q-cell.centre)*skin*.5;
-        let nb=normalize(vec3f(-dome,1.0));
-        let fresnel=.04+.96*pow(1.0-max(dot(nb,v),0.0),5.0);
-        col+=MOUNTAIN_KEY*mountain_ggx(nb,v,l,.3)*fresnel*1.2*skin;
-        return col;
-    }
-    // The slopes: dark crust, lit from within. Lava runs down in narrow
-    // rivers along the fall lines (the external angle), flecks where the
-    // original's speckle is bright, and glows in the crust's cracks; it is
-    // hottest near the rim, where it spills from the lake (authored).
-    let h=sd.height;
-    let n0=normalize(vec3f(-MOUNTAIN_K*sd.grad,1.0));
-    // The pixel's footprint on the surface, longer where the view grazes it
-    // (on the silhouette the view runs along the fall lines, and the
-    // angle's patterns crowd into a pixel).
-    let fp_s=fp_map/max(abs(dot(n0,v)),.01);
-    // The original's colour is in the map, which stretches down steep
-    // slopes into streaks: there the heat holds a middling value.
-    let stretch=smoothstep(.3,.8,1.0-n0.z);
-    let heat_s=mix(heat,.42,stretch);
-    // Turns of the angle a pixel spans: rivers finer than a pixel fade out.
-    let turns=sd.rate*fp_s/(2.0*PI);
-    let along=(top-h)-t*5.0;
-    let fade1=clamp(1.5-turns*128.0*2.5,0.0,1.0);
-    let fade2=clamp(1.5-turns*384.0*2.5,0.0,1.0);
-    let river_n=mountain_fbm(vec2f(sd.angle*128.0,along*.022),7u,3-oct,128);
-    let river=mix(.12,smoothstep(.84,.97,1.0-abs(2.0*river_n-1.0)),fade1);
-    let flowing=masks.x;
-    var streak=.5;
-    if fade2>0.0 {streak=mix(.5,mountain_fbm(vec2f(sd.angle*384.0+3.0,along*.07),8u,2-oct,384),fade2);}
-    let fine_fade_s=clamp(1.6-fp_s*2.0,0.0,1.0);
-    var fine=.5;
-    if full {fine=mix(.5,mountain_fbm(m*1.9,3u,3,0),fine_fade_s);}
-    // On the steep walls round the set the map's speckle stretches; the
-    // flecks there follow the angle.
-    let wall=smoothstep(.55,.9,1.0-n0.z);
-    let fleck=smoothstep(.56,.76,.62*mix(speck,streak,stretch)+.38*streak+.22*(fine-.5));
-    // The crust's texture: in the map on the slopes, and on the steep walls
-    // round the set in the angle and height, where the map's would stretch.
-    var cracked=0.0;
-    var bump=vec2f(0);
-    if full {
-        let fade=fine_fade_s*smoothstep(0.0,20.0,h);
-        if wall<.98 {
-            let w=mountain_fbm(m*.25,13u,2,0)-.5;
-            let cells=mountain_cells(m*.7+vec2f(w,-w)*1.6,0.0,31u);
-            let open=smoothstep(.45,.62,mountain_fbm(m*.18+3.0,14u,2,0)+.3*heat_s);
-            cracked=(1.0-smoothstep(0.0,.03+.04*cells.id+fp_map*.5,cells.edge))*open*fade*(1.0-wall);
-            let e=.07;
-            let b0=mountain_ridged(m*.8,12u,2,0);
-            let bx=mountain_ridged((m+vec2f(e,0.0))*.8,12u,2,0);
-            let by=mountain_ridged((m+vec2f(0.0,e))*.8,12u,2,0);
-            bump=vec2f(bx-b0,by-b0)/e*7.0*fade*(1.0-wall);
-        }
-        if wall>.02 {
-            // Ridges down the walls: the angle across, the height along.
-            // Across the wall is along G's level line, where the height
-            // holds, so the ridges tilt the normal sideways.
-            let q=vec2f(sd.angle*512.0,h*.18);
-            let wf=fade*clamp(1.5-turns*512.0*2.5,0.0,1.0);
-            let r0=mountain_ridged(q,15u,2,512);
-            let r1=mountain_ridged(q+vec2f(.15,0.0),15u,2,512);
-            let side=normalize(vec2f(-sd.grad.y,sd.grad.x)+1e-6);
-            bump+=side*(r1-r0)/.15*3.0*wf*wall;
-        }
-    }
-    let n=normalize(vec3f(-MOUNTAIN_K*(sd.grad+bump),1.0));
-    let near_rim=smoothstep(170.0,238.0,h);
-    // Until the lake spills, the rim is cooled crust.
-    let rim_dark=1.0-smoothstep(200.0,236.0,h)*(1.0-mountain_spill())*.85;
-    let cool=.35+.65*smoothstep(10.0,215.0,h);
-    let foot=smoothstep(1.0,30.0,h);
-    var lava=max(river*flowing*(.72+.28*heat_s),fleck*(.40+.45*heat_s));
-    lava=max(lava,cracked*(.30+.35*heat_s)*smoothstep(.2,.7,heat_s+.4*flowing));
-    // Cascades over the rim: narrow falls along the angle, fed by the lake.
-    let spill=mountain_spill()*near_rim*near_rim;
-    if spill>.01 {
-        let fall_n=mountain_fbm(vec2f(sd.angle*256.0+7.0,along*.05),16u,2-oct,256);
-        let fall=mix(.15,smoothstep(.78,.95,1.0-abs(2.0*fall_n-1.0)),clamp(1.5-turns*256.0*2.5,0.0,1.0));
-        lava=max(lava,fall*(.65+.3*flowing)*spill);
-    }
-    // Low down, where the flows have cooled, a few seams still glow.
-    let seam_n=mountain_fbm(vec2f(sd.angle*64.0,along*.015+9.0),17u,2-oct,64);
-    let seam_mask=smoothstep(.55,.75,mountain_fbm(vec2f(sd.angle*16.0,along*.006+2.0),18u,1,16));
-    let seams=smoothstep(.95,.99,1.0-abs(2.0*seam_n-1.0))*seam_mask*(1.0-smoothstep(50.0,110.0,h))*fade1;
-    lava=max(lava,seams*(.30+.25*heat_s));
-    lava*=cool*foot*rim_dark;
-    // Hot rock between the flows: a dull red, more where the original is
-    // hot.
-    let dull=(.08+.30*heat_s*heat_s)*(.5+.5*flowing)*cool*foot;
-    var col=mountain_lava(.30+.62*lava)*(dull+.4*lava+2.6*lava*lava+5.5*pow(lava,4.0));
-    // The crust: dark basalt lit by the lava round it, with the relief's
-    // occlusion, and dimly by the key.
-    let albedo=vec3f(.045,.038,.035)*(.55+.45*smoothstep(0.0,120.0,h));
-    let nl=max(dot(n,l),0.0);
-    let glow_light=mountain_lava(.5)*(.15+1.4*flowing*heat_s+1.2*near_rim)*cool*foot*light.x;
-    col+=albedo*(glow_light+MOUNTAIN_KEY*(nl*1.1*light.y+.06*light.x))*(1.0-lava);
-    col+=MOUNTAIN_KEY*mountain_ggx(n,v,l,.65)*.03*light.y*(1.0-lava);
-    return col;
+// map units), fp_map a pixel's size in map units at the sample's depth,
+// `blur` how far its footprint is widened along the exposure's motion (x
+// across the screen, y up it), `light` its ambient occlusion and key
+// shadow. `full` for the full detail (the middle of the exposure); the
+// exposure's other samples leave out the old crust's fine texture.
+fn mountain_shade(c:MountainCamera,m:vec2f,sd:MountainDetail,v:vec3f,fp_map:f32,blur:vec2f,light:vec2f,full:bool)->vec3f {
+    if sd.inside {return mountain_lake(c,m,v,fp_map,blur,full);}
+    return mountain_slope(c,m,sd,v,fp_map,blur,light,full);
 }
 
 // ---- The layer -------------------------------------------------------------------
@@ -790,15 +1052,26 @@ fn mountain_view(c:MountainCamera,s:vec2f,z:f32)->vec3f {
     let dh=-1024.0*s.y*c.q*256.0/(max(z*z,1.0)*pr*pr);
     return -normalize(vec3f(dir,MOUNTAIN_K*dh));
 }
-// The prepass at a source point: its nearest texel's hint, coverage margin
-// (its pixels) and the relief's hit depth, with the margin interpolated
-// between texels.
+// The prepass at a source point: its nearest texel's hint, the coverage
+// margin (its pixels, interpolated between texels) and the relief's hit
+// depth, interpolated too where the four texels round the point see one
+// surface (within 3% in depth), so that the exposure's samples land smoothly
+// on it rather than in half-resolution steps.
 fn mountain_prepass_texel(s:vec2f)->vec4f {
     let uv=mountain_uv(s);
     let size=vec2i(textureDimensions(prepass_mountain));
-    let i=clamp(vec2i(floor(uv*vec2f(size))),vec2i(0),size-1);
-    var t=textureLoad(prepass_mountain,i,0);
-    t.y=clamp(textureSampleLevel(prepass_mountain,linear,uv,0.0).y,-4.0,4.0);
+    let f=uv*vec2f(size)-.5;
+    let i=vec2i(floor(f));
+    let w=f-floor(f);
+    let a=textureLoad(prepass_mountain,clamp(i,vec2i(0),size-1),0);
+    let b=textureLoad(prepass_mountain,clamp(i+vec2i(1,0),vec2i(0),size-1),0);
+    let c=textureLoad(prepass_mountain,clamp(i+vec2i(0,1),vec2i(0),size-1),0);
+    let d=textureLoad(prepass_mountain,clamp(i+vec2i(1,1),vec2i(0),size-1),0);
+    var t=select(select(a,b,w.x>=.5),select(c,d,w.x>=.5),w.y>=.5);
+    let lo=min(min(a.z,b.z),min(c.z,d.z));
+    let hi=max(max(a.z,b.z),max(c.z,d.z));
+    if hi<MOUNTAIN_NONE && hi-lo<.03*lo {t.z=mix(mix(a.z,b.z,w.x),mix(c.z,d.z,w.x),w.y);}
+    t.y=clamp(mix(mix(a.y,b.y,w.x),mix(c.y,d.y,w.x),w.y),-4.0,4.0);
     return t;
 }
 fn mountain_layer(px:FieldPixel)->FieldLayer {
@@ -825,18 +1098,20 @@ fn mountain_layer(px:FieldPixel)->FieldLayer {
     // of the exposure sees the surface.
     let n0=normalize(vec3f(-MOUNTAIN_K*relief_at(h0.map).yz,1.0));
     let light=mountain_lighting(mid,h0.map,h0.height,n0);
-    // Detail is smoothed over a pixel, and under motion over what the
-    // exposure sweeps between its samples.
+    // Detail is smoothed over a pixel, and along the motion over what the
+    // exposure sweeps between its samples (across the screen and up it), so
+    // that the samples blend into a streak along the motion while the
+    // detail across it stays sharp.
     let fp_map=h0.z/256.0*fp/COLUMN;
-    let blur_map=fp_map*max(1.0,.5*motion/f32(count));
+    let spacing=vec2f(sweep.x*COLUMN,sweep.y)/(fp*f32(count));
+    let blur=max(vec2f(1.0),abs(spacing));
     // The middle of the exposure, marched and shaded at full detail.
     let a0=clamp(.5+h0.best,0.0,1.0);
     let d0=mountain_detail_at(h0.map);
-    let masks=mountain_masks(h0.map,d0);
     var sum=vec3f(0);
     var cover=0.0;
     if a0>0.0 {
-        sum=mountain_shade(mid,h0.map,d0,mountain_view(mid,s,h0.z),blur_map,light,masks,true)*a0;
+        sum=mountain_shade(mid,h0.map,d0,mountain_view(mid,s,h0.z),fp_map,blur,light,true)*a0;
         cover=a0;
     }
     // The rest of the exposure: what the middle's rays saw where this
@@ -858,10 +1133,7 @@ fn mountain_layer(px:FieldPixel)->FieldLayer {
         if a<=0.0 || pre.z>=MOUNTAIN_NONE {continue;}
         let m=mid.map+mountain_dir(mid,back.x)*pre.z;
         let d=mountain_detail_near(d0,h0.map,m);
-        // A sample on the other side of the lake's edge has its own masks.
-        var mk=masks;
-        if d.inside!=d0.inside {mk=mountain_masks(m,d);}
-        sum+=mountain_shade(mid,m,d,mountain_view(mid,back,pre.z),blur_map,light,mk,false)*a;
+        sum+=mountain_shade(mid,m,d,mountain_view(mid,back,pre.z),fp_map,blur,light,false)*a;
         cover+=a;
     }
     let n=f32(count);
