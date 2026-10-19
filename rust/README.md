@@ -906,9 +906,10 @@ driver. Seeking and memory, for `Volume`:
 The renderer asks the GPU for its full number of storage buffers per
 shader stage, as the smoke's solver binds more than wgpu's default of 8.
 
-The modern mountain is a molten Mandelbrot: dark cooled crust with lava
-running down its slopes in channels and cracks, and on the plateau, the set
-itself, a lava lake with plates of crust drifting and cracking on it.
+The modern mountain is a molten Mandelbrot: a convecting lava lake on the
+plateau, the set itself, spilling over its rim in bright falls that run down
+the slopes in channels and crust over as they go, on a mountain of dark
+cooled crust.
 
 - Derived: the motion and the shape. The level, the camera, the flat to
   perspective morph of the projection, the orbit and the sink come through
@@ -917,28 +918,82 @@ itself, a lava lake with plates of crust drifting and cracking on it.
   rates: a terrain step and a level a frame while it rises, q eight times
   the level). The surface is the fitted one: the baked relief, and near the
   set the fitted formula, base + slope sqrt(G(c)), evaluated per pixel.
+  The lava's paths are the fitted slopes' fall lines.
 - Interpretation: lighting the projection as 3D, a height unit as 0.29 map
   units (at full perspective a height unit shows 62 / z rows and a map unit
   across 213 / z), and reading MAP.U's speckle back out of `prepare`'s
   colours as (4 colour - height) / 3. The level's rate while it sinks is
   estimated, as its mean fall since the sink began.
-- Authored: the materials, the lighting, the detail method, the exposure and
-  the light handed to the frame. The lava's colours are the original's
-  terrain ramp (the terrain palette's entries 128 to 191, from MAP.PAL) as
-  HDR emission, into the shared bloom and tonemap; it is the main light,
-  with a dim cool key from behind the camera, shadowed and occluded by the
-  relief. Lava runs down in narrow rivers drawn in the set's external angle,
-  arg Phi(c) / 2 pi from the product formula for Böttcher's coordinate (its
-  first 16 terms, with principal arguments), which is constant along the
-  slopes' fall lines (the field lines of G), so the rivers run straight down
-  them and crowd into the fjords between the bulbs; flecks follow MAP.U's
-  speckle. The lake is molten as the mountain rises out of the zoom's set,
-  so that the set reads against a dark rim, and grows its crust and spills
-  over the rim in the two seconds after it has risen. The rays start at
-  depth 4 rather than the original's 64 (read from `ray`; 4 is where the
-  code's projection table starts), so that close passes show the nearer
-  slopes where the original smears the terrain at depth 64 down the columns
-  below it.
+- Authored: the lava, its flow and the lake's convection, the crust, the
+  lighting, the detail method, the exposure and the light handed to the
+  frame. The original colours its terrain from MAP.U through MAP.PAL's fire
+  ramp and moves none of it; nothing of the lava's look or motion is from
+  it. The lava is the main light, with a dim cool key from behind the
+  camera, shadowed and occluded by the relief. The rays start at depth 4
+  rather than the original's 64 (read from `ray`; 4 is where the code's
+  projection table starts), so that close passes show the nearer slopes
+  where the original smears the terrain at depth 64 down the columns below
+  it.
+
+The lava is drawn as temperatures. Its light, `mountain_glow`, follows a
+blackbody-like ramp: deep red about 700 °C, orange about 950 and
+yellow-white about 1150, where it is 12 in linear HDR, far brighter than the
+frame or the smoke, into the shared bloom and tonemap. Its brightness
+follows Wien's approximation, exp(-B / T), with B about 0.6 of the physical
+value at 600 nm so that dull red to white fits the tonemap, and its green
+over its red rises faster than Planck's law gives, standing for a camera's
+saturation. The lava leaves the lake at about 1170 °C and cools as it
+travels; its skin cools within a few seconds to dark glassy crust, through
+which cracks show the hot lava below.
+
+The slopes' lava runs in channels drawn in the set's external angle, arg
+Phi(c) / 2 pi from the product formula for Böttcher's coordinate (its first
+16 terms, with principal arguments), which is constant along the fall lines
+(the field lines of G): 48 cells a turn, each with a channel of its own
+width and speed or none, meandering a little, and between them 192 thinner
+rivulets a turn, quicker to crust over. The lava falls at a rate that
+depends on the height alone, 9 height units a second at the foot rising
+exponentially to 42 at the rim, as the fitted slopes steepen towards the set
+(their median steepness about triples from the foot to the rim, sampled on
+the imported data's fit). So the time it has taken from the rim is in
+closed form, and anything drawn in that time less the clock moves exactly
+with the flow, down the fall lines, without stretching or repeating. On the
+steep walls under the rim it runs young, fast and open, in bright streaks;
+on the gentler ground below it slows and crusts over. Rapids speed it up and
+slow it by 45% every few seconds of travel: the plates of crust it carries
+as rafts down a channel's middle tear apart, opening glowing cracks, where
+it speeds up, and buckle into ropes bowed downstream where it slows. A
+channel's middle is its hottest and fastest; towards its stiff, cooled
+levees the crust closes up and the open lava is sheared into streaks.
+Surges come and go along each channel, lower down stretches roof over into
+tubes, and between the channels the old flows' crust keeps a few glowing
+cracks near the active channels and where the original's colour is hot.
+The lake spills a quarter of a second before the mountain has risen, and
+its lava front runs down each channel at that channel's own speed, so the
+slopes light up from the rim down; below the front the channels hold older,
+crusted lava.
+
+The lake convects: hot lava wells up along a wavering seam down the set's
+real axis, through the main cardioid and the period-2 bulb, and spreads away
+on either side at 4 map units a second, so its plates of crust are as old as
+their distance from the seam: thin and glowing, with wide cracks, by the
+seam, dark and thick towards the rim, where they founder in a bright margin.
+Cracks pulse open and shut, and now and then gas bursts through, throwing
+open a disc of bright lava that crusts over within a second. The lake is
+molten as the mountain rises out of the zoom's set, so that the set reads
+against a dark rim, and crusts over in the second after it has risen.
+
+Everything the lava does is a function of the clip's time alone
+(`field_seconds()`), so seeking, captures and video agree. Seen at the
+orbit's distance, features on the falls under the rim travel up to about a
+tenth of the screen's height a second, half that halfway down and a fifth of
+it at the foot, and the lake's plates about their own width a second. Each pattern fades to its mean where it would be
+finer than a pixel, measured along its own axes across the pixel's
+footprint on the surface, which is longer where the view grazes it; under
+the exposure's motion the footprint is widened along the motion only, so
+that the exposure's samples blend into a streak across the screen while
+detail along the flow, such as the crust's edges and the surges, stays
+sharp.
 
 Near the set the detail is computed on demand rather than taken from the
 bake. Rays march the relief, skipping space by its coarse cells, and in a
@@ -960,17 +1015,23 @@ relief. A half-resolution prepass marches every ray at the middle of the
 exposure and keeps where it first came within a pixel and a half of the
 surface or entered the band, and its hit and coverage; each full-resolution
 pixel marches on from there. The exposure is 0.7 of a 70 Hz frame, as part
-6's rings use: where the surface moves across the screen in it, up to six
+6's rings use: where the surface moves across the screen in it, up to four
 samples are taken along the motion, each what the prepass saw where its ray
-points at the middle of the exposure, shaded with the middle's surface
-carried over to first order (G, and the angle by Cauchy-Riemann).
+points at the middle of the exposure (its depth interpolated where the
+texels round it see one surface), shaded with the middle's surface carried
+over to first order (G, and the angle by Cauchy-Riemann) and its detail
+smoothed along the motion over the samples' spacing.
 
-At 2560 × 1440 on an Apple M5 Max the whole part-5 frame takes 5.1 to 6.0 ms
-during the terrain with the frame and window stand-ins (at 98.2, 105, 115 and
-122.5 seconds, medians of `--bench 150`, the best of five interleaved runs),
-against 1.1 ms with no mountain and 2.9 to 3.1 ms with the plain stand-in it
-replaced; at 105 seconds the prepass takes about 1.0 ms, the middle of the
-exposure 2.3 ms and the rest of the exposure 1.4 ms.
+At 2560 × 1440 on an Apple M5 Max the whole part-5 frame, with the frame, its
+smoke and the window's stand-in, takes about 10.4 to 11.8 ms during the
+terrain (at 98.2, 105, 115 and 122.5 seconds, medians of `--bench 150`, the
+best of three interleaved runs on a machine in use), within noise of the
+mountain's first version, and about 8 ms with no mountain. Before the
+frame's smoke was in, the mountain's first version took 5.1 to 6.0 ms a
+frame with the frame's and window's stand-ins; at 105 seconds its prepass
+took about 1.0 ms, the middle of the exposure 2.3 ms and the rest of the
+exposure 1.4 ms. The lava's shading costs more than that version's, and
+taking four samples across the exposure rather than six pays for it.
 
 ### Adding to part 5
 
@@ -1035,15 +1096,25 @@ light as given; until then the frame draws a stand-in:
   plateau, in front of the frame, rising and sinking with the terrain.
 
 The mountain's controls carry the lava's light for the frame and smoke to
-use: `fc.mountain_style[0]` is the centre of the lake's light as the frame
-sees it, its source x and y (320 by 200 pixels), a scene z in front of the
-frame (100, `LAYER_MOUNTAIN_Z`, with the lake 180 map units from the camera,
-nearer the viewer as it comes closer) and a spread (the lake's radius in
-source rows); `fc.mountain_style[1]` is its colour times its strength in
-linear HDR, an orange of mean radiance about 1.2, fading to 0 as the lake
-leaves the screen and 0 with no mountain, with the luminance in w. Both
-follow the camera smoothly. `fc.mountain_style[2]` is for the mountain's
-own exposure.
+use: `fc.mountain_style[0]` is the centre of the lava's light as the frame
+sees it, a little above the lake, its source x and y (320 by 200 pixels), a
+scene z in front of the frame (100, `LAYER_MOUNTAIN_Z`, with the lake 180
+map units from the camera, nearer the viewer as it comes closer) and a
+spread (the glow's radius in source rows, 36 map units across: the lake and
+the falls below its rim). `fc.mountain_style[1]` is its colour times its
+strength in linear HDR, with the luminance in w: an orange like the lava's
+about 1050 °C, as bright as the frame's stand-in for it (luminance 2.4),
+which the frame's reflections and the smoke's light and heat were tuned to.
+Of that, 40% is the slopes' and 60% the lake's, which follows how much of
+the lake the camera sees: its area on the screen, as the code projects it,
+against its area at the orbit's mean, within 0.3 to 1.25 of it. So the light
+is brighter as the camera looks down on the lake or passes close by and
+dimmer as it sees the lake nearly edge on, between about 0.6 and 1.15 of the
+stand-in's, and fades to 0 as the lake leaves the bottom of the screen; it
+is 0 with no mountain. Both follow the camera smoothly. The frame reads them
+unchanged: with them its ornaments and bevels nearest the mountain catch
+copper highlights and the smoke behind glows orange from below.
+`fc.mountain_style[2]` is for the mountain's own exposure.
 
 `px` gives the pixel in the same spaces as part 6's: `uv`, `xy` (the
 screen), `source` (the original's 320 by 200 pixels, continuing beyond the

@@ -10,9 +10,10 @@
 //!   uses to place the camera within the exposure.
 //! - Estimated: the level's rate while it sinks, as its mean fall since the
 //!   sink began (the code lowers it two thirds of a level a tracker row).
-//! - Authored: the exposure, and the lake's light handed to the frame
+//! - Authored: the exposure, and the lava's light handed to the frame
 //!   author (its place over the lake, its depth in the scene, spread,
-//!   colour and strength).
+//!   colour and strength, and how the strength follows how much of the
+//!   lake the camera sees, through the code's projection).
 use super::{AuthorInfo, FieldBlock};
 
 pub static MOUNTAIN: AuthorInfo = AuthorInfo {
@@ -51,14 +52,27 @@ const Q_TOP: f64 = 248.0;
 /// known value, not read from the data). The lake's light sits above it.
 const SET_CENTROID: [f64; 2] = [-0.2867, 0.0];
 
-/// The lake's light as the frame sees it (authored): the mean radiance of
-/// its molten surface in linear HDR, an orange like the lake's, and how far
-/// above the lake (height units) the light's centre sits.
-const LAKE_LIGHT: [f64; 3] = [2.4, 0.95, 0.22];
+/// The lava's light as the frame sees it (authored): the glowing mountain's
+/// radiance in linear HDR, an orange like its lava's about 1050 C
+/// (field_mountain.wgsl's mountain_glow), as bright as the frame's stand-in
+/// for it (luminance 2.4), which the frame and its smoke were tuned to; and
+/// how far above the lake (height units) the light's centre sits.
+const LAVA_LIGHT: [f64; 3] = [6.0, 1.6, 0.14];
 const LAKE_LIFT: f64 = 24.0;
 
-/// The lake's radius as a light, in map units (about the main cardioid's).
+/// The lake's radius, in map units (about the main cardioid's), and the
+/// glow's: the lake and the bright falls below its rim.
 const LAKE_RADIUS: f64 = 30.0;
+const GLOW_RADIUS: f64 = 36.0;
+
+/// The lake's share of the light, which follows how much of the lake the
+/// camera sees: its area on the screen against its area at the orbit's mean
+/// (the lake 180 map units away, the camera 116 height units above it, at
+/// full perspective), within LAKE_FACING. The rest is the slopes', which
+/// always face the camera (authored).
+const LAKE_SHARE: f64 = 0.6;
+const LAKE_AREA_MEAN: f64 = 974.0;
+const LAKE_FACING: [f64; 2] = [0.3, 1.25];
 
 /// The light's depth in the scene: in front of the frame at the mountain's
 /// layer (`LAYER_MOUNTAIN_Z`, 100) when the lake is this far from the camera
@@ -68,12 +82,13 @@ const LAYER_MOUNTAIN_Z: f64 = 100.0;
 
 /// The mountain's `u.field.mountain_style` values at a clip time, given the
 /// rest of the block:
-/// - `[0]`: the lake's light as the frame sees it: its centre's source x and
-///   y (320 x 200 pixels), its scene z in front of the frame, and its
-///   spread (the lake's radius in source rows).
-/// - `[1]`: the light's colour times its strength in linear HDR, 0 with no
-///   mountain and fading as the lake leaves the screen; w the same as a
-///   luminance.
+/// - `[0]`: the lava's light as the frame sees it: its centre's source x
+///   and y (320 x 200 pixels), a little above the lake, its scene z in
+///   front of the frame, and its spread (the glow's radius in source rows,
+///   GLOW_RADIUS map units on the screen).
+/// - `[1]`: the light's colour times its strength in linear HDR, brighter
+///   the more of the lake the camera sees, 0 with no mountain and fading as
+///   the lake leaves the screen; w the same as a luminance.
 /// - `[2]`: the rates within the exposure (terrain steps, levels and the
 ///   projection's q a second) and the exposure in seconds.
 /// - `[3]`: spare.
@@ -129,9 +144,9 @@ fn rates(block: &FieldBlock) -> [f64; 3] {
     [steps, level_rate, q_rate]
 }
 
-/// The lake's light from the block's camera and projection: where a point
-/// a little above the set's centroid shows, how far it is, and how much of
-/// the lake is above the screen's bottom edge.
+/// The lava's light from the block's camera and projection: where a point
+/// a little above the set's centroid shows, how far it is, how much of the
+/// lake is above the screen's bottom edge, and how large the lake shows.
 fn lake_light(block: &FieldBlock) -> Option<([f32; 4], [f32; 4])> {
     let [re, im, scale, aspect] = block.mandel.map(f64::from);
     if scale <= 0.0 {
@@ -153,18 +168,27 @@ fn lake_light(block: &FieldBlock) -> Option<([f32; 4], [f32; 4])> {
     }
     let lateral = dot(d, right) / dot(right, right).max(1e-9);
     let q = block.mountain[1] as f64;
-    let projection = q * 256.0 / z + 512.0 - 2.0 * q;
+    let projection = |z: f64| q * 256.0 / z.max(1.0) + 512.0 - 2.0 * q;
     let top = 2.0 * (block.relief[3] as f64 - 128.0).max(0.0);
     let x = 161.0 + 256.0 * lateral / z;
-    let y = (height - top - LAKE_LIFT) * projection / 1024.0;
-    // The lake's radius on the screen: across, in columns, as rows.
-    let spread = LAKE_RADIUS * 256.0 / z * 5.0 / 6.0;
+    let y = (height - top - LAKE_LIFT) * projection(z) / 1024.0;
+    // The lake's radius on the screen across (columns, as rows), and the
+    // glow's.
+    let radius = LAKE_RADIUS * 256.0 / z * 5.0 / 6.0;
+    let spread = radius * GLOW_RADIUS / LAKE_RADIUS;
     // Shown as the lake's own row rises past the screen's bottom edge.
-    let lake = (height - top) * projection / 1024.0;
-    let shown = ((200.0 - lake) / (0.5 * spread)).clamp(0.0, 1.0);
+    let lake = (height - top) * projection(z) / 1024.0;
+    let shown = ((200.0 - lake) / (0.5 * radius)).clamp(0.0, 1.0);
     let shown = shown * shown * (3.0 - 2.0 * shown);
+    // The lake's area on the screen: its width by the rows between its far
+    // and near edges, as the code projects them.
+    let far = (height - top) * projection(z + LAKE_RADIUS) / 1024.0;
+    let near = (height - top) * projection(z - LAKE_RADIUS) / 1024.0;
+    let area = 2.0 * radius * (near - far).max(0.0);
+    let facing = (area / LAKE_AREA_MEAN).clamp(LAKE_FACING[0], LAKE_FACING[1]);
+    let strength = shown * (1.0 - LAKE_SHARE + LAKE_SHARE * facing);
     let depth = LAYER_MOUNTAIN_Z * (LAKE_DEPTH / z).clamp(0.5, 2.0);
-    let c = LAKE_LIGHT.map(|v| v * shown);
+    let c = LAVA_LIGHT.map(|v| v * strength);
     let luminance = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
     Some((
         [x as f32, y as f32, depth as f32, spread as f32],
@@ -244,5 +268,30 @@ mod tests {
         // lake is below the screen: no light.
         let low = invented(15.0, 0.0, 0.0);
         assert_eq!(lake_light(&low).unwrap().1, [0.0; 4]);
+    }
+
+    #[test]
+    fn the_light_follows_how_much_of_the_lake_shows() {
+        // At the orbit's mean the lake shows about its mean area.
+        let mean = invented(30.0, 64.0, 248.0);
+        let base = lake_light(&mean).unwrap().1[3] as f64;
+        let full = 0.2126 * LAVA_LIGHT[0] + 0.7152 * LAVA_LIGHT[1] + 0.0722 * LAVA_LIGHT[2];
+        assert!(base > 0.6 * full && base < 1.3 * full, "{base} {full}");
+        // Seen from higher up, more of the lake shows: brighter, but never
+        // past the lake's most.
+        let mut above = mean;
+        above.camera[2] += 120.0;
+        let high = lake_light(&above).unwrap().1[3] as f64;
+        assert!(high > base, "{high} {base}");
+        let most = full * (1.0 - LAKE_SHARE + LAKE_SHARE * LAKE_FACING[1]);
+        assert!(high <= most + 1e-4);
+        // Seen nearly edge on, less: dimmer, but the slopes still glow.
+        let mut level = mean;
+        level.camera[2] = 250.0;
+        let edge = lake_light(&level).unwrap().1[3] as f64;
+        assert!(
+            edge < base && edge >= full * (1.0 - LAKE_SHARE) - 1e-4,
+            "{edge}"
+        );
     }
 }
