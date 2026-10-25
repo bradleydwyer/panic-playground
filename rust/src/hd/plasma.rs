@@ -187,12 +187,15 @@ pub struct PlasmaBlock {
 /// shade_water): water reflects only 2 to 7% at this camera's angles.
 pub const WATER_MIRROR: f64 = 3.0;
 /// The live tuning (the preview's number keys): each a step of x1.25,
-/// between these steps from the default. The mirror's gain is held to 1
-/// (water as it is) to 8; the swell's height reaches 0 (a flat mirror) one
-/// step below its lowest, and the drops' rate 0 (none) likewise.
+/// between these steps (from the authored swell and rate). The mirror's
+/// gain is held to 1 (water as it is) to 8; the swell's height reaches 0 (a
+/// flat mirror) one step below its lowest, and the drops' rate 0 (none)
+/// likewise. The drops' rate stops where MAX_DROPS would cut drops short
+/// (one every 0.9 s on average).
 pub const WATER_MIRROR_RANGE: (f64, f64) = (1.0, 8.0);
-pub const WATER_STEPS: (i32, i32) = (-6, 6);
-pub const SWELL_HEIGHT_STEPS: (i32, i32) = (-10, 6);
+pub const WATER_STEPS: (i32, i32) = (-6, 12);
+pub const SWELL_HEIGHT_STEPS: (i32, i32) = (-10, 12);
+pub const DROP_STEPS: (i32, i32) = (-6, 7);
 const TUNING_STEP: f64 = 1.25;
 /// The drops (authored): how many can be on the water at once, how long
 /// each lasts (plasma_light.wgsl's DROP_LIFE), the range of the intervals
@@ -212,8 +215,10 @@ const DROP_ACROSS: (f64, f64) = (95.0, 170.0);
 const DROP_CLEAR: f64 = 15.0;
 
 /// The water's live tuning (authored), in steps of x1.25 from the
-/// defaults; all 0 by default.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// authored swell and rate. By default (chosen by eye with the keys) the
+/// swell is 6 steps higher and faster, about x3.8, and the drops 6 steps
+/// more often, one every 1.2 s on average.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WaterTuning {
     /// The mirror's gain, the swell's height, speed and size, and the
     /// drops' rate.
@@ -226,6 +231,19 @@ pub struct WaterTuning {
     /// seconds and the clock's own, so a change of speed does not move
     /// the waves.
     anchor: (f64, f64),
+}
+
+impl Default for WaterTuning {
+    fn default() -> Self {
+        Self {
+            mirror: 0,
+            height: 6,
+            speed: 6,
+            size: 0,
+            drops: 6,
+            anchor: (0.0, 0.0),
+        }
+    }
 }
 
 /// The water's tuning knobs, as the preview's number keys step them.
@@ -681,7 +699,7 @@ impl PlasmaPreview {
     }
 
     /// The water's mirror gain, the swell's height, speed and size, and the
-    /// drops' rate, as tuned (each 1 by default but the gain).
+    /// drops' rate, as tuned ([`WaterTuning`]'s defaults).
     pub fn water_mirror(&self) -> f64 {
         (WATER_MIRROR * TUNING_STEP.powi(self.water.mirror))
             .clamp(WATER_MIRROR_RANGE.0, WATER_MIRROR_RANGE.1)
@@ -700,7 +718,7 @@ impl PlasmaPreview {
         TUNING_STEP.powi(self.water.size)
     }
     pub fn drop_rate(&self) -> f64 {
-        if self.water.drops < WATER_STEPS.0 {
+        if self.water.drops < DROP_STEPS.0 {
             0.0
         } else {
             TUNING_STEP.powi(self.water.drops)
@@ -743,7 +761,7 @@ impl PlasmaPreview {
                 format!("Part 4 water: swell size x{:.2}", self.swell_size())
             }
             WaterKnob::Drops => {
-                w.drops = (w.drops + step).clamp(WATER_STEPS.0 - 1, WATER_STEPS.1);
+                w.drops = (w.drops + step).clamp(DROP_STEPS.0 - 1, DROP_STEPS.1);
                 format!("Part 4 water: {}", self.drops_label())
             }
         }

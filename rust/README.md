@@ -405,10 +405,10 @@ optical simulation. All fields are generated locally in memory.
 | N | Part 6: the new symbols in its middle, or the original's throughout |
 | D | Part 4: still water under the slab (default), or polished dark stone |
 | 1 / 2 | Part 4: the water's mirror, ×0.8 or ×1.25 (1, real water, to 8; default 3) |
-| 3 / 4 | Part 4: the swell's height, ×0.8 or ×1.25 (0, a flat mirror, to about 3.8; default 1) |
-| 5 / 6 | Part 4: the swell's speed, ×0.8 or ×1.25 (about 0.26 to 3.8; default 1) |
-| 7 / 8 | Part 4: the swell's size, ×0.8 or ×1.25 (about 0.26 to 3.8; default 1) |
-| 9 / 0 | Part 4: drops ×0.8 or ×1.25 as often (none, or one every 17 s to 1.2 s; default every 4.5 s) |
+| 3 / 4 | Part 4: the swell's height, ×0.8 or ×1.25 (0, a flat mirror, to about 15; default 3.8) |
+| 5 / 6 | Part 4: the swell's speed, ×0.8 or ×1.25 (about 0.26 to 15; default 3.8) |
+| 7 / 8 | Part 4: the swell's size, ×0.8 or ×1.25 (about 0.26 to 15; default 1) |
+| 9 / 0 | Part 4: drops ×0.8 or ×1.25 as often (none, or one every 17 s to 0.9 s; default every 1.2 s) |
 | J / K | Part 7: the beam's starting turn 16 frames shorter (faster) or longer (slower); default 128; from 237 s it shortens linearly to 32 by part 8 |
 | U / I | Part 7: the beam's tilt toward the camera, 3° less or more (0 to 90°, straight at the camera; default 51°) |
 | G / H | Part 7: the beam's starting brightness, ×0.8 or ×1.25 (0.05 to 4; default 0.25); from 237 s it rises linearly to 1 by part 8 |

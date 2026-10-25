@@ -88,8 +88,9 @@ row 210.
 - **Flicker:** over five consecutive 60 fps frames at 205 s, the water's
   frame-to-frame changes stay within the plasma's own, since it mirrors the
   plasma. Its second differences peak at 35 levels, against the plasma's 45.
-- **Drops** (their times and places authored, their rings physical): about
-  one every 3 to 6 seconds while the plasma is lit, from 2 s after it begins
+- **Drops** (their times and places authored, their rings physical): at
+  the authored rate one every 3 to 6 seconds, and by default (chosen by eye)
+  about four times as often, while the plasma is lit, from 2 s after it begins
   to light until 4 s before it is dark. The intervals and places come from
   a fixed hash of each drop's number, so seeking always shows the same
   drops. Each lands in view beside the slab, never behind it, and sets off
@@ -105,18 +106,21 @@ row 210.
   (authored), each drop lasting 4 s. Their slopes join the swell's in the
   normal. Rings finer than a few pixels are not drawn, and over
   consecutive frames they add no flicker of their own.
-- **Tuning keys** (the preview's, each step x0.8 or x1.25, all 1 by default
-  but the gain):
+- **Tuning keys** (the preview's, each step x0.8 or x1.25 against the
+  authored swell and rate; the defaults were chosen by eye with them):
   - **1/2:** the mirror's gain, from 1 (water as it is) to 8; 3 by default.
   - **3/4:** the swell's height (its slopes), down to exactly 0, a flat
-    mirror, and up to about x3.8.
-  - **5/6:** the swell's speed, about x0.26 to x3.8. The swell's clock is
-    integrated on the CPU, so a change of speed does not move the waves.
+    mirror, and up to about x15; x3.8 by default.
+  - **5/6:** the swell's speed, about x0.26 to x15; x3.8 by default. The
+    swell's clock is integrated on the CPU, so a change of speed does not
+    move the waves.
   - **7/8:** the swell's size (its wavelengths, the periods following as
-    deep water's do), about x0.26 to x3.8. Its waves re-form at the new
-    size.
-  - **9/0:** the drops' rate, down to exactly 0, none, and up to about x3.8
-    (a drop every 1.2 s on average). A change re-times the drops.
+    deep water's do), about x0.26 to x15; x1 by default. Its waves re-form
+    at the new size.
+  - **9/0:** the drops' rate, down to exactly 0, none, and up to about x4.8
+    (a drop every 0.9 s on average), where six drops at once, all the
+    shader holds, would start to cut drops short; x3.8 (a drop every 1.2 s)
+    by default. A change re-times the drops.
   - The window's title shows the current values.
 - **Left out:** the waterline is the slab's base, which is below the frame and
   hidden behind the slab. A ring of ripples from the slab was tried and left
