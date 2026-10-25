@@ -104,7 +104,7 @@ const SWIRL_SMALL=vec2f(90.0,7.0);
 // (scene z), and the shutter (70 Hz frames) its samples spread over.
 const MARCH_SAMPLES=28u;
 // The samples for the light the blocks throw out of the beam.
-const SPRAY_SAMPLES=12u;
+const SPRAY_SAMPLES=8u;
 const AIR_NEAR=-420.0;
 const AIR_FAR=240.0;
 const SHUTTER=1.0;
@@ -119,7 +119,7 @@ const SLAB=11.5;
 const PHOTON_GRID=vec2u(600u,600u);
 // Each photon's splat: a tent SPLAT cells of the grid either way, weighted
 // so a grid of them sums to one.
-const SPLAT=3.0;
+const SPLAT=4.5;
 const LANDING=110.0;
 const CAUSTIC_MAX=8.0;
 // Where the blocks gather light (the photons landing more thickly than
@@ -375,9 +375,15 @@ fn density(x:vec3f)->f32 {
     let n=textureSampleLevel(density_noise,repeat,q,0.0).r;
     return mix(THINNEST,THICKEST,smoothstep(THICKENS.x,THICKENS.y,n));
 }
-// A fixed pattern per pixel (interleaved gradient noise), so the samples
-// spread without changing from frame to frame.
-fn pattern(p:vec2f)->f32 {return fract(52.9829189*fract(dot(p,vec2f(.06711056,.00583715))));}
+// A fixed pattern per pixel (a hash), so the samples spread without
+// changing from frame to frame, and without the diagonal lines a regular
+// pattern leaves where the light varies quickly along the ray.
+fn pattern(p:vec2f)->f32 {
+    var h=u32(p.x)*1973u+u32(p.y)*9277u+26699u;
+    h=(h^(h>>16u))*0x7feb352du;
+    h=(h^(h>>15u))*0x846ca68bu;
+    return f32((h^(h>>16u))&0xffffffu)/16777216.0;
+}
 // Where the ray from the camera along d is inside the beam's cone (its
 // edge's outer bound), between t0 and t1, or (1, 0). The cone's apex is
 // behind the lamp so its radius there is the aperture's.
@@ -597,6 +603,16 @@ fn pass_through(s:u32,k:f32,l:vec3f,d:vec3f,eta:f32)->Passage {
 }
 
 // ---- The photons -----------------------------------------------------------------------
+// Photon cell's place on the map: within its cell at a fixed place of its
+// own (the same every frame, so nothing flickers), which breaks up the
+// grid's regular pattern where the photons gather.
+fn photon_home(cell:u32)->vec2f {
+    var h=cell*747796405u+2891336453u;
+    h=((h>>((h>>28u)+4u))^h)*277803737u;
+    h=(h>>22u)^h;
+    let j=vec2f(f32(h&0xffffu),f32(h>>16u))/65536.0;
+    return (vec2f(f32(cell%PHOTON_GRID.x),f32(cell/PHOTON_GRID.x))+j)/vec2f(PHOTON_GRID);
+}
 // One ray from the lamp for each cell of the photon grid over the map, at
 // each of the three wavelengths (photon n's wavelength is n mod 3): traced
 // through the blocks it meets, refracting at each face and facet,
@@ -612,7 +628,7 @@ fn pass_through(s:u32,k:f32,l:vec3f,d:vec3f,eta:f32)->Passage {
     if stage()<STAGE_WORDS-.5 || stage()>STAGE_WHITE+.5 || intensity()<=0.0 {return;}
     let cell=n/3u;
     let c=n%3u;
-    let uv=(vec2f(f32(cell%PHOTON_GRID.x),f32(cell/PHOTON_GRID.x))+.5)/vec2f(PHOTON_GRID);
+    let uv=photon_home(cell);
     let l=lamp();
     let d=map_direction(uv);
     if d.z>=0.0 {return;}
@@ -672,7 +688,7 @@ struct PhotonVertex {
     let ph=photons_in[n];
     if ph.w<=0.0 || (landing && ph.z<=0.0) {return out;}
     let cell=n/3u;
-    let home=(vec2f(f32(cell%PHOTON_GRID.x),f32(cell/PHOTON_GRID.x))+.5)/vec2f(PHOTON_GRID);
+    let home=photon_home(cell);
     let centre=select(home,ph.xy,landing);
     let channel=array<vec3f,3>(vec3f(1,0,0),vec3f(0,1,0),vec3f(0,0,1))[n%3u];
     let c=array<vec2f,6>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(-1,1),vec2f(1,-1),vec2f(1,1))[corner];
@@ -729,15 +745,18 @@ struct AirOut { @location(0) front:vec4f, @location(1) full:vec4f }
     }
     // The light the blocks throw out of the cone, over the map's wider cone
     // but outside the beam's.
+    // Only in front of the blocks, where the caustics fall; one tap.
     let axis=beam_axis(0.0);
-    let wide=cone_span_at(d,axis,near,far,MAP_SPREAD,APERTURE);
+    let wide=cone_span_at(d,axis,near,(CAMERA_DISTANCE-SLAB)/d.z,MAP_SPREAD,APERTURE);
     if wide.x<wide.y && intensity()>0.0 {
         let step=(wide.y-wide.x)/f32(SPRAY_SAMPLES);
         for(var k=0u;k<SPRAY_SAMPLES;k++) {
             let t=wide.x+(f32(k)+fract(jitter*3.17+f32(k)*.618034))*step;
             let x=CAMERA+d*t;
             if beam_profile(x,axis)>0.0 {continue;}
-            let m=max(moved(x,jitter*6.283+f32(k)),vec3f(0));
+            let uv=map_uv(x);
+            if any(uv<vec2f(0)) || any(uv>vec2f(1)) {continue;}
+            let m=max(textureSampleLevel(transmission,linear,uv,0.0).rgb,vec3f(0));
             if max(m.r,max(m.g,m.b))<=0.0 {continue;}
             let lit=min(m*CAUSTIC_GAIN,vec3f(CAUSTIC_MAX))*beam_falloff(x)*phase(normalize(x-lamp()),-d,PHASE_G)*density(x)*step;
             all+=lit;
