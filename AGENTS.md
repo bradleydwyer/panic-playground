@@ -12,9 +12,10 @@ separate from the private research project; don't merge that history in.
 Being public doesn't mean the port is cleared for copyright. Keep all of the
 following out of Git: original or extracted demo files, disassembly,
 decompiler output, binary fixtures, screenshots, recordings, fonts, samples and
-the locations of private archives. There are no binary asset exceptions in
-this repository. Player data is generated locally from a
-`PANIC.EXE` the user supplies.
+the locations of private archives. The only exceptions are the README's
+screenshots of the modern view in `docs/images/`, pinned by hash in
+`tools/check_publication.py`; add or replace them only when the owner asks.
+Player data is generated locally from a `PANIC.EXE` the user supplies.
 
 Default tests must use synthetic data. Python tests that need the original
 release are enabled with `PANIC_EXE`. Rust tests that need original data are

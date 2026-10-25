@@ -21,8 +21,8 @@ port's licence boundaries are retained, including for the new code under
 
 ## What's left out
 
-No original demo files are in the repository: no assets, music, screenshots
-or recordings, no recovered assembly or decompiler output, no binary test
+No original demo files are in the repository: no assets, music or
+recordings, no screenshots of the original, no recovered assembly or decompiler output, no binary test
 fixtures and no packaged builds. The importer recreates the 23 resources and
 nine unpacked programs on your machine from your own copy of `PANIC.EXE`. The
 unpacked programs contain original code as well as data, so they stay out of
@@ -55,7 +55,9 @@ against known hashes.
 
 `tools/check_publication.py --research` checks the staged files and every
 reachable commit against the list of allowed source files. It rejects binary
-content, large files and local paths. No binary files are allowed. Without
+content, large files and local paths. The only binary files allowed are
+the README's screenshots of the modern view in `docs/images/`, each pinned by
+its SHA-256. Without
 `--research` it checks the tooling-only list and fails if the port or importer
 is present anywhere in history.
 

@@ -2,7 +2,7 @@
 
 Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
-[![Watch the modern Panic intro, scroller and rings on YouTube](https://img.youtube.com/vi/p4w5MObv9Ho/maxresdefault.jpg)](https://youtu.be/p4w5MObv9Ho)
+![Part 4: the FUTURE CREW slab standing in water under the plasma](docs/images/hero-plasma.jpg)
 
 [▶ Watch the modern intro, scroller and rings on YouTube](https://youtu.be/p4w5MObv9Ho)
 
@@ -27,8 +27,9 @@ slowly. The transitions between the scenes need more work too. The original
 player is included as a reference. The new letterforms and block motion are
 authored approximations, not recovered original 3D models.
 
-No original demo data, music, screenshots or videos are stored in this repository.
-The preview above is hosted on YouTube. You import
+No original demo data, music or videos are stored in this repository; the
+images in `docs/images` are screenshots of this project's modern view. The
+video preview is hosted on YouTube. You import
 the data locally from your own copy of `PANIC.EXE`.
 
 ## Run it
@@ -47,6 +48,8 @@ Then, from the repository root:
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --modern
 ```
+
+![The heated metal PANIC logo](docs/images/intro.jpg)
 
 If you've already imported the data for the original port, pass its location
 with `--data /path/to/local-data`, or set `PANIC_DATA`.
@@ -71,6 +74,8 @@ cool blue on the left to orange on the right. The squares follow the original
 activation order and wipe timing, with uninterrupted music. `--transition`
 stops on the next backdrop; the scroller experiments below continue from it.
 
+![The logo screen being cut away in squares](docs/images/transition.jpg)
+
 Omit `--seek 17.8` to watch the whole intro. Add `--split` to compare with the
 original. `--transition` selects modern mode automatically; `--laser` still
 works as an alias. Earlier trials of a curling burn and of falling, burning
@@ -82,6 +87,8 @@ To continue into the glass scroller, with studio lighting over a chrome bump wal
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --scroller --seek 27
 ```
+
+![Glass scroller letters over the chrome bump wall](docs/images/scroller.jpg)
 
 | Flag | Experiment |
 | --- | --- |
@@ -155,6 +162,8 @@ time, so seeking and captures show the same waves.
 
 ### Part 6: Rings
 
+![Part 6: a neon symbol over the liquid-chrome pool of interference rings](docs/images/part6-rings.jpg)
+
 `--rings` carries on past the scroller through part 6, the interference rings
 and flashing symbols, to the picture that opens part 5, with the music
 unbroken:
@@ -213,6 +222,8 @@ still has them.
 
 ### Part 5: Field
 
+![Part 5: the molten Mandelbrot mountain inside its frame](docs/images/part5-field.jpg)
+
 `--field` carries on through part 5, to the frame part 3 starts from, with
 the music unbroken:
 
@@ -259,6 +270,8 @@ in.
 
 ### Part 3: Dots
 
+![Part 3: morphing dots as light painting](docs/images/part3-dots.jpg)
+
 `--dots` carries on through part 3 and part 4's wait to the first frame
 part 4 draws, with the music unbroken:
 
@@ -299,6 +312,8 @@ authored; the positions, motion and timing are the port's. Faithful HD
 interpreted and what is authored.
 
 ### Part 4: Plasma
+
+![Part 4: the stone slab in water lit by the plasma, a drop's rings spreading](docs/images/part4-plasma.jpg)
 
 `--plasma` carries on through part 4 to part 7's first frame, with the
 music unbroken:
@@ -360,6 +375,8 @@ say what is read, what is interpreted and what is authored.
 
 ### Part 7: Greetings
 
+![Part 7: crystal greetings letters in a lighthouse's beam in dusty air](docs/images/part7-greetings.jpg)
+
 `--greetings` carries on through part 7 to part 8's first frame, with the
 music unbroken:
 
@@ -411,6 +428,8 @@ shows the original's pixels at display resolution. The
 is interpreted and what is authored.
 
 ### Part 8: the ending
+
+![Part 8: the monster on an old green monitor, moiré bands over the screen](docs/images/part8-ending.jpg)
 
 `--ending` carries on through part 8 to the end of the demo, with the
 music unbroken:
