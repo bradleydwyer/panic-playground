@@ -1449,15 +1449,17 @@ port's timing, positions and motion.
   each head, they take the shape of a seven-bladed diaphragm with rounded
   corners, clipped to a cat's eye by the barrel toward the edges of the
   picture; that too is exact, as a line meets a convex shape in one span.
-- The air holds a haze and drifting fog, both lit by every light. The haze
-  is uniform, and lit by the closed form of single scattering from a point
-  light in a uniform medium (the integral of the inverse square distance
-  along each ray), dimmed with the light's distance from the ray. The fog
-  is wisps of tileable noise twisted by a second noise, each drifting
-  slowly. The light from all 532 lights is gathered each frame in a grid of
-  96 by 54 cells across the picture and 48 deep, spaced evenly in log
-  depth, and each pixel, at half resolution, marches 48 steps through the
-  fog, taking the light where it finds fog.
+- The air holds a faint uniform haze and drifting fog, both lit by every
+  light. The light from all 532 lights (the dots and, before them, the
+  shade bobs' tips) is gathered each frame in a grid of 96 by 54 cells
+  across the picture and 48 deep, spaced evenly in log depth: each light's
+  power over its distance squared, softened over the cell's size and dimmed
+  with the distance, a little for the fog and more for the haze. Each
+  pixel, at half resolution, marches 48 steps through the grid, which
+  gives the haze as single scattering in a uniform medium, and where the
+  fog has wisps, the fog's. The fog is tileable noise twisted by a second
+  noise, each drifting slowly, so it is a function of the clip's time.
+  Where the grid holds no light the march takes no noise.
 - The music: the lights breathe with the PCM's low band at the moment of
   each part of the exposure, and each order's first row, read from the
   music's position, sends a plane of light through the object along a
@@ -1472,11 +1474,18 @@ Everything is a function of the clip's time, so seeking, captures and video
 agree; an ignored test checks frames drawn after others against a new
 renderer's, byte for byte. Each frame a compute pass takes 105 samples
 along each light's path and 65 along each tip's and another gathers the
-fog's light, the lights are drawn as 53,000 swept discs, the haze sums 532
-lights and marches the fog at half resolution, and a composite takes part
-5's view during the zoom. The look's constants are at the top of
-`dots_light.wgsl`; the fog's noise is made once, on the GPU, when the
-renderer loads.
+air's light, the lights are drawn as 53,000 swept discs, the haze and fog
+are marched at half resolution, and a composite takes part 5's view during
+the zoom. The look's constants are at the top of `dots_light.wgsl`; the
+fog's noise is made once, on the GPU, when the renderer loads.
+
+At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (150 frames,
+on a machine in use), the shade bobs and the dots take 2.4 to 4.3 ms a
+frame, the flare the most. The hold and the zoom, which draw part 5's
+frame and smoke beneath, take 7 to 9 ms, about what part 5's own last
+seconds take. Faithful HD takes 0.3 to 0.8 ms. Gathering the air's light in
+the grid and marching it, rather than summing each light's closed-form
+glow at every pixel, cut the dots' frames from about 8.5 ms to 3.6 ms.
 
 ### Options and tests
 

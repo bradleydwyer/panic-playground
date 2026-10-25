@@ -21,11 +21,16 @@
 //   disc. The exposure along a segment is exact for a uniform disc moving
 //   at constant speed, so faster points leave fainter trails and still
 //   ones burn bright, as in a photograph.
-// - The air holds a faint haze, lit by every light by the closed form of
-//   single scattering from a point light in a uniform medium.
+// - Toward the edges of the picture the discs are clipped to a cat's eye,
+//   and where they are large and bright they show the seven blades of the
+//   diaphragm.
+// - The air holds a faint uniform haze and drifting fog, lit by every
+//   light: the light is gathered each frame in a grid in log depth, and
+//   each pixel marches through it, the haze as single scattering in a
+//   uniform medium, the fog wherever its noise has wisps.
 // - The music: the lights breathe with the PCM's low band at the moment of
-//   each part of the exposure, and each order's first row sends a wave of
-//   light out from the object's centre.
+//   each part of the exposure, and each order's first row sends a plane of
+//   light sweeping through the object.
 // - At the end the box lands, its trails collapse into its lights, and as
 //   part 4 is about to draw it flares up; part 4's slab takes over in white.
 // Module: the shared controls, dots_common.wgsl and this file.
@@ -94,17 +99,17 @@ const WAVE_SPEED=1300.0;
 const WAVE_WIDTH=38.0;
 const WAVE_GAIN=4.5;
 const WAVE_LIFE=.5;
-// The haze: its scattering, the closest a light's glow is resolved, how far
-// light carries in it (camera units) and its tint.
+// The haze: its scattering, how far light carries in it (camera units) and
+// its tint.
 const HAZE=.0045;
-const HAZE_NEAR=6.0;
 const HAZE_REACH=90.0;
 const HAZE_TINT=vec3f(.45,.65,1.0);
 // The fog in the haze: drifting, slowly changing wisps lit by every light.
 // The light is gathered in a grid of FOG_COLUMNS by FOG_ROWS cells across
 // the drawable and FOG_SLICES deep, from FOG_NEAR to FOG_FAR (camera
 // units, spaced evenly in log depth); each pixel marches FOG_STEPS steps
-// through the fog. The fog's noise repeats every FOG_TILE units; FOG_LEVEL
+// through the haze and the fog, skipping the fog where the light is below
+// FOG_DARK. The fog's noise repeats every FOG_TILE units; FOG_LEVEL
 // and FOG_SOFT shape its wisps, FOG_WARP how far they are twisted, and the
 // drifts (units a second) move them. FOG_REACH is how far a light carries
 // in it, FOG_SCATTER how much it scatters.
@@ -122,6 +127,7 @@ const FOG_DRIFT=vec3f(18.0,-11.0,9.0);
 const FOG_WARP_DRIFT=vec3f(-8.0,6.0,-13.0);
 const FOG_REACH=260.0;
 const FOG_SCATTER=.035;
+const FOG_DARK=1e-6;
 const NOISE_SIZE=128u;
 // The shade bobs: samples along each tip's 16 iterations, the glow's radius
 // in rows (the disc's area), its depth for the haze, how the film takes
@@ -400,27 +406,18 @@ fn shaped_share(u:f32,v:f32,l:f32,r:f32,lens:vec4f)->f32 {
     let swept=a.b.y-b.b.y;
     if a.b.w<.5 || swept<=1e-6 {return no_sweep();}
     if fibre {
-        let r=max(FIBRE_RADIUS,.7*pixel_rows());
+        // Each fibre carries its own share of the light, and is a little
+        // thicker or thinner than the next.
+        let own=hash2(vec2f(f32(t),3.7));
+        let r=max(FIBRE_RADIUS*(.75+.5*hash2(vec2f(f32(t),8.3))),.7*pixel_rows());
         let age=.5*(a.b.z+b.b.z);
-        let light=FIBRE_LIGHT*swept*exp(-age/FIBRE_DECAY)*(1.0+3.0*exp(-age/.6))/(PI*r*r);
+        let light=FIBRE_LIGHT*(.45+1.1*own)*swept*exp(-age/FIBRE_DECAY)*(1.0+3.0*exp(-age/.6))/(PI*r*r);
         return swept_quad(vi,a.a.xy,b.a.xy,r,vec4f(light,0),vec4f(0));
     }
     return swept_quad(vi,a.a.xy,b.a.xy,a.a.z,vec4f(0,0,0,swept),vec4f(0));
 }
 
-// ---- The haze ----------------------------------------------------------------------------
-// Single scattering along the ray d from a point light at p, isotropic, in
-// a uniform medium without extinction: the integral of 1 / distance^2 along
-// the ray, (pi / 2 + atan(t0 / h)) / h, h the light's distance from the
-// ray and t0 how far along it the nearest point is.
-// The light is dimmed by the haze over its distance from the ray (an
-// approximation: the integral itself is without extinction).
-fn airlight(p:vec3f,d:vec3f)->f32 {
-    let t0=dot(p,d);
-    let h=sqrt(max(dot(p,p)-t0*t0,HAZE_NEAR*HAZE_NEAR));
-    return (.5*PI+atan(t0/h))/h*exp(-h/HAZE_REACH);
-}
-// ---- The fog ------------------------------------------------------------------------------
+// ---- The haze and the fog ------------------------------------------------------------------------------
 // A cell's depth in the grid (0..1) at camera depth z, and back.
 fn fog_slice(z:f32)->f32 {return log(z/FOG_NEAR)/log(FOG_FAR/FOG_NEAR);}
 fn fog_depth(w:f32)->f32 {return FOG_NEAR*pow(FOG_FAR/FOG_NEAR,w);}
@@ -429,8 +426,9 @@ fn fog_point(uv:vec2f,z:f32)->vec3f {
     let s=source_of_scene(scene_of_uv(uv));
     return vec3f((s-vec2f(160.0,100.0))*z/FOCAL,z);
 }
-// The light every lamp sends to cell id, softened over the cell's size,
-// dimmed over FOG_REACH.
+// The light every lamp sends to cell id, softened over the cell's size:
+// dimmed over FOG_REACH for the fog (rgb), and over HAZE_REACH for the
+// haze (a).
 @compute @workgroup_size(4,4,4) fn dots_fog_light(@builtin(global_invocation_id) id:vec3u) {
     dots_begin();
     if any(id>=vec3u(FOG_COLUMNS,FOG_ROWS,FOG_SLICES)) {return;}
@@ -438,14 +436,15 @@ fn fog_point(uv:vec2f,z:f32)->vec3f {
     let z=fog_depth((f32(id.z)+.5)/f32(FOG_SLICES));
     let p=fog_point(uv,z);
     let size=z*200.0/(f32(FOG_ROWS)*FOCAL);
-    var sum=vec3f(0);
+    var sum=vec4f(0);
     if dots_shown() {
         for(var i=0u;i<POINTS;i++) {
             let l=samples[LIGHTS_BASE+i].a;
             if l.w<=0.0 {continue;}
             let d=l.xyz-p;
             let dd=dot(d,d);
-            sum+=YOUNG*l.w*exp(-sqrt(dd)/FOG_REACH)/(dd+size*size);
+            let e=sqrt(dd);
+            sum+=vec4f(YOUNG*exp(-e/FOG_REACH),exp(-e/HAZE_REACH))*l.w/(dd+size*size);
         }
     }
     if shades_shown() {
@@ -454,10 +453,11 @@ fn fog_point(uv:vec2f,z:f32)->vec3f {
             if l.w<=0.0 {continue;}
             let d=l.xyz-p;
             let dd=dot(d,d);
-            sum+=vec3f(.3,.45,1.0)*l.w*exp(-sqrt(dd)/FOG_REACH)/(dd+size*size);
+            let e=sqrt(dd);
+            sum+=vec4f(vec3f(.3,.45,1.0)*exp(-e/FOG_REACH),exp(-e/HAZE_REACH))*l.w/(dd+size*size);
         }
     }
-    textureStore(fog_light_out,id,vec4f(min(sum,vec3f(6e4)),1));
+    textureStore(fog_light_out,id,min(sum,vec4f(6e4)));
 }
 // Tileable gradient noise of period `period` cells over the unit cube.
 fn noise_hash(p:vec3u,seed:u32)->u32 {
@@ -509,47 +509,35 @@ fn fog_density(p:vec3f,t:f32)->f32 {
     let n=textureSampleLevel(fog_noise,repeat,q+(FOG_DRIFT*t+FOG_WARP*warp)/FOG_TILE,0.0).r;
     return smoothstep(FOG_LEVEL,FOG_LEVEL+FOG_SOFT,n);
 }
-// Light scattered towards the camera along the ray through uv by the fog,
-// marched in log depth, the steps offset per pixel.
-fn fog_scatter(uv:vec2f,pixel:vec2f)->vec3f {
+// Light scattered towards the camera along the ray through uv by the haze
+// and the fog, marched in log depth, the steps offset per pixel. The
+// haze's is single scattering in a uniform medium: along the ray, the sum
+// of each light's power over its distance squared.
+fn air_scatter(uv:vec2f,pixel:vec2f)->vec3f {
     let s=source_of_scene(scene_of_uv(uv));
     let stretch=length(vec3f((s-vec2f(160.0,100.0))/FOCAL,1.0));
     // Interleaved gradient noise, which the composite's 3 x 3 filter
     // evens out.
     let jitter=fract(52.9829189*fract(dot(floor(pixel),vec2f(.06711056,.00583715))));
     let t=dots_seconds();
-    var sum=vec3f(0);
+    var fog=vec3f(0);
+    var haze=0.0;
     for(var k=0u;k<FOG_STEPS;k++) {
         let w0=(f32(k)+jitter)/f32(FOG_STEPS);
+        let light=textureSampleLevel(fog_light,linear,vec3f(uv,w0),0.0);
+        if max(max(light.r,light.g),max(light.b,light.a))<FOG_DARK {continue;}
         let z=fog_depth(w0);
-        let dz=z*log(FOG_FAR/FOG_NEAR)/f32(FOG_STEPS);
-        let p=vec3f((s-vec2f(160.0,100.0))*z/FOCAL,z);
-        let density=fog_density(p,t);
-        if density<=0.0 {continue;}
-        let light=textureSampleLevel(fog_light,linear,vec3f(uv,w0),0.0).rgb;
-        sum+=light*density*dz*stretch;
+        let dz=z*log(FOG_FAR/FOG_NEAR)/f32(FOG_STEPS)*stretch;
+        haze+=light.a*dz;
+        let density=fog_density(vec3f((s-vec2f(160.0,100.0))*z/FOCAL,z),t);
+        fog+=light.rgb*density*dz;
     }
-    return FOG_SCATTER*sum;
+    return FOG_SCATTER*fog+HAZE*HAZE_TINT*haze;
 }
 @fragment fn dots_haze(v:Vertex)->@location(0) vec4f {
     dots_begin();
-    let d=ray_of_source(source_of_scene(scene_of_uv(v.uv)));
-    var sum=0.0;
-    if dots_shown() {
-        for(var i=0u;i<POINTS;i++) {
-            let l=samples[LIGHTS_BASE+i].a;
-            if l.w>0.0 {sum+=l.w*airlight(l.xyz,d);}
-        }
-    }
-    if shades_shown() {
-        for(var t=0u;t<SHADE_DISCS;t++) {
-            let l=samples[LIGHTS_BASE+POINTS+t].a;
-            if l.w>0.0 {sum+=l.w*airlight(l.xyz,d);}
-        }
-    }
-    var fog=vec3f(0);
-    if dots_shown() || shades_shown() {fog=fog_scatter(v.uv,v.position.xy);}
-    return vec4f(HAZE_TINT*HAZE*sum+fog,1);
+    if !dots_shown() && !shades_shown() {return vec4f(0,0,0,1);}
+    return vec4f(air_scatter(v.uv,v.position.xy),1);
 }
 
 // ---- The composite --------------------------------------------------------------------------

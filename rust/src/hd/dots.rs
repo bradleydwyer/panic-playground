@@ -236,6 +236,10 @@ pub struct DotsPreview {
     pub music: Vec<u16>,
     /// Part 4's first frame: 320 x 400 indices and the palette.
     pub slab: (Vec<u8>, Vec<u8>),
+    /// Clip times of the orders' first rows from the shade bobs on, as the
+    /// music's position reads at each frame: the first frame of each new
+    /// order.
+    order_starts: Vec<f64>,
     /// The last dot frame as part 4's wait holds it.
     wait: (Vec<u8>, Vec<u8>),
     pub events: DotsEvents,
@@ -353,6 +357,14 @@ impl DotsPreview {
         let slab = (video.indices.clone(), video.palette.clone());
         *vga = video;
         let events = DotsEvents::observe(&frames, part4);
+        let shades = frames
+            .iter()
+            .position(|f| f.phase >= Phase::Shades)
+            .unwrap_or(0);
+        let order_starts = (shades.max(1)..positions.len())
+            .filter(|&j| positions[j] >> 8 != positions[j - 1] >> 8)
+            .map(|j| (start + j) as f64 / FRAME_RATE as f64)
+            .collect();
         Ok(Self {
             start,
             frames,
@@ -363,6 +375,7 @@ impl DotsPreview {
             points,
             music: positions.clone(),
             slab,
+            order_starts,
             wait,
             events,
             replay: Replay {
@@ -609,19 +622,9 @@ impl DotsPreview {
         (aspect * 120.0 / 64.0).max(100.0 / 46.0) * 1.15
     }
 
-    /// Clip times of the orders' first rows from the shade bobs on, as the
-    /// music's position reads at each frame: the first frame of each new
-    /// order.
-    pub fn order_starts(&self) -> Vec<f64> {
-        let shades = self
-            .frames
-            .iter()
-            .position(|f| f.phase >= Phase::Shades)
-            .unwrap_or(0);
-        (shades.max(1)..self.music.len())
-            .filter(|&j| self.music[j] >> 8 != self.music[j - 1] >> 8)
-            .map(|j| self.seconds(j))
-            .collect()
+    /// Clip times of the orders' first rows from the shade bobs on.
+    pub fn order_starts(&self) -> &[f64] {
+        &self.order_starts
     }
 
     /// Everything part 3 puts in `u.dots` at a clip time on a drawable of
@@ -679,14 +682,9 @@ impl DotsPreview {
         let slab = frame.phase == Phase::Slab;
         // The orders' first rows before now, newest first.
         let mut hits = [-100.0_f32; 4];
-        let starts = self.order_starts();
-        for (k, &t) in starts
-            .iter()
-            .rev()
-            .filter(|&&t| t <= time)
-            .take(4)
-            .enumerate()
-        {
+        let starts = &self.order_starts;
+        let now = starts.partition_point(|&t| t <= time);
+        for (k, &t) in starts[..now].iter().rev().take(4).enumerate() {
             hits[k] = (time - t) as f32;
         }
         let levels = echo_levels(&self.tables.dot_palettes);
@@ -968,7 +966,7 @@ mod tests {
             e.slab + dots.seconds(0),
         );
         println!("Echo levels {:?}", echo_levels(&dots.tables.dot_palettes));
-        for t in dots.order_starts() {
+        for &t in dots.order_starts() {
             let cue = clip.audio_at(t + 0.03).intro;
             println!(
                 "order {:02X} at {t:.3}: energy {:.2} onset {:.2} low {:.2} accent {:.2}",
