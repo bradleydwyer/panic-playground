@@ -257,9 +257,9 @@ fn swing()->f32 {
 // pulse peaks where colour index plus phase is 31.5; the index follows the
 // fitted turn), turning u.greetings.beam.x times slower (authored) about the
 // moment the fade to white begins (so there its direction is the
-// original's), tilted toward the camera by u.greetings.beam.y but clear of
-// the lens on every turn, and all the way to it only as it swings to the
-// lens.
+// original's), tilted toward the camera by u.greetings.beam.y (by default
+// so far that the lens catches the faint outer edge of its cone on each
+// turn), and all the way to it only as it swings to the lens.
 fn beam_axis(back:f32)->vec3f {
     let anchor=gc.twist_late.z;
     let phase=anchor+(gc.sweep.x-back-anchor)/max(gc.beam.x,.25);

@@ -79,13 +79,14 @@ pub const DUST_FAR: f64 = 230.0;
 pub const SWEEP_CENTRE: (f64, f64) = (160.0, 85.0);
 /// The modern view's beam (authored): the engine frames a turn takes by
 /// default (twice the original's 64-frame cycle, about 1.83 s), and its
-/// tilt toward the camera by default and at most (degrees; the beam's soft
-/// edge ends about 43 degrees from its axis, so at 42 the lens stays just
-/// outside it on every turn), and its brightness by default and at least
+/// tilt toward the camera by default and at most (degrees, the default
+/// chosen by eye; the beam's soft edge ends about 43 degrees from its axis,
+/// so at 51 the lens catches its faint outer edge on each turn, though never
+/// its body), and its brightness by default and at least
 /// and at most (times the shader's own; the lamp's glow in the air is left
 /// as it is).
 pub const BEAM_PERIOD: f64 = 128.0;
-pub const BEAM_TILT: f64 = 42.0;
+pub const BEAM_TILT: f64 = 51.0;
 pub const BEAM_TILT_MAX: f64 = 70.0;
 pub const BEAM_BRIGHTNESS: f64 = 1.0;
 pub const BEAM_BRIGHTNESS_RANGE: (f64, f64) = (0.25, 4.0);
