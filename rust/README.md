@@ -403,6 +403,8 @@ optical simulation. All fields are generated locally in memory.
 | , / . | Depth of the waves |
 | ; / ' | Strength of the waves' side light and shadows |
 | N | Part 6: the new symbols in its middle, or the original's throughout |
+| J / K | Part 7: the beam's turn 16 frames shorter (faster) or longer (slower); default 128 |
+| U / I | Part 7: the beam's tilt toward the camera, 3° less or more (default 42°) |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
@@ -1715,17 +1717,19 @@ All of it is authored, on the port's timing, positions and motion:
 
 - The sweep is one broad cream lighthouse beam. Its direction on the
   screen is the peak of the original's band round the sweep's centre, but
-  it turns four times slower than the original's colours (authored: one
-  turn every 256 frames, about 3.66 s, near one order of the music, 258
-  frames), about the moment the fade to white begins, so there its
-  direction is the original's. It is tilted 23 degrees toward the camera
-  so it passes through the outer strips. The lamp stands a little behind
-  the strips, where it projects on the sweep's centre: a bright core with a
-  halo, the beam leaving an aperture of finite size. The original lights
-  40 of its 64 colours at once, a very broad band, so the beam is broad
-  and soft: across it its light falls as exp(-2 q^2), q its distance across
-  over the aperture plus 0.55 rows a row along, about 32 degrees wide at
-  half its light and fading out by some 60.
+  it turns twice as slowly as the original's colours (authored: one turn
+  every 128 frames, about 1.83 s), about the moment the fade to white
+  begins, so there its direction is the original's. It is tilted 42
+  degrees toward the camera, so it reads as coming our way, but clear of
+  the lens on every turn: only the swing into the lens at the end points at
+  the camera. **J**/**K** and **U**/**I** change the turn's length and the
+  tilt while the preview plays. The lamp stands a little behind the strips,
+  where it projects on the sweep's centre: a bright core with a halo, the
+  beam leaving an aperture of finite size. The original lights 40 of its 64
+  colours at once, a very broad band, so the beam is broad and soft: across
+  it its light falls as exp(-2 q^2), q its distance across over the
+  aperture plus 0.55 rows a row along, about 32 degrees wide at half its
+  light and fading out by some 43 degrees from its axis.
 - The air is a participating medium, marched in 3D at half resolution
   within the cone (28 samples a pixel), lit by the beam: its light falls
   off with the square of the distance, and it scatters toward the camera by

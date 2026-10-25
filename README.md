@@ -367,8 +367,9 @@ from the port and checked against it frame by frame.
 The modern look is a lighthouse in dusty air:
 
 - The turning colours become one broad, soft cream lighthouse beam from
-  a lamp at the sweep's centre, turning once every 3.7 seconds (a quarter
-  of the original's speed), in air marched in 3D: the light falls off with
+  a lamp at the sweep's centre, turning once every 1.8 seconds (half the
+  original's speed), tilted toward us but never at the camera until the
+  end, in air marched in 3D: the light falls off with
   distance, glows more as it turns toward the camera, and the letters cast
   real shadows and caustics into it. The lamp's glow lights the dusty air
   faintly everywhere.

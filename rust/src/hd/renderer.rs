@@ -212,6 +212,9 @@ struct GreetingsBlock {
     // Part-7 seconds: lit, words, words' end, white; monster, part 8.
     events: vec4f,
     events_late: vec4f,
+    // The modern view's beam: how much slower than the original's colours
+    // it turns, its tilt toward the camera (radians).
+    beam: vec4f,
 }
 struct Controls {
     screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode
@@ -2588,7 +2591,16 @@ mod tests {
                 vec![$((stringify!($field).to_owned(), offset_of!(GreetingsBlock, $field))),*]
             };
         }
-        let expected = fields![part, frame, sweep, twist, twist_late, events, events_late];
+        let expected = fields![
+            part,
+            frame,
+            sweep,
+            twist,
+            twist_late,
+            events,
+            events_late,
+            beam
+        ];
         assert_eq!(
             expected.last().unwrap().1 + size_of::<[f32; 4]>(),
             size_of::<GreetingsBlock>()

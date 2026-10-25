@@ -56,12 +56,12 @@
 
 // ---- The look (authored) -------------------------------------------------------
 // The camera's distance from the strips' plane (greetings::CAMERA_DISTANCE;
-// source rows), the lamp's depth behind it, the beam's tilt toward the
-// camera (radians), its half angle, the aperture's radius (rows), the
-// penumbra's width at the aperture and its growth per row.
+// source rows), the lamp's depth behind it and the aperture's radius
+// (rows). How fast the beam turns and how far it tilts toward the camera
+// are authored and tuned live (greetings::BEAM_PERIOD and BEAM_TILT; J/K
+// and U/I in the preview), in u.greetings.beam.
 const CAMERA_DISTANCE=580.0;
 const LAMP_DEPTH=22.0;
-const BEAM_TILT=.4;
 const APERTURE=2.6;
 // The beam's breadth: across it, at a distance along, its light is
 // exp(-BEAM_SOFTNESS q^2) where q is the distance across over APERTURE +
@@ -72,10 +72,6 @@ const APERTURE=2.6;
 const BEAM_SPREAD=.55;
 const BEAM_SOFTNESS=2.0;
 const BEAM_END=1.7;
-// The beam turns this many times slower than the original's colour cycle
-// (authored: one turn every 256 frames, about 3.66 s, near one order of
-// the music), its direction the original's band's at the fade to white.
-const BEAM_SLOWING=4.0;
 // The beam's power, and the distance within which its inverse-square
 // falloff levels off.
 const BEAM_POWER=1.0;
@@ -84,7 +80,7 @@ const FALLOFF=70.0;
 // and thickest (relative), the noise levels between which it thickens, and
 // its scale (rows a tile of the noise). The lamp's own glow scatters in it
 // everywhere, this much (so the room reads as dusty air, not a void).
-const SCATTER=.045;
+const SCATTER=.032;
 const PHASE_G=.62;
 const THINNEST=.4;
 const THICKEST=1.8;
@@ -180,11 +176,16 @@ const BEHIND=160.0;
 // glow by the lamp at rest and with the beam through the block, the lamp's
 // glints, the edges' and the cut's flare in the beam.
 const FROST=.55;
+// How much of the lit haze in front of a block is shown over it, and of
+// what lies behind through its clear glass (a faint smoke in the crystal,
+// so a lit letter stands out from the lit haze seen through its block).
+const FRONT_HAZE=.55;
+const SMOKE=.55;
 // How much of the beam the frosted cut scatters away (so the letters cast
 // their shapes into the beam).
 const FROST_SCATTER=.85;
 const CUT_REST=.42;
-const CUT_BEAM=2.2;
+const CUT_BEAM=4.0;
 const GLINT=24.0;
 const EDGE_REST=.06;
 const EDGE_FLARE=1.6;
@@ -253,14 +254,16 @@ fn swing()->f32 {
 // The beam's direction `back` frames before the moment: on the screen, the
 // direction of the original's band's peak round the sweep's centre (the
 // pulse peaks where colour index plus phase is 31.5; the index follows the
-// fitted turn), turning BEAM_SLOWING times slower about the moment the fade
-// to white begins (so there its direction is the original's), tilted
-// toward the camera, and all the way to it as it swings to the lens.
+// fitted turn), turning u.greetings.beam.x times slower (authored) about the
+// moment the fade to white begins (so there its direction is the
+// original's), tilted toward the camera by u.greetings.beam.y but clear of
+// the lens on every turn, and all the way to it only as it swings to the
+// lens.
 fn beam_axis(back:f32)->vec3f {
     let anchor=gc.twist_late.z;
-    let phase=anchor+(gc.sweep.x-back-anchor)/BEAM_SLOWING;
+    let phase=anchor+(gc.sweep.x-back-anchor)/max(gc.beam.x,.25);
     let angle=(LAW_OFFSET-31.5+phase)*PI/32.0;
-    let tilt=mix(BEAM_TILT,PI*.5,swing());
+    let tilt=mix(gc.beam.y,PI*.5,swing());
     // Source y runs down, the scene's up.
     return vec3f(cos(angle)*cos(tilt),-sin(angle)*cos(tilt),-sin(tilt));
 }
@@ -881,8 +884,9 @@ struct DustOut { @location(0) front:vec4f, @location(1) full:vec4f }
 // The lamp seen directly at r rows from it: the core and halo, and its
 // aperture's flare as the beam turns toward the camera.
 fn lamp_glow(r:f32)->f32 {
+    // Only as the beam comes to the lens: none at the tilts it turns at.
     let facing=max(-beam_axis(0.0).z,0.0);
-    let flare=FLARE*pow(facing,8.0);
+    let flare=FLARE*pow(facing,24.0);
     return exp(-(r/CORE)*(r/CORE))*CORE_GAIN*(1.0+flare)+exp(-r/HALO)*HALO_GAIN*(1.0+flare*.5);
 }
 // The lit air in front of the blocks at a full-size pixel from the
@@ -989,7 +993,7 @@ fn crystal(s:u32,k:f32,p:vec3f,d:vec3f,footprint:f32)->vec3f {
     let mid=max(min(a.x,a.y),min(max(a.x,a.y),a.z));
     let edge=smoothstep(HALF-1.4,HALF-.15,mid);
     let flare=edge*(EDGE_REST+EDGE_FLARE*through)+cut*wall*CUT_FLARE*through;
-    let clear=(1.0-fresnel)*seen*(1.0-FROST*cut);
+    let clear=(1.0-fresnel)*seen*(1.0-FROST*cut)*SMOKE;
     // The glass's own light is the lamp's, cooled a little as the cut's is.
     let light=mix(star_colour(),vec3f(1),.5);
     return clear+(fresnel*mirrored)+((glint+flare)*light+glow*FROST*cut)*intensity();
@@ -1011,7 +1015,9 @@ fn crystal(s:u32,k:f32,p:vec3f,d:vec3f,footprint:f32)->vec3f {
         let d=normalize(vec3f(q,CAMERA_DISTANCE));
         let p=CAMERA+d*g.z;
         let footprint=200.0/u.screen.y*g.z/CAMERA_DISTANCE;
-        let front=textureLoad(dust_front,pixel,0).rgb+air_in_front(pixel,g.w);
+        // The haze in front of a block, lit as the beam comes our way, is
+        // held back a little over it (authored), so the word stays readable.
+        let front=textureLoad(dust_front,pixel,0).rgb+air_in_front(pixel,g.w)*FRONT_HAZE;
         c=mix(open,front+crystal(s,k,p,d,footprint),g.x);
     }
     // The fade to white, at the original's levels.
