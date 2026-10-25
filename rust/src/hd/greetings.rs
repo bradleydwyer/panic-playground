@@ -82,14 +82,21 @@ pub const SWEEP_CENTRE: (f64, f64) = (160.0, 85.0);
 /// tilt toward the camera by default and at most (degrees, the default
 /// chosen by eye; the beam's soft edge ends about 43 degrees from its axis,
 /// so at 51 the lens catches its faint outer edge on each turn, though never
-/// its body), and its brightness by default and at least
-/// and at most (times the shader's own; the lamp's glow in the air is left
-/// as it is).
+/// its body). Its brightness (times the shader's own; the lamp's glow in the
+/// air is left as it is), chosen by eye: it starts at BEAM_BRIGHTNESS (by
+/// default; tuned live within BEAM_BRIGHTNESS_RANGE) and from
+/// BEAM_RAMP_FROM (clip seconds) rises linearly to BEAM_BRIGHTNESS_END by
+/// part 8's first frame, through the swing into the lens. Over the same
+/// stretch its turn shortens linearly, from BEAM_PERIOD (tuned live) to
+/// BEAM_PERIOD_END engine frames, also chosen by eye.
 pub const BEAM_PERIOD: f64 = 128.0;
+pub const BEAM_PERIOD_END: f64 = 32.0;
 pub const BEAM_TILT: f64 = 51.0;
 pub const BEAM_TILT_MAX: f64 = 70.0;
-pub const BEAM_BRIGHTNESS: f64 = 1.0;
-pub const BEAM_BRIGHTNESS_RANGE: (f64, f64) = (0.25, 4.0);
+pub const BEAM_BRIGHTNESS: f64 = 0.25;
+pub const BEAM_BRIGHTNESS_RANGE: (f64, f64) = (0.05, 4.0);
+pub const BEAM_RAMP_FROM: f64 = 237.0;
+pub const BEAM_BRIGHTNESS_END: f64 = 1.0;
 /// Each stored star becomes this many motes (authored).
 pub const MOTES_PER_STAR: usize = 6;
 
@@ -171,9 +178,10 @@ pub struct GreetingsBlock {
     /// white; monster, part 8, unused, unused.
     pub events: [f32; 4],
     pub events_late: [f32; 4],
-    /// The modern view's beam (authored, tuned live): how many times slower
-    /// than the original's colour cycle it turns, its tilt toward the
-    /// camera (radians), its brightness, unused.
+    /// The modern view's beam (authored, tuned live): its phase (in the
+    /// original's colour steps, 64 a turn), its tilt toward the camera
+    /// (radians), its brightness, and how fast its phase moves against the
+    /// original's colours.
     pub beam: [f32; 4],
 }
 
@@ -214,7 +222,9 @@ pub struct GreetingsPreview {
     pub white_phase: f64,
     /// The modern view's beam (authored, tuned live with J/K, U/I and G/H):
     /// the engine frames a turn takes (the original's colours cycle in 64),
-    /// its tilt toward the camera in degrees, and its brightness.
+    /// its tilt toward the camera in degrees, and its brightness, the turn
+    /// and the brightness as they are before they change toward the end of
+    /// the part.
     pub beam_period: f64,
     pub beam_tilt: f64,
     pub beam_brightness: f64,
@@ -668,6 +678,53 @@ impl GreetingsPreview {
         }
     }
 
+    /// The original's colour phase (unwrapped) at a clip time.
+    fn phase_at(&self, time: f64) -> f64 {
+        let (j, f) = self.moment(time);
+        let k = (j + 1).min(self.frames.len() - 1);
+        let g = if k != j { f } else { 0.0 };
+        self.frames[j].phase + (self.frames[k].phase - self.frames[j].phase) * g
+    }
+
+    /// The modern view's beam's phase (in the original's colour steps, 64 a
+    /// turn) when the original's is `q`, and how fast it moves against it.
+    /// It turns `k` times slower than the original's colours: `k` is
+    /// beam_period / 64 until BEAM_RAMP_FROM, then falls linearly with the
+    /// original's phase (so with time) to BEAM_PERIOD_END / 64 by part 8's
+    /// first frame. The beam's phase is the integral of 1 / `k`, equal to
+    /// the original's on the first frame of the fade to white, so the swing
+    /// into the lens lands where the original's band is then.
+    fn beam_turn(&self, q: f64) -> (f64, f64) {
+        let (k0, k1) = (self.beam_period / 64.0, BEAM_PERIOD_END / 64.0);
+        let q0 = self.phase_at(BEAM_RAMP_FROM);
+        let q1 = self
+            .phase_at(self.seconds(0) + self.events.part8)
+            .max(q0 + 1e-6);
+        let slope = (k1 - k0) / (q1 - q0);
+        let k = |x: f64| k0 + slope * (x.clamp(q0, q1) - q0);
+        // From q0 to x.
+        let ramp = |x: f64| {
+            if slope.abs() < 1e-12 {
+                (x - q0) / k0
+            } else {
+                (k(x) / k0).ln() / slope
+            }
+        };
+        let turned = |x: f64| {
+            if x <= q0 {
+                (x - q0) / k0
+            } else if x <= q1 {
+                ramp(x)
+            } else {
+                ramp(q1) + (x - q1) / k1
+            }
+        };
+        (
+            self.white_phase + turned(q) - turned(self.white_phase),
+            1.0 / k(q),
+        )
+    }
+
     /// Everything part 7 puts in `u.greetings` at a clip time.
     pub fn controls(&self, time: f64) -> GreetingsBlock {
         let (j, f) = self.moment(time);
@@ -682,6 +739,12 @@ impl GreetingsPreview {
             std::array::from_fn(|s| frame.positions[s] as f64 - if moving { f } else { 0.0 });
         let base = self.slots[j].0 as f64 - if moving { f } else { 0.0 };
         let e = &self.events;
+        // The beam's brightness: held, then rising linearly from
+        // BEAM_RAMP_FROM to BEAM_BRIGHTNESS_END by part 8's first frame.
+        let end = self.seconds(0) + e.part8;
+        let rise = ((time - BEAM_RAMP_FROM) / (end - BEAM_RAMP_FROM).max(1e-6)).clamp(0.0, 1.0);
+        let brightness = self.beam_brightness + (BEAM_BRIGHTNESS_END - self.beam_brightness) * rise;
+        let (beam_phase, beam_rate) = self.beam_turn(lerp(frame.phase, next.phase));
         GreetingsBlock {
             part: [
                 1.0,
@@ -711,10 +774,10 @@ impl GreetingsPreview {
             events: [e.lit, e.words, e.words_end, e.white].map(|v| v as f32),
             events_late: [e.monster, e.part8, 0.0, 0.0].map(|v| v as f32),
             beam: [
-                (self.beam_period / 64.0) as f32,
+                beam_phase as f32,
                 self.beam_tilt.to_radians() as f32,
-                self.beam_brightness as f32,
-                0.0,
+                brightness as f32,
+                beam_rate as f32,
             ],
         }
     }
@@ -896,5 +959,34 @@ mod tests {
             greetings.frame_at(plasma.seconds(plasma.frames.len() - 1)),
             Some(0)
         );
+    }
+
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
+    fn part7s_beam_quickens_to_the_end_and_meets_the_original_at_the_fade() {
+        let data = crate::test_support::data();
+        let clip = Clip::load_greetings(&data, ScrollerLighting::Studio).unwrap();
+        let g = clip.greetings.as_ref().unwrap();
+        let end = g.seconds(0) + g.events.part8;
+        let period = |t: f64| 64.0 / g.controls(t).beam[3] as f64;
+        // Held, then shortened to BEAM_PERIOD_END by part 8's first frame.
+        assert!((period(BEAM_RAMP_FROM - 1.0) - BEAM_PERIOD).abs() < 1e-3);
+        assert!((period(end) - BEAM_PERIOD_END).abs() < 1e-3);
+        // Its phase moves on smoothly, never back and never by a jump.
+        let step = 0.25 / FRAME_RATE as f64;
+        let mut t = g.seconds(0);
+        let mut last = g.controls(t).beam[0];
+        while t < end {
+            t += step;
+            let phase = g.controls(t).beam[0];
+            assert!(
+                phase >= last - 1e-3 && phase - last < 1.0,
+                "{t}: {last} -> {phase}"
+            );
+            last = phase;
+        }
+        // On the fade's first frame its direction is the original's.
+        let white = g.seconds(0) + g.events.white;
+        assert!((g.controls(white).beam[0] as f64 - g.white_phase).abs() < 1e-2);
     }
 }

@@ -403,9 +403,9 @@ optical simulation. All fields are generated locally in memory.
 | , / . | Depth of the waves |
 | ; / ' | Strength of the waves' side light and shadows |
 | N | Part 6: the new symbols in its middle, or the original's throughout |
-| J / K | Part 7: the beam's turn 16 frames shorter (faster) or longer (slower); default 128 |
+| J / K | Part 7: the beam's starting turn 16 frames shorter (faster) or longer (slower); default 128; from 237 s it shortens linearly to 32 by part 8 |
 | U / I | Part 7: the beam's tilt toward the camera, 3° less or more (default 51°) |
-| G / H | Part 7: the beam's brightness, ×0.8 or ×1.25 (0.25 to 4; default 1) |
+| G / H | Part 7: the beam's starting brightness, ×0.8 or ×1.25 (0.05 to 4; default 0.25); from 237 s it rises linearly to 1 by part 8 |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
@@ -1718,16 +1718,21 @@ All of it is authored, on the port's timing, positions and motion:
 
 - The sweep is one broad cream lighthouse beam. Its direction on the
   screen is the peak of the original's band round the sweep's centre, but
-  it turns twice as slowly as the original's colours (authored: one turn
-  every 128 frames, about 1.83 s), about the moment the fade to white
-  begins, so there its direction is the original's. It is tilted 51
+  it turns at its own speed (authored, chosen by eye): one turn every 128
+  frames (about 1.83 s, half the original's speed), quickening from 237 s,
+  its turn shortening linearly to 32 frames (twice the original's speed)
+  by part 8's first frame. Its phase integrates that speed, matched to the
+  original's as the fade to white begins, so there its direction is the
+  original's. It is tilted 51
   degrees toward the camera (chosen by eye), so it reads as coming our way,
   the lens catching only the faint outer edge of its cone on each turn:
-  only the swing into the lens at the end points at the camera. **J**/**K**,
+  only the swing into the lens at the end points at the camera. It shines
+  at a quarter of its full light, and from 237 s brightens linearly to its
+  full light by part 8's first frame (both chosen by eye). **J**/**K**,
   **U**/**I** and **G**/**H** change the turn's length, the tilt and the
-  beam's brightness while the preview plays. The lamp stands a little
-  behind the strips,
-  where it projects on the sweep's centre: a bright core with a halo, the
+  beam's starting brightness while the preview plays. The lamp stands a
+  little behind the strips, where it projects on the sweep's centre: a
+  bright core with a halo, the
   beam leaving an aperture of finite size. The original lights 40 of its 64
   colours at once, a very broad band, so the beam is broad and soft: across
   it its light falls as exp(-2 q^2), q its distance across over the

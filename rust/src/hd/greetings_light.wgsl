@@ -255,14 +255,15 @@ fn swing()->f32 {
 // The beam's direction `back` frames before the moment: on the screen, the
 // direction of the original's band's peak round the sweep's centre (the
 // pulse peaks where colour index plus phase is 31.5; the index follows the
-// fitted turn), turning u.greetings.beam.x times slower (authored) about the
-// moment the fade to white begins (so there its direction is the
-// original's), tilted toward the camera by u.greetings.beam.y (by default
-// so far that the lens catches the faint outer edge of its cone on each
-// turn), and all the way to it only as it swings to the lens.
+// fitted turn), but turning at its own authored speed, which quickens
+// toward the end: its phase is u.greetings.beam.x, moving u.greetings.beam.w
+// steps for each of the original's (greetings::GreetingsPreview::beam_turn;
+// its direction is the original's as the fade to white begins). It is
+// tilted toward the camera by u.greetings.beam.y (by default so far that
+// the lens catches the faint outer edge of its cone on each turn), and all
+// the way to it only as it swings to the lens.
 fn beam_axis(back:f32)->vec3f {
-    let anchor=gc.twist_late.z;
-    let phase=anchor+(gc.sweep.x-back-anchor)/max(gc.beam.x,.25);
+    let phase=gc.beam.x-back*gc.beam.w;
     let angle=(LAW_OFFSET-31.5+phase)*PI/32.0;
     let tilt=mix(gc.beam.y,PI*.5,swing());
     // Source y runs down, the scene's up.

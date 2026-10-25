@@ -212,8 +212,9 @@ struct GreetingsBlock {
     // Part-7 seconds: lit, words, words' end, white; monster, part 8.
     events: vec4f,
     events_late: vec4f,
-    // The modern view's beam: how much slower than the original's colours
-    // it turns, its tilt toward the camera (radians), its brightness.
+    // The modern view's beam: its phase (the original's colour steps, 64 a
+    // turn), its tilt toward the camera (radians), its brightness, and how
+    // fast its phase moves against the original's.
     beam: vec4f,
 }
 struct Controls {

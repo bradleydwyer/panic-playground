@@ -714,16 +714,19 @@ fn run() -> Result<(), String> {
                             println!("Wave light {:.1}", scroll.wave_light);
                         }
                     }
-                    // Part 7's beam, tuned live: its turn's length and its
-                    // tilt toward the camera.
+                    // Part 7's beam, tuned live: its turn's length and
+                    // brightness before they change toward the part's end,
+                    // and its tilt toward the camera.
                     Keycode::J | Keycode::K => {
                         if let Some(g) = &mut clip.greetings {
                             let step = if key == Keycode::J { -16.0 } else { 16.0 };
                             g.beam_period = (g.beam_period + step).clamp(32.0, 512.0);
                             println!(
-                                "Part 7 beam: a turn every {} frames ({:.2} s)",
+                                "Part 7 beam: a turn every {} frames ({:.2} s), shortening from {} s to {}",
                                 g.beam_period,
-                                g.beam_period / 70.0
+                                g.beam_period / 70.0,
+                                panic_demo::hd::greetings::BEAM_RAMP_FROM,
+                                panic_demo::hd::greetings::BEAM_PERIOD_END
                             );
                         }
                     }
@@ -740,7 +743,12 @@ fn run() -> Result<(), String> {
                             let (low, high) = panic_demo::hd::greetings::BEAM_BRIGHTNESS_RANGE;
                             let step = if key == Keycode::G { 1.0 / 1.25 } else { 1.25 };
                             g.beam_brightness = (g.beam_brightness * step).clamp(low, high);
-                            println!("Part 7 beam: brightness {:.2}", g.beam_brightness);
+                            println!(
+                                "Part 7 beam: brightness {:.2}, rising from {} s to {:.2}",
+                                g.beam_brightness,
+                                panic_demo::hd::greetings::BEAM_RAMP_FROM,
+                                panic_demo::hd::greetings::BEAM_BRIGHTNESS_END
+                            );
                         }
                     }
                     Keycode::N => {
@@ -855,9 +863,13 @@ fn run() -> Result<(), String> {
             // Parts 7, 4, 3, 5 and 6 show their own; the scroller's settings
             // before them.
             let part5 = if let (Some(g), Some(_)) = (&clip.greetings, clip.greetings_frame(time)) {
+                // The turn and brightness as they are now.
+                let beam = g.controls(time).beam;
                 Some(format!(
-                    " · part 7 (Greetings) · beam {} frames, tilt {}°, brightness {:.2}",
-                    g.beam_period, g.beam_tilt, g.beam_brightness
+                    " · part 7 (Greetings) · beam {:.0} frames, tilt {}°, brightness {:.2}",
+                    64.0 / beam[3],
+                    g.beam_tilt,
+                    beam[2]
                 ))
             } else if clip.plasma_frame(time).is_some() {
                 Some(" · part 4 (Plasma)".to_owned())
