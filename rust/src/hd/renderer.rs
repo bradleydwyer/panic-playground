@@ -213,7 +213,7 @@ struct GreetingsBlock {
     events: vec4f,
     events_late: vec4f,
     // The modern view's beam: how much slower than the original's colours
-    // it turns, its tilt toward the camera (radians).
+    // it turns, its tilt toward the camera (radians), its brightness.
     beam: vec4f,
 }
 struct Controls {

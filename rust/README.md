@@ -405,6 +405,7 @@ optical simulation. All fields are generated locally in memory.
 | N | Part 6: the new symbols in its middle, or the original's throughout |
 | J / K | Part 7: the beam's turn 16 frames shorter (faster) or longer (slower); default 128 |
 | U / I | Part 7: the beam's tilt toward the camera, 3° less or more (default 42°) |
+| G / H | Part 7: the beam's brightness, ×0.8 or ×1.25 (0.25 to 4; default 1) |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
@@ -1722,8 +1723,8 @@ All of it is authored, on the port's timing, positions and motion:
   begins, so there its direction is the original's. It is tilted 42
   degrees toward the camera, so it reads as coming our way, but clear of
   the lens on every turn: only the swing into the lens at the end points at
-  the camera. **J**/**K** and **U**/**I** change the turn's length and the
-  tilt while the preview plays. The lamp stands a little behind the strips,
+  the camera. **J**/**K**, **U**/**I** and **G**/**H** change the turn's
+  length, the tilt and the beam's brightness while the preview plays. The lamp stands a little behind the strips,
   where it projects on the sweep's centre: a bright core with a halo, the
   beam leaving an aperture of finite size. The original lights 40 of its 64
   colours at once, a very broad band, so the beam is broad and soft: across

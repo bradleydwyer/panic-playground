@@ -57,9 +57,10 @@
 // ---- The look (authored) -------------------------------------------------------
 // The camera's distance from the strips' plane (greetings::CAMERA_DISTANCE;
 // source rows), the lamp's depth behind it and the aperture's radius
-// (rows). How fast the beam turns and how far it tilts toward the camera
-// are authored and tuned live (greetings::BEAM_PERIOD and BEAM_TILT; J/K
-// and U/I in the preview), in u.greetings.beam.
+// (rows). How fast the beam turns, how far it tilts toward the camera and
+// how bright it is are authored and tuned live (greetings::BEAM_PERIOD,
+// BEAM_TILT and BEAM_BRIGHTNESS; J/K, U/I and G/H in the preview), in
+// u.greetings.beam.
 const CAMERA_DISTANCE=580.0;
 const LAMP_DEPTH=22.0;
 const APERTURE=2.6;
@@ -276,10 +277,13 @@ fn beam_profile(x:vec3f,axis:vec3f)->f32 {
     let q=length(v-axis*along)/(APERTURE+along*BEAM_SPREAD);
     return exp(-BEAM_SOFTNESS*q*q)*(1.0-smoothstep(BEAM_END*.6,BEAM_END,q));
 }
-fn beam_falloff(x:vec3f)->f32 {
+// The lamp's light falling off with the distance, and the beam's: the
+// lamp's at the brightness tuned live.
+fn lamp_falloff(x:vec3f)->f32 {
     let r2=dot(x-lamp(),x-lamp());
     return BEAM_POWER*FALLOFF*FALLOFF/(FALLOFF*FALLOFF+r2);
 }
+fn beam_falloff(x:vec3f)->f32 {return lamp_falloff(x)*gc.beam.z;}
 // The beam's light at x, the blocks ignored.
 fn beam_at(x:vec3f,axis:vec3f)->f32 {return beam_profile(x,axis)*beam_falloff(x);}
 // Henyey-Greenstein, for light travelling along `light` scattered toward
@@ -811,7 +815,7 @@ struct DustVertex {
         lit+=light_at(x,beam_axis(SHUTTER*f32(k)*.5),f32(n)+f32(k)*2.1);
     }
     let beam=lit*phase(normalize(x-lamp()),to_camera/distance,MOTE_G)/3.0*MOTE_GAIN;
-    let glow=MOTE_AMBIENT*beam_falloff(x);
+    let glow=MOTE_AMBIENT*lamp_falloff(x);
     var colour=star_colour()*(beam+glow+MOTE_BAND*star_light(index,gc.sweep.x));
     colour*=(.3+2.2*size*size)*intensity();
     // In focus at the strips' plane; the near ones soft discs, the far ones

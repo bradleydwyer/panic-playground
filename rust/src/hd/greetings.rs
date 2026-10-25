@@ -81,10 +81,14 @@ pub const SWEEP_CENTRE: (f64, f64) = (160.0, 85.0);
 /// default (twice the original's 64-frame cycle, about 1.83 s), and its
 /// tilt toward the camera by default and at most (degrees; the beam's soft
 /// edge ends about 43 degrees from its axis, so at 42 the lens stays just
-/// outside it on every turn).
+/// outside it on every turn), and its brightness by default and at least
+/// and at most (times the shader's own; the lamp's glow in the air is left
+/// as it is).
 pub const BEAM_PERIOD: f64 = 128.0;
 pub const BEAM_TILT: f64 = 42.0;
 pub const BEAM_TILT_MAX: f64 = 70.0;
+pub const BEAM_BRIGHTNESS: f64 = 1.0;
+pub const BEAM_BRIGHTNESS_RANGE: (f64, f64) = (0.25, 4.0);
 /// Each stored star becomes this many motes (authored).
 pub const MOTES_PER_STAR: usize = 6;
 
@@ -168,7 +172,7 @@ pub struct GreetingsBlock {
     pub events_late: [f32; 4],
     /// The modern view's beam (authored, tuned live): how many times slower
     /// than the original's colour cycle it turns, its tilt toward the
-    /// camera (radians), unused, unused.
+    /// camera (radians), its brightness, unused.
     pub beam: [f32; 4],
 }
 
@@ -207,11 +211,12 @@ pub struct GreetingsPreview {
     /// The star colours' phase (unwrapped) on the first frame of the fade
     /// to white, which the modern view's slowed beam is anchored to.
     pub white_phase: f64,
-    /// The modern view's beam (authored, tuned live with J/K and U/I): the
-    /// engine frames a turn takes (the original's colours cycle in 64) and
-    /// its tilt toward the camera, in degrees.
+    /// The modern view's beam (authored, tuned live with J/K, U/I and G/H):
+    /// the engine frames a turn takes (the original's colours cycle in 64),
+    /// its tilt toward the camera in degrees, and its brightness.
     pub beam_period: f64,
     pub beam_tilt: f64,
+    pub beam_brightness: f64,
 }
 
 impl GreetingsPreview {
@@ -357,6 +362,7 @@ impl GreetingsPreview {
             white_phase,
             beam_period: BEAM_PERIOD,
             beam_tilt: BEAM_TILT,
+            beam_brightness: BEAM_BRIGHTNESS,
             start,
             letterforms: letterforms(LetterSource::Outlines(LETTERS))?,
             motes: motes(&planes),
@@ -706,7 +712,7 @@ impl GreetingsPreview {
             beam: [
                 (self.beam_period / 64.0) as f32,
                 self.beam_tilt.to_radians() as f32,
-                0.0,
+                self.beam_brightness as f32,
                 0.0,
             ],
         }
