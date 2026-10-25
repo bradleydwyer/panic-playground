@@ -678,17 +678,21 @@ impl Stone {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
+    use crate::hd::plasma::{LOGO_ROWS, LOGO_WIDTH};
 
-    /// An invented slab: a block of known size drawn through a known
-    /// camera, row by row, as the logo would be. The fit finds the camera
-    /// and the block again.
-    #[test]
-    fn the_fit_finds_an_invented_block_again() {
-        let (focal, tilt, width, depth): (f64, f64, f64, f64) = (270.0, 0.55, 490.0, 190.0);
-        let z = 520.0;
-        let near = [0.0, 150.0, z];
+    /// An invented block, drawn row by row as the logo would show it (from
+    /// raster 237, index 5) through a camera of vertical focal length
+    /// `focal` on column 160: `width` wide, `depth` deep and 100 high, its
+    /// top face rising away at `tilt`, its near top edge's centre at `near`.
+    pub(in crate::hd) fn invented_logo(
+        focal: f64,
+        tilt: f64,
+        width: f64,
+        depth: f64,
+        near: [f64; 3],
+    ) -> Vec<u8> {
         let (s, c) = tilt.sin_cos();
         let project = |p: [f64; 3]| {
             (
@@ -696,8 +700,8 @@ mod tests {
                 100.0 + focal * p[1] / p[2],
             )
         };
-        let mut logo = vec![0u8; 320 * 180];
-        for r in 0..180 {
+        let mut logo = vec![0u8; LOGO_WIDTH * LOGO_ROWS];
+        for r in 0..LOGO_ROWS {
             let y = (237.0 + r as f64 + 0.5) / 2.0;
             // The block's edges at this row: on the top face (between the
             // far and near edges) or on the front face (below).
@@ -721,10 +725,91 @@ mod tests {
             });
             if let Some(h) = half {
                 for x in (160.0 - h).round() as usize..(160.0 + h).round() as usize {
-                    logo[r * 320 + x] = 5;
+                    logo[r * LOGO_WIDTH + x] = 5;
                 }
             }
         }
+        logo
+    }
+
+    /// The invented logos' palette: the stone (5), a dark shade (6), a
+    /// darker outline (7), and a shade between the stone and the dark
+    /// (8 to 15, darkening).
+    pub(in crate::hd) fn invented_palette() -> Vec<u8> {
+        let mut palette = vec![0u8; 768];
+        palette[15..18].copy_from_slice(&[40, 30, 20]);
+        palette[18..21].copy_from_slice(&[10, 8, 6]);
+        palette[21..24].copy_from_slice(&[3, 2, 2]);
+        for k in 0..8u8 {
+            let i = 3 * (8 + k as usize);
+            palette[i..i + 3].copy_from_slice(&[40 - k, 30 - k, 20 - k / 2]);
+        }
+        palette
+    }
+
+    /// An invented slab about the size and pose of the one fitted to the
+    /// real logo (as the load reports it: focal length 262.8 rows, tilt
+    /// 31.3 degrees, near edge 504 away, 193.9 deep), its far edge on the
+    /// logo's first rows and its base below the frame.
+    pub(in crate::hd) fn invented_slab() -> Vec<u8> {
+        invented_logo(262.8, 0.5458, 490.0, 193.9, [0.0, 149.0, 503.6])
+    }
+
+    pub(in crate::hd) fn invented_stone() -> Stone {
+        Stone::new(&invented_slab(), &invented_palette(), [490.0, 200.0, 100.0]).unwrap()
+    }
+
+    /// Each row's first and last stone pixel in a logo.
+    fn silhouette(logo: &[u8]) -> Vec<Option<(usize, usize)>> {
+        (0..LOGO_ROWS)
+            .map(|r| {
+                let line = &logo[r * LOGO_WIDTH..][..LOGO_WIDTH];
+                Some((
+                    line.iter().position(|&i| i != 0)?,
+                    line.iter().rposition(|&i| i != 0)?,
+                ))
+            })
+            .collect()
+    }
+
+    /// A relief's texel: depth, albedo, carved, crack.
+    fn texel(relief: &Relief, x: usize, y: usize) -> [f64; 4] {
+        let i = 4 * (y * relief.size.0 as usize + x);
+        std::array::from_fn(|k| relief.texels[i + k].to_f64())
+    }
+
+    /// Where texel (x, y) of the top face (`top`) or the front face lies in
+    /// the logo: its column and row, as the carving reads them.
+    fn logo_place(stone: &Stone, top: bool, x: usize, y: usize) -> (f64, f64) {
+        let (back, down) = stone.axes();
+        let direction = if top { back } else { down };
+        let texel = stone.size[0] / RELIEF_TEXELS as f64;
+        let (u, v) = (
+            (x as f64 + 0.5) * texel - stone.size[0] / 2.0,
+            (y as f64 + 0.5) * texel,
+        );
+        let p: [f64; 3] = std::array::from_fn(|k| {
+            stone.corner[k] + v * direction[k] + if k == 0 { u } else { 0.0 }
+        });
+        let (column, row) = stone.project(p);
+        (column - 0.5, 2.0 * row - 237.0 - 0.5)
+    }
+
+    /// The last texel column before a face's right margin (the carving's
+    /// edge margin).
+    fn last_before_margin() -> usize {
+        let texel = 490.0 / RELIEF_TEXELS as f64;
+        RELIEF_TEXELS - (EDGE_MARGIN / texel).ceil() as usize - 1
+    }
+
+    /// An invented slab: a block of known size drawn through a known
+    /// camera, row by row, as the logo would be. The fit finds the camera
+    /// and the block again.
+    #[test]
+    fn the_fit_finds_an_invented_block_again() {
+        let (focal, tilt, width, depth): (f64, f64, f64, f64) = (270.0, 0.55, 490.0, 190.0);
+        let z = 520.0;
+        let logo = invented_logo(focal, tilt, width, depth, [0.0, 150.0, z]);
         let mut palette = vec![0u8; 768];
         palette[15..18].copy_from_slice(&[40, 30, 20]);
         let stone = Stone::new(&logo, &palette, [490.0, 200.0, 100.0]).unwrap();
@@ -741,6 +826,265 @@ mod tests {
                 .chunks(4)
                 .all(|t| t[0].to_f64() <= CRACK_DEPTH + 1e-3),
             "carved an even slab"
+        );
+    }
+
+    /// Both sheets stand on the floor, the plane of the slab's base, on
+    /// one line: their bottom edges project to row 113, the bottom of the
+    /// plasma's last raster, all along their width.
+    #[test]
+    fn the_sheets_stand_on_the_floor_at_the_plasmas_bottom_edge() {
+        let stone = invented_stone();
+        let (back, down) = stone.axes();
+        let floor = stone.floor();
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let minus = |a: [f64; 3], b: [f64; 3]| -> [f64; 3] { std::array::from_fn(|k| a[k] - b[k]) };
+        // The floor is the slab's base: 100 below its top face, level with it.
+        let base_corner: [f64; 3] = std::array::from_fn(|k| stone.corner[k] + 100.0 * down[k]);
+        assert!(minus(floor, base_corner).iter().all(|v| v.abs() < 1e-9));
+        assert!(dot(back, down).abs() < 1e-12);
+        let [front, rear] = stone.sheets;
+        assert!(
+            minus(front.base, rear.base).iter().all(|v| v.abs() < 1e-9),
+            "the sheets meet the floor on one line"
+        );
+        for (name, sheet) in [("front", front), ("back", rear)] {
+            for across in [-1.0, 0.0, 1.0] {
+                let p = [
+                    sheet.base[0] + across * sheet.half_width,
+                    sheet.base[1],
+                    sheet.base[2],
+                ];
+                assert!(
+                    dot(minus(p, floor), down).abs() < 1e-9,
+                    "the {name} sheet's foot is off the floor"
+                );
+                let row = stone.project(p).1;
+                assert!(
+                    (row - 113.0).abs() < 1e-9,
+                    "the {name} sheet's foot at row {row}"
+                );
+            }
+        }
+        // floor_back_to_row finds that line: straight back along the floor
+        // from below the near top edge, it projects to the row asked for.
+        for row in [113.0, 125.0, 160.0] {
+            let along = stone.floor_back_to_row(row);
+            let p: [f64; 3] = std::array::from_fn(|k| floor[k] + along * back[k]);
+            assert!((stone.project(p).1 - row).abs() < 1e-9, "row {row}");
+        }
+    }
+
+    /// The sheets' top edges stand where they did before the floor: each
+    /// where a sheet leaning 0.4 radians toward the camera from upright,
+    /// its foot 30 units behind the slab's far edge at its top face's
+    /// height (and 70 further for the back one), reaches row -60, above
+    /// the screen. So on the screen each still spans the rows from there to
+    /// the plasma's bottom edge, and is wide enough at every height for a
+    /// 21:9 drawable. The two open from their line like a book's pages:
+    /// both lean toward the camera, the back one less, its top further back.
+    #[test]
+    fn the_sheets_top_edges_stand_where_they_did_before_the_floor() {
+        let stone = invented_stone();
+        let (back, down) = stone.axes();
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let (s, c) = 0.4_f64.sin_cos();
+        let lean: [f64; 3] = std::array::from_fn(|k| -c * down[k] - s * back[k]);
+        let mut tops = Vec::new();
+        let mut leans = Vec::new();
+        for (k, sheet) in stone.sheets.iter().enumerate() {
+            let top: [f64; 3] = std::array::from_fn(|i| sheet.base[i] + sheet.height * sheet.up[i]);
+            assert!(
+                (stone.project(top).1 + 60.0).abs() < 1e-6,
+                "sheet {k}'s top edge"
+            );
+            // On the sheet as it stood: from its foot along its lean.
+            let behind = stone.size[1] + 30.0 + 70.0 * k as f64;
+            let foot: [f64; 3] = std::array::from_fn(|i| stone.corner[i] + behind * back[i]);
+            let reach: [f64; 3] = std::array::from_fn(|i| top[i] - foot[i]);
+            let along = dot(reach, lean);
+            assert!(along > 0.0);
+            let off = (dot(reach, reach) - along * along).max(0.0).sqrt();
+            assert!(
+                off < 1e-6,
+                "sheet {k}'s top edge is {off} off its old plane"
+            );
+            // Wide enough to cover a 21:9 drawable at every height.
+            let reach_columns = 160.0 * (21.0 / 9.0) / (4.0 / 3.0);
+            for h in [0.0, 0.5, 1.0] {
+                let p: [f64; 3] =
+                    std::array::from_fn(|i| sheet.base[i] + h * sheet.height * sheet.up[i]);
+                let edge = |x: f64| stone.project([p[0] + x, p[1], p[2]]).0;
+                assert!(
+                    edge(-sheet.half_width) <= 160.0 - reach_columns,
+                    "sheet {k}"
+                );
+                assert!(edge(sheet.half_width) >= 160.0 + reach_columns, "sheet {k}");
+            }
+            // How far it leans from upright (-down), and toward which side.
+            assert!(
+                dot(sheet.up, back) < 0.0,
+                "sheet {k} leans away from the camera"
+            );
+            leans.push((-dot(sheet.up, down)).clamp(-1.0, 1.0).acos());
+            tops.push(top);
+        }
+        assert!(leans[0] > leans[1] && leans[1] > 0.0, "leans {leans:?}");
+        let apart: [f64; 3] = std::array::from_fn(|i| tops[1][i] - tops[0][i]);
+        assert!(
+            dot(apart, back) > 0.0,
+            "the back sheet's top is not behind the front's"
+        );
+    }
+
+    /// The logo's light comes from the upper left, so it paints the slab's
+    /// right end in shade. On an invented slab shaded dark over its right
+    /// end, carving that reaches the right margin is taken as that shade
+    /// and left uncut on both faces, while a dark patch in the middle of the
+    /// top face is carved to the full depth, and one at the left end, which
+    /// is not taken as shade, is carved too.
+    #[test]
+    fn carving_that_reaches_the_right_margin_is_left_uncut() {
+        let mut logo = invented_slab();
+        let rows = silhouette(&logo);
+        let shade = 14;
+        for (r, row) in rows.iter().enumerate() {
+            if let Some((first, last)) = *row {
+                for x in last + 1 - shade..=last {
+                    logo[r * LOGO_WIDTH + x] = 6;
+                }
+                if (30..46).contains(&r) {
+                    for x in 140..180 {
+                        logo[r * LOGO_WIDTH + x] = 6;
+                    }
+                    for x in first..first + 20 {
+                        logo[r * LOGO_WIDTH + x] = 6;
+                    }
+                }
+            }
+        }
+        let stone = Stone::new(&logo, &invented_palette(), [490.0, 200.0, 100.0]).unwrap();
+        let (mut shaded, mut middle, mut left) = (0, 0.0_f64, 0.0_f64);
+        for (top, relief) in [(true, &stone.top), (false, &stone.front)] {
+            let (w, h) = (relief.size.0 as usize, relief.size.1 as usize);
+            for y in 0..h {
+                for x in 0..w {
+                    let (c, r) = logo_place(&stone, top, x, y);
+                    let (c, r) = (c.round() as i64, r.round() as i64);
+                    if !(0..LOGO_ROWS as i64).contains(&r) {
+                        continue;
+                    }
+                    let Some((first, last)) = rows[r as usize] else {
+                        continue;
+                    };
+                    let t = texel(relief, x, y);
+                    // Well within the shade (clear of its blurred inner edge).
+                    if c > (last + 3 - shade) as i64 && c <= last as i64 {
+                        assert_eq!(t[2], 0.0, "carved shade at texel ({x}, {y}), top {top}");
+                        assert!(t[0] <= CRACK_DEPTH + 1e-3, "{} deep at ({x}, {y})", t[0]);
+                        shaded += 1;
+                    }
+                    if top && (34..42).contains(&r) {
+                        if (150..170).contains(&c) {
+                            middle = middle.max(t[0]);
+                        }
+                        if (first as i64 + 4..first as i64 + 14).contains(&c) {
+                            left = left.max(t[2]);
+                        }
+                    }
+                }
+            }
+        }
+        assert!(shaded > 5000, "{shaded} texels in the shade");
+        assert!(
+            (middle - CARVE_DEPTH).abs() < 0.05,
+            "the middle carved {middle} deep"
+        );
+        assert!(left > 0.9, "the left end carved {left}");
+    }
+
+    /// A thin dark line across the top face is a crack along its whole
+    /// length but for the slab's right end, where it fades out over the 4
+    /// units before the margin and is gone in the margin, so the dark
+    /// outline the logo paints there cannot cut a groove along the edge.
+    #[test]
+    fn cracks_fade_out_before_the_right_margin() {
+        let mut logo = invented_slab();
+        let line = 60;
+        for x in 0..LOGO_WIDTH {
+            if logo[line * LOGO_WIDTH + x] != 0 {
+                logo[line * LOGO_WIDTH + x] = 6;
+            }
+        }
+        let stone = Stone::new(&logo, &invented_palette(), [490.0, 200.0, 100.0]).unwrap();
+        let relief = &stone.top;
+        let (w, h) = (relief.size.0 as usize, relief.size.1 as usize);
+        // The texel row along the line.
+        let y = (0..h)
+            .max_by(|&a, &b| texel(relief, w / 2, a)[3].total_cmp(&texel(relief, w / 2, b)[3]))
+            .unwrap();
+        let crack = |x: usize| texel(relief, x, y)[3];
+        let last = last_before_margin();
+        let fade = (4.0 / (490.0 / RELIEF_TEXELS as f64)) as usize;
+        assert!(crack(w / 2) > 0.9, "{}", crack(w / 2));
+        assert!(crack(40) > 0.9, "the left end's crack {}", crack(40));
+        assert!(crack(last - fade - 2) > 0.9, "{}", crack(last - fade - 2));
+        for x in last - fade..last {
+            assert!(crack(x + 1) <= crack(x), "the crack rises again at {x}");
+        }
+        assert!((last - fade..last).any(|x| (0.2..0.8).contains(&crack(x))));
+        for x in last..w {
+            assert_eq!(crack(x), 0.0, "a crack in the margin at {x}");
+            if x >= last + 4 {
+                assert!(texel(relief, x, y)[0] < 0.05, "cut at {x}");
+            }
+        }
+    }
+
+    /// In the right margin the stone's colour is mirrored from just inside
+    /// it, so the right end's painted outline and the black past the logo's
+    /// edge do not show there and the colour runs on to the edge without a
+    /// step. Here the invented slab is shaded darker toward its right end,
+    /// outlined there in near black, as the logo is.
+    #[test]
+    fn the_colour_is_mirrored_into_the_right_margin() {
+        let mut logo = invented_slab();
+        let rows = silhouette(&logo);
+        for (r, row) in rows.iter().enumerate() {
+            if let Some((_, last)) = *row {
+                for k in 0..16 {
+                    logo[r * LOGO_WIDTH + last - 16 + k] = 8 + k as u8 / 2;
+                }
+                logo[r * LOGO_WIDTH + last] = 7;
+            }
+        }
+        let stone = Stone::new(&logo, &invented_palette(), [490.0, 200.0, 100.0]).unwrap();
+        let last = last_before_margin();
+        let mut covered = 0;
+        for (top, relief) in [(true, &stone.top), (false, &stone.front)] {
+            let (w, h) = (relief.size.0 as usize, relief.size.1 as usize);
+            for y in 0..h {
+                for x in last + 1..w {
+                    let mirrored = 2 * last + 1 - x;
+                    assert_eq!(
+                        texel(relief, x, y)[1],
+                        texel(relief, mirrored, y)[1],
+                        "albedo at ({x}, {y}), top {top}"
+                    );
+                    // What the margin covers in the logo: the outline or
+                    // the black past the edge.
+                    let (c, r) = logo_place(&stone, top, x, y);
+                    let (c, r) = (c.round() as usize, r.round() as usize);
+                    if r < LOGO_ROWS && c < LOGO_WIDTH && [0, 7].contains(&logo[r * LOGO_WIDTH + c])
+                    {
+                        covered += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            covered > 100,
+            "the margin covers {covered} texels of outline or black"
         );
     }
 

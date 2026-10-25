@@ -810,6 +810,76 @@ mod tests {
     use super::*;
     use crate::hd::clip::{Clip, ScrollerLighting};
 
+    /// An invented part 7, starting at about the real part's clip time
+    /// (225.43 s, observed): its first frame, a few greetings frames, the
+    /// fade to white, the monster and part 8's first frame, with the beam
+    /// as loaded.
+    fn invented() -> GreetingsPreview {
+        let mut stages = vec![Stage::Setup];
+        stages.extend([Stage::Words; 12]);
+        stages.extend([Stage::White, Stage::White, Stage::Monster, Stage::Part8]);
+        let frames: Vec<GreetingsFrame> = stages
+            .iter()
+            .enumerate()
+            .map(|(j, &stage)| GreetingsFrame {
+                stage,
+                state: HdGreetings::default(),
+                phase: j as f64,
+                intensity: 64.0,
+                white: if stage == Stage::White { 0.5 } else { 0.0 },
+                monster: if stage >= Stage::Monster { 1.0 } else { 0.0 },
+                positions: [0; STRIPS],
+                drew: stage == Stage::Words,
+            })
+            .collect();
+        let n = frames.len();
+        let at = |stage: Stage| {
+            stages.iter().position(|&s| s == stage).unwrap() as f64 / FRAME_RATE as f64
+        };
+        GreetingsPreview {
+            start: 15780,
+            frames,
+            palettes: vec![0; 768 * n],
+            shown: vec![0; n * STRIPS * ROWS],
+            slots: vec![(0, [[255; SLOTS]; STRIPS]); n],
+            planes: vec![0; 4 * 65536],
+            tables: HdGreetingsTables {
+                sine: [0; 601],
+                texts: std::array::from_fn(|_| Vec::new()),
+                monster: vec![0; 64000],
+                monster_palette: vec![0; 768],
+            },
+            music: Vec::new(),
+            events: GreetingsEvents {
+                lit: at(Stage::Words),
+                words: at(Stage::Words),
+                words_end: at(Stage::White),
+                white: at(Stage::White),
+                monster: at(Stage::Monster),
+                part8: at(Stage::Part8),
+            },
+            letterforms: letterforms(LetterSource::Outlines(LETTERS)).unwrap(),
+            motes: Vec::new(),
+            white_phase: 13.0,
+            beam_period: BEAM_PERIOD,
+            beam_tilt: BEAM_TILT,
+            beam_brightness: BEAM_BRIGHTNESS,
+            beam_width: BEAM_WIDTH,
+            lamp_centred: true,
+        }
+    }
+
+    /// The row the controls put the lamp on (`beam_late.y`), at every
+    /// quarter frame of the part.
+    fn lamp_rows(g: &GreetingsPreview) -> Vec<f32> {
+        (0..4 * g.frames.len())
+            .map(|k| {
+                g.controls(g.seconds(0) + k as f64 / (4.0 * FRAME_RATE as f64))
+                    .beam_late[1]
+            })
+            .collect()
+    }
+
     /// The star colours as the scene fills them (read from the code).
     fn stars(phase: usize, intensity: u16) -> Vec<u8> {
         (0..64)
@@ -1010,5 +1080,42 @@ mod tests {
         // On the fade's first frame its direction is the original's.
         let white = g.seconds(0) + g.events.white;
         assert!((g.controls(white).beam[0] as f64 - g.white_phase).abs() < 1e-2);
+    }
+
+    /// The lamp shows on the frame's middle row, 100, when centred, and
+    /// back on the sweep's centre (the point the stars' colours were fitted
+    /// to turn round), 15 rows above, when the preview puts it back (O), at
+    /// every moment of the part; nothing else the controls give changes
+    /// with it.
+    #[test]
+    fn the_lamp_shows_on_the_frames_middle_or_back_on_the_sweeps_centre() {
+        let mut g = invented();
+        assert!(
+            lamp_rows(&g).iter().all(|&r| r == 100.0),
+            "{:?}",
+            lamp_rows(&g)
+        );
+        let time = g.seconds(5) + 0.3 / FRAME_RATE as f64;
+        let centred = g.controls(time);
+        g.lamp_centred = false;
+        assert!(lamp_rows(&g).iter().all(|&r| r == SWEEP_CENTRE.1 as f32));
+        let mut put_back = g.controls(time);
+        assert_eq!(centred.beam_late[1] - put_back.beam_late[1], 15.0);
+        put_back.beam_late[1] = centred.beam_late[1];
+        assert_eq!(put_back, centred);
+    }
+
+    /// As loaded, the lamp is centred: the controls put it on the frame's
+    /// middle row throughout the part.
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
+    fn part7s_lamp_is_centred_by_default() {
+        let data = crate::test_support::data();
+        let clip = Clip::load_greetings(&data, ScrollerLighting::Studio).unwrap();
+        let g = clip.greetings.as_ref().unwrap();
+        assert!(g.lamp_centred);
+        for j in (0..g.frames.len()).step_by(7) {
+            assert_eq!(g.controls(g.seconds(j)).beam_late[1], 100.0, "frame {j}");
+        }
     }
 }

@@ -862,6 +862,58 @@ mod tests {
     use super::*;
     use crate::hd::clip::{Clip, ScrollerLighting};
 
+    /// An invented part 8 on the scene's steps: the monster held to frame
+    /// 284, where the white flash comes in the real part (observed), then a
+    /// step a frame to the last; black pictures and palettes; the speed and
+    /// the pitch as loaded.
+    fn invented() -> EndingPreview {
+        let steps: Vec<usize> = std::iter::repeat_n(0, 284).chain(2..=198).collect();
+        let frames: Vec<EndingFrame> = steps
+            .iter()
+            .map(|&step| EndingFrame {
+                step,
+                stage: Stage::of(step),
+                image: 0,
+            })
+            .collect();
+        let at = |stage: Stage| {
+            let j = frames.iter().position(|f| f.stage >= stage).unwrap();
+            j as f64 / FRAME_RATE as f64
+        };
+        let events = EndingEvents {
+            white: at(Stage::White),
+            collapse: at(Stage::Collapse),
+            line: at(Stage::Line),
+            dot: at(Stage::Dot),
+            end: at(Stage::End),
+            last: (frames.len() - 1) as f64 / FRAME_RATE as f64,
+        };
+        let n = frames.len();
+        let mut preview = EndingPreview {
+            start: 17000,
+            frames,
+            palettes: vec![0; 768 * n],
+            images: vec![vec![0; 64000]],
+            monster: vec![0; 64000],
+            music: Vec::new(),
+            events,
+            content: (0, 319),
+            line_colour: [0.0; 3],
+            profile: Vec::new(),
+            phosphor: Vec::new(),
+            cells: Vec::new(),
+            pull_speed: SPEED,
+            triad_pitch: TRIAD_PITCH,
+        };
+        preview.phosphor = preview.persistence();
+        preview
+    }
+
+    /// The camera's distance from the centre set's face.
+    fn distance(eye: [f64; 3]) -> f64 {
+        (eye[0] * eye[0] + eye[1] * eye[1] + eye[2] * eye[2]).sqrt()
+    }
+
     #[test]
     fn stages_follow_the_scenes_steps() {
         let stages: Vec<Stage> = [0, 1, 2, 3, 4, 20, 21, 67, 68, 128, 129, 198]
@@ -1122,5 +1174,142 @@ mod tests {
         // The CRT starts from nothing, and everything has faded by the end.
         assert_eq!(ending.controls(start).tube[0], 0.0);
         assert_eq!(ending.controls(clip.duration()).beam[3], 0.0);
+    }
+
+    /// The pull-back takes its speed from the caller everywhere: how far it
+    /// has drawn back (the logarithm of the camera's distance over its
+    /// first) is in proportion to the speed at every moment, and the
+    /// preview's camera and the sets across at the white follow its own
+    /// speed, as the player's keys set it. At the default SPEED about 2.9
+    /// sets are across a 16:9 frame at the white flash.
+    #[test]
+    fn the_pull_back_scales_with_the_speed_given() {
+        let first = distance(camera(0.0, SPEED).0);
+        for tau in [0.0, 30.0, 150.0, 220.0, 284.0, 400.0, 481.0] {
+            let base = pull_back(tau, SPEED);
+            for k in [0.25, 0.5, 2.0, 4.0] {
+                assert!((pull_back(tau, k * SPEED) - k * base).abs() < 1e-12);
+                let back = (distance(camera(tau, k * SPEED).0) / first).ln();
+                assert!((back - k * base).abs() < 1e-9, "{tau} at x{k}");
+            }
+        }
+        let mut p = invented();
+        let tau = 284.0;
+        let time = p.seconds(0) + tau / FRAME_RATE as f64;
+        let at_white = p.sets_across_at_white(16.0 / 9.0);
+        assert!((2.85..2.95).contains(&at_white), "{at_white} sets across");
+        p.pull_speed = SPEED / 2.0;
+        let eye = p.controls(time).eye;
+        let expected = camera(tau, SPEED / 2.0).0;
+        for k in 0..3 {
+            assert!((eye[k] as f64 - expected[k]).abs() < 1e-3 * distance(expected));
+        }
+        assert!(
+            (p.sets_across_at_white(16.0 / 9.0) - sets_across(tau, SPEED / 2.0, 16.0 / 9.0)).abs()
+                < 1e-9
+        );
+    }
+
+    /// The sets across a frame at the white flash: more the faster the
+    /// camera draws back, over the whole range the keys allow, and more
+    /// the wider the frame, in proportion to its width.
+    #[test]
+    fn the_sets_across_at_the_white_grow_with_the_speed_and_the_aspect() {
+        let mut p = invented();
+        let mut last = 0.0;
+        for speed in [0.002, 0.004, SPEED, 0.012, 0.025, 0.05] {
+            p.pull_speed = speed;
+            let across = p.sets_across_at_white(16.0 / 9.0);
+            assert!(across > last, "{across} at {speed}");
+            last = across;
+        }
+        p.pull_speed = SPEED;
+        let aspects = [4.0 / 3.0, 16.0 / 9.0, 21.0 / 9.0, 32.0 / 9.0];
+        let across = aspects.map(|a| p.sets_across_at_white(a));
+        for (a, n) in aspects.iter().zip(across) {
+            assert!((n / across[0] - a / aspects[0]).abs() < 1e-12, "{n} at {a}");
+        }
+    }
+
+    /// The moiré's first band pass comes when the frame's height covers
+    /// SENSOR_LINES triads of the face: later as the triad pitch grows
+    /// (coarser) and earlier as it shrinks, never before part 8's first
+    /// frame and, where it would come after the white, not at all; and later
+    /// the slower the camera draws back.
+    #[test]
+    fn the_first_band_pass_comes_later_with_a_coarser_grille_or_a_slower_pull_back() {
+        let mut p = invented();
+        let first = p.seconds(0);
+        let white = first + p.events.white;
+        let default = p.first_band_pass().unwrap();
+        assert!(first < default && default < white, "{default}");
+        // At the pass the frame's height covers SENSOR_LINES triads of the
+        // face (its rows, at the camera's distance; the picture's 200
+        // rows, 200 PICTURE_SCALE of them, at first).
+        let tau = (default - first) * FRAME_RATE as f64;
+        let (eye, _, tan_half) = camera(tau, SPEED);
+        let height = 2.0 * distance(eye) * tan_half;
+        assert!(
+            (height / TRIAD_PITCH - SENSOR_LINES).abs() < 0.01,
+            "{height}"
+        );
+        // The pitch over the keys' range (0.25 to 16 rows).
+        let mut last = first - 1.0;
+        let mut passes = Vec::new();
+        for pitch in [0.25, 1.0, 1.7, 2.0, 2.5, 3.5, 5.0, 7.0, 8.0, 16.0] {
+            p.triad_pitch = pitch;
+            let pass = p.first_band_pass();
+            passes.push((pitch, pass));
+            match pass {
+                Some(t) => {
+                    assert!(t >= first && t <= white, "{t} at pitch {pitch}");
+                    assert!(t >= last, "earlier at pitch {pitch}");
+                    if pitch > 1.7 {
+                        assert!(t > last, "no later at pitch {pitch}");
+                    }
+                    last = t;
+                }
+                None => last = f64::INFINITY,
+            }
+        }
+        assert!(passes.iter().any(|p| p.1.is_none()), "{passes:?}");
+        assert!(passes[0].1.is_some_and(|t| t - first < 1e-6), "{passes:?}");
+        // The speed over the keys' range: slower, later.
+        p.triad_pitch = TRIAD_PITCH;
+        let mut last = f64::INFINITY;
+        for speed in [0.002, 0.004, SPEED, 0.012, 0.025, 0.05] {
+            p.pull_speed = speed;
+            let t = p.first_band_pass().unwrap();
+            assert!(t < last, "{t} at {speed}");
+            last = t;
+        }
+    }
+
+    /// The exposure's blur (`aim.w`, how far the camera draws back in the
+    /// logarithm of its distance over a sixtieth of a second) follows the
+    /// preview's pull-back speed: what the camera at that speed does over a
+    /// sixtieth of a second, twice as much at twice the speed.
+    #[test]
+    fn the_exposures_draw_back_follows_the_pull_speed() {
+        let mut p = invented();
+        for tau in [10.0, 150.0, 284.0, 400.0] {
+            let time = p.seconds(0) + tau / FRAME_RATE as f64;
+            let mut blurs = Vec::new();
+            for speed in [0.004, SPEED, 2.0 * SPEED, 0.05] {
+                p.pull_speed = speed;
+                let blur = p.controls(time).aim[3] as f64;
+                let half = FRAME_RATE as f64 / 120.0;
+                let filmed = (distance(camera(tau + half, speed).0)
+                    / distance(camera(tau - half, speed).0))
+                .ln();
+                assert!(
+                    (blur - filmed).abs() < 1e-3 * filmed,
+                    "{blur} vs {filmed} at {speed}"
+                );
+                blurs.push(blur);
+            }
+            assert!((blurs[2] / blurs[1] - 2.0).abs() < 1e-5, "{blurs:?}");
+            assert!(blurs.windows(2).all(|w| w[0] < w[1]), "{blurs:?}");
+        }
     }
 }

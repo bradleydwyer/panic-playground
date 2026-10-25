@@ -986,6 +986,283 @@ impl PlasmaPreview {
 mod tests {
     use super::*;
     use crate::hd::clip::{Clip, ScrollerLighting};
+    use crate::scenes::plasma::HdPlasmaTables;
+
+    /// An invented part 4: the invented slab of plasma_stone.rs (about the
+    /// size and pose of the one fitted to the real logo) and events a
+    /// little longer than the real part's, in part-4 seconds. Observed when
+    /// the real preview loads, the plasma begins to light 7.56 s into the
+    /// part and is dark again 35.36 s later; here it is dark 36 s later, so
+    /// the drops' schedule, fixed from the first light, covers the real
+    /// one's. The part starts at about the real one's clip time (179.96 s,
+    /// also observed).
+    fn invented() -> PlasmaPreview {
+        let events = PlasmaEvents {
+            plasma: 1.0,
+            fade_in: 7.5,
+            full: 11.0,
+            fade_out: 40.0,
+            dark: 43.5,
+            slide: 44.5,
+            part7: 45.5,
+        };
+        let last = (events.part7 * FRAME_RATE as f64).round() as usize;
+        let phase = |j: usize| {
+            let t = j as f64 / FRAME_RATE as f64;
+            if j == last {
+                Phase::Part7
+            } else if t >= events.slide {
+                Phase::Slide
+            } else if t >= events.plasma {
+                Phase::Plasma
+            } else {
+                Phase::Slab
+            }
+        };
+        let frames: Vec<PlasmaFrame> = (0..=last)
+            .map(|j| PlasmaFrame {
+                phase: phase(j),
+                state: HdPlasma {
+                    line_compare: REST_LINE_COMPARE,
+                    ..HdPlasma::default()
+                },
+                rotation: 0.0,
+                level: 0.0,
+            })
+            .collect();
+        let n = frames.len();
+        PlasmaPreview {
+            start: 12597,
+            frames,
+            palettes: vec![0; 768 * n],
+            tables: HdPlasmaTables {
+                sine: Vec::new(),
+                sift: Vec::new(),
+                bank: Vec::new(),
+                field: Vec::new(),
+                logo: Vec::new(),
+                palette: Vec::new(),
+            },
+            offsets: [0, 0],
+            music: Vec::new(),
+            part7: (Vec::new(), Vec::new()),
+            events,
+            stone: super::super::plasma_stone::tests::invented_stone(),
+            glide: vec![[0.0; 2]; n],
+            order_starts: Vec::new(),
+            polished_floor: false,
+            water: WaterTuning::default(),
+        }
+    }
+
+    /// Press a water key `times` times at part-4 `seconds`.
+    fn press(p: &mut PlasmaPreview, knob: WaterKnob, up: bool, times: usize, seconds: f64) {
+        for _ in 0..times {
+            p.tune_water(knob, up, p.seconds(0) + seconds);
+        }
+    }
+
+    /// One drop as the water showed it: where it fell, when (part-4
+    /// seconds), and its age when first and last seen.
+    struct Seen {
+        place: [f32; 2],
+        at: f64,
+        first: f64,
+        last: f64,
+    }
+
+    /// How finely [`drops_seen`] samples the part (seconds).
+    const SAMPLE: f64 = 1.0 / 280.0;
+
+    /// Every drop the water shows over the whole part, sampled every
+    /// SAMPLE seconds, in the order they fall, and the most shown at once.
+    /// Each sample's slots hold the drops first, each its place, its age
+    /// and 1, and the rest are empty.
+    fn drops_seen(p: &PlasmaPreview) -> (Vec<Seen>, usize) {
+        let mut seen: Vec<Seen> = Vec::new();
+        let mut most = 0;
+        let samples = ((p.events.part7 + 1.0) / SAMPLE) as usize;
+        for i in 0..=samples {
+            let t = i as f64 * SAMPLE;
+            let drops = p.drops(t);
+            let on = drops.iter().take_while(|d| d[3] == 1.0).count();
+            assert!(
+                drops[on..].iter().all(|d| *d == [0.0; 4]),
+                "at {t}: {drops:?}"
+            );
+            most = most.max(on);
+            for d in &drops[..on] {
+                let age = d[2] as f64;
+                assert!((0.0..DROP_LIFE).contains(&age), "age {age} at {t}");
+                let at = t - age;
+                match seen.iter_mut().find(|s| s.place == [d[0], d[1]]) {
+                    Some(s) => {
+                        assert!((s.at - at).abs() < 1e-4, "a drop's time moved at {t}");
+                        s.last = age;
+                    }
+                    None => seen.push(Seen {
+                        place: [d[0], d[1]],
+                        at,
+                        first: age,
+                        last: age,
+                    }),
+                }
+            }
+        }
+        seen.sort_by(|a, b| a.at.total_cmp(&b.at));
+        (seen, most)
+    }
+
+    /// Run `check` at every drops' rate the keys allow, from the lowest to
+    /// the highest, set with the keys; then put the tuning back.
+    fn at_every_rate(p: &mut PlasmaPreview, mut check: impl FnMut(&PlasmaPreview)) {
+        let tuning = p.water;
+        press(p, WaterKnob::Drops, false, 40, 0.0);
+        press(p, WaterKnob::Drops, true, 1, 0.0);
+        loop {
+            let rate = p.drop_rate();
+            check(p);
+            press(p, WaterKnob::Drops, true, 1, 0.0);
+            if p.drop_rate() == rate {
+                break;
+            }
+        }
+        p.water = tuning;
+    }
+
+    /// Every drop falls once the plasma has been lighting for DROP_FIRST,
+    /// the first just then, and is gone (its time plus DROP_LIFE) by the
+    /// time the plasma is dark again; there are none before or after.
+    fn check_drops_fall_while_lit(p: &PlasmaPreview) {
+        let e = p.events;
+        let (seen, _) = drops_seen(p);
+        let rate = p.drop_rate();
+        assert!(!seen.is_empty(), "no drops at x{rate}");
+        assert!(
+            (seen[0].at - (e.fade_in + DROP_FIRST)).abs() < 1e-4,
+            "the first falls at {} at x{rate}",
+            seen[0].at
+        );
+        for s in &seen {
+            assert!(s.at >= e.fade_in + DROP_FIRST - 1e-4, "{} at x{rate}", s.at);
+            assert!(s.at + DROP_LIFE <= e.dark + 1e-4, "{} at x{rate}", s.at);
+        }
+        for t in [
+            0.0,
+            e.fade_in,
+            e.fade_in + DROP_FIRST - 0.01,
+            e.dark,
+            e.part7,
+        ] {
+            assert_eq!(p.drops(t), [[0.0; 4]; MAX_DROPS], "drops at {t} at x{rate}");
+        }
+    }
+
+    /// Each drop lands in view, below the plasma's bottom edge (row 113)
+    /// and within a 16:9 frame, beside the slab and never behind it: its
+    /// place on the water, seen from the camera, lies outside the slab's
+    /// silhouette grown by DROP_CLEAR all round (the block ground_point
+    /// keeps the drops' rays clear of), and the ray through it meets the
+    /// water there. Gives the number of drops checked.
+    fn check_drops_in_view(p: &PlasmaPreview) -> usize {
+        let stone = &p.stone;
+        let (back, down) = stone.axes();
+        let floor = stone.floor();
+        // The silhouette of the block grown by DROP_CLEAR: its corners'
+        // projections, which bound it (it is convex), in screen units
+        // (columns are 5/6 of a row).
+        let c = DROP_CLEAR;
+        let mut corners = Vec::new();
+        for x in [-stone.size[0] / 2.0 - c, stone.size[0] / 2.0 + c] {
+            for v in [-c, stone.size[1] + c] {
+                for w in [-c, stone.size[2] + c] {
+                    let q: [f64; 3] =
+                        std::array::from_fn(|k| stone.corner[k] + v * back[k] + w * down[k]);
+                    let (column, row) = stone.project([q[0] + x, q[1], q[2]]);
+                    corners.push((column * 5.0 / 6.0, row));
+                }
+            }
+        }
+        let inside_hull = |(x, y): (f64, f64)| {
+            // Inside unless an edge of the corners' hull (a line with
+            // every corner on one side) has the point on its other side.
+            let n = corners.len();
+            !(0..n).any(|a| {
+                (0..n).any(|b| {
+                    let (p, q) = (corners[a], corners[b]);
+                    let side =
+                        |r: (f64, f64)| (q.0 - p.0) * (r.1 - p.1) - (q.1 - p.1) * (r.0 - p.0);
+                    a != b && corners.iter().all(|&r| side(r) >= -1e-9) && side((x, y)) < 0.0
+                })
+            })
+        };
+        let half_width = 160.0 * (16.0 / 9.0) / (4.0 / 3.0);
+        let seen = drops_seen(p).0;
+        for s in &seen {
+            let [x, b] = s.place.map(|v| v as f64);
+            let point: [f64; 3] =
+                std::array::from_fn(|k| floor[k] + b * back[k] + if k == 0 { x } else { 0.0 });
+            let (column, row) = stone.project(point);
+            assert!(
+                (113.0..200.0).contains(&row) && (column - 160.0).abs() < half_width,
+                "a drop out of view at column {column:.1}, row {row:.1}"
+            );
+            assert!(
+                !inside_hull((column * 5.0 / 6.0, row)),
+                "a drop behind the slab at column {column:.1}, row {row:.1}"
+            );
+            let found = stone.ground_point(column, row, 0.0).unwrap();
+            assert!((found[0] - x).abs() < 1e-3 && (found[1] - b).abs() < 1e-3);
+        }
+        seen.len()
+    }
+
+    /// The shader's MAX_DROPS show every drop for its whole life over the
+    /// whole part: none is shown late or cut short, and none is left out
+    /// (each falls an interval of the schedule after the one before, and
+    /// the next after the last would outlast the plasma's light); so the
+    /// water has as many at once as the schedule has falling, never more
+    /// than MAX_DROPS.
+    fn check_drops_shown_whole(p: &PlasmaPreview) {
+        let rate = p.drop_rate();
+        let (seen, most) = drops_seen(p);
+        let (lo, hi) = (DROP_INTERVALS.0 / rate, DROP_INTERVALS.1 / rate);
+        for s in &seen {
+            assert!(
+                s.first < SAMPLE + 1e-4,
+                "shown {} s late at x{rate}",
+                s.first
+            );
+            assert!(
+                s.last > DROP_LIFE - SAMPLE - 1e-4,
+                "cut short at {} s at x{rate}",
+                s.last
+            );
+        }
+        for w in seen.windows(2) {
+            let gap = w[1].at - w[0].at;
+            assert!(
+                gap > lo - 1e-4 && gap < hi + 1e-4,
+                "{gap} s between drops at {} at x{rate}",
+                w[0].at
+            );
+        }
+        let latest = seen.last().unwrap().at + hi;
+        assert!(
+            latest + DROP_LIFE > p.events.dark,
+            "one left out at the end at x{rate}"
+        );
+        let alive = |t: f64| {
+            seen.iter()
+                .filter(|s| s.at <= t && t < s.at + DROP_LIFE)
+                .count()
+        };
+        let scheduled = seen.iter().map(|s| alive(s.at)).max().unwrap();
+        assert!(
+            most <= MAX_DROPS && scheduled == most,
+            "{scheduled} {most} at x{rate}"
+        );
+    }
 
     #[test]
     #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
@@ -1126,5 +1403,247 @@ mod tests {
             plasma.frame_at(dots.seconds(dots.frames.len() - 1)),
             Some(0)
         );
+    }
+
+    /// The drops are a function of the moment and the rate alone: the same
+    /// moment shows the same drops whether it is reached by seeking
+    /// straight to it, by playing through every frame before it, by seeking
+    /// back to it, in another preview, or after the rate and the swell have
+    /// been changed and the rate put back.
+    #[test]
+    fn the_drops_are_the_same_however_their_moment_is_reached() {
+        let fresh = invented();
+        let e = fresh.events;
+        let moments = [
+            e.fade_in + DROP_FIRST + 0.01,
+            e.fade_in + 9.3,
+            e.fade_in + 20.0,
+            e.dark - DROP_LIFE - 0.5,
+        ];
+        let direct: Vec<_> = moments.iter().map(|&m| fresh.drops(m)).collect();
+        assert!(direct.iter().all(|d| d[0][3] == 1.0), "{direct:?}");
+        let clip = |m: f64| fresh.seconds(0) + m;
+        // Played through every frame (at 60 fps) up to each moment.
+        let played = invented();
+        let mut next = 0;
+        for k in 0.. {
+            let t = k as f64 / 60.0;
+            if next == moments.len() {
+                break;
+            }
+            if t >= moments[next] {
+                assert_eq!(played.controls(clip(moments[next])).drops, direct[next]);
+                next += 1;
+            }
+            played.controls(clip(t));
+        }
+        // Sought back to, last first.
+        for (m, d) in moments.iter().zip(&direct).rev() {
+            assert_eq!(played.controls(clip(*m)).drops, *d);
+        }
+        // After the keys: the rate down three steps and back, the swell
+        // faster.
+        let mut tuned = invented();
+        press(&mut tuned, WaterKnob::Drops, false, 3, 12.0);
+        assert_ne!(tuned.drops(moments[2]), direct[2]);
+        press(&mut tuned, WaterKnob::Drops, true, 3, 31.0);
+        press(&mut tuned, WaterKnob::Speed, true, 3, 17.0);
+        for (m, d) in moments.iter().zip(&direct) {
+            assert_eq!(tuned.drops(*m), *d);
+        }
+    }
+
+    /// At every rate the keys allow, every drop falls once the plasma has
+    /// been lighting for DROP_FIRST, the first just then, and is gone (its
+    /// time plus DROP_LIFE) by the time the plasma is dark again; there are
+    /// none before or after.
+    #[test]
+    fn drops_fall_while_the_plasma_is_lit_and_are_gone_by_dark() {
+        at_every_rate(&mut invented(), check_drops_fall_while_lit);
+    }
+
+    /// At every rate the keys allow, each drop lands in view, below the
+    /// plasma and within a 16:9 frame, beside the slab and never behind it.
+    #[test]
+    fn drops_land_in_view_beside_the_slab() {
+        let mut count = 0;
+        at_every_rate(&mut invented(), |p| count += check_drops_in_view(p));
+        assert!(count > 100, "{count} drops");
+    }
+
+    /// At the highest rate the keys allow, a drop every 0.9 s on average,
+    /// the shader's MAX_DROPS still show every drop for its whole life over
+    /// the whole part, none shown late, cut short or left out, so the water
+    /// never has more than MAX_DROPS at once; as at every lower rate.
+    #[test]
+    fn at_the_highest_rate_no_drop_is_cut_short_or_left_out() {
+        let mut p = invented();
+        press(&mut p, WaterKnob::Drops, true, 40, 0.0);
+        assert_eq!(p.drops_label(), "a drop every 0.9 s");
+        check_drops_shown_whole(&p);
+        at_every_rate(&mut p, check_drops_shown_whole);
+    }
+
+    /// The drops on the real part, its slab as fitted to the user's logo
+    /// and its events as observed: at every rate the keys allow they fall
+    /// while the plasma is lit, land in view beside the slab and show whole.
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
+    fn part4s_drops_fall_beside_the_slab_and_show_whole_at_every_rate() {
+        let data = crate::test_support::data();
+        let mut clip = Clip::load_plasma(&data, ScrollerLighting::Studio).unwrap();
+        let plasma = clip.plasma.as_mut().unwrap();
+        let mut count = 0;
+        at_every_rate(plasma, |p| {
+            check_drops_fall_while_lit(p);
+            count += check_drops_in_view(p);
+            check_drops_shown_whole(p);
+        });
+        assert!(count > 100, "{count} drops");
+    }
+
+    /// The rate one step below the lowest the keys name is none: no drops
+    /// fall over the whole part; a step up, they fall again.
+    #[test]
+    fn the_drops_lowest_rate_is_none() {
+        let mut p = invented();
+        press(&mut p, WaterKnob::Drops, false, 40, 0.0);
+        assert_eq!(p.drop_rate(), 0.0);
+        assert_eq!(p.drops_label(), "no drops");
+        assert!(drops_seen(&p).0.is_empty());
+        press(&mut p, WaterKnob::Drops, true, 1, 0.0);
+        assert!(p.drop_rate() > 0.0);
+        assert!(!drops_seen(&p).0.is_empty());
+    }
+
+    /// By default (chosen by eye with the keys) the mirror's gain is 3, the
+    /// swell is 6 steps of x1.25 higher and faster than authored, about
+    /// x3.8, at its authored size, and a drop falls every 1.2 s on average,
+    /// as the falls over the part show.
+    #[test]
+    fn the_water_starts_at_its_chosen_tuning() {
+        let p = invented();
+        let six = 1.25_f64.powi(6);
+        assert_eq!(p.water_mirror(), 3.0);
+        assert!((p.swell_height() - six).abs() < 1e-12);
+        assert!((p.swell_speed() - six).abs() < 1e-12);
+        assert_eq!(p.swell_size(), 1.0);
+        assert!((p.swell_time(10.0) - 10.0 * six).abs() < 1e-9);
+        assert_eq!(p.drops_label(), "a drop every 1.2 s");
+        let (seen, _) = drops_seen(&p);
+        let mean = (seen.last().unwrap().at - seen[0].at) / (seen.len() - 1) as f64;
+        assert!((mean - 1.2).abs() < 0.12, "a drop every {mean} s");
+        let block = p.controls(p.seconds(0) + 20.0);
+        assert_eq!(block.water[0], 3.0);
+        assert_eq!(block.water[3], 1.0);
+    }
+
+    /// The water's keys hold each knob within its range at both ends, and a
+    /// step back comes straight off an end: the mirror's gain from 1 (water
+    /// as it is) to 8; the swell's height down to exactly 0, a flat mirror,
+    /// one step below its lowest, and up to x1.25^12, about x15; its speed
+    /// and size from x1.25^-6, about x0.26, to x1.25^12; the drops' rate
+    /// down to none and up to x1.25^7, a drop every 0.9 s.
+    #[test]
+    fn the_water_keys_hold_at_both_ends() {
+        type Value = fn(&PlasmaPreview) -> f64;
+        let knobs: [(WaterKnob, Value, f64, f64); 5] = [
+            (WaterKnob::Mirror, PlasmaPreview::water_mirror, 1.0, 8.0),
+            (
+                WaterKnob::Height,
+                PlasmaPreview::swell_height,
+                0.0,
+                1.25_f64.powi(12),
+            ),
+            (
+                WaterKnob::Speed,
+                PlasmaPreview::swell_speed,
+                1.25_f64.powi(-6),
+                1.25_f64.powi(12),
+            ),
+            (
+                WaterKnob::Size,
+                PlasmaPreview::swell_size,
+                1.25_f64.powi(-6),
+                1.25_f64.powi(12),
+            ),
+            (
+                WaterKnob::Drops,
+                PlasmaPreview::drop_rate,
+                0.0,
+                1.25_f64.powi(7),
+            ),
+        ];
+        for (knob, value, lowest, highest) in knobs {
+            for (up, end) in [(false, lowest), (true, highest)] {
+                let mut p = invented();
+                press(&mut p, knob, up, 40, 5.0);
+                assert!((value(&p) - end).abs() < 1e-12, "{knob:?}: {}", value(&p));
+                press(&mut p, knob, up, 1, 5.0);
+                assert!((value(&p) - end).abs() < 1e-12, "{knob:?} past its end");
+                press(&mut p, knob, !up, 1, 5.0);
+                assert!((value(&p) - end).abs() > 1e-3, "{knob:?} stuck at its end");
+            }
+        }
+        // The swell's height reaches 0 one step below its lowest.
+        let mut p = invented();
+        press(&mut p, WaterKnob::Height, false, 40, 5.0);
+        press(&mut p, WaterKnob::Height, true, 1, 5.0);
+        assert!((p.swell_height() - 1.25_f64.powi(SWELL_HEIGHT_STEPS.0)).abs() < 1e-12);
+        press(&mut p, WaterKnob::Height, false, 1, 5.0);
+        assert_eq!(p.swell_height(), 0.0);
+        assert_eq!(p.controls(p.seconds(0) + 5.0).water[1], 0.0);
+        let mut p = invented();
+        press(&mut p, WaterKnob::Drops, true, 40, 5.0);
+        assert_eq!(p.drops_label(), "a drop every 0.9 s");
+    }
+
+    /// A change of the swell's speed takes effect from the moment of the
+    /// change: its clock reads the same just after as just before, at any
+    /// moment of the part and however often it is changed, then runs on at
+    /// the new speed; so the waves never jump. The other keys leave the
+    /// clock alone.
+    #[test]
+    fn changing_the_swell_speed_does_not_move_its_clock() {
+        let mut p = invented();
+        let changes = [
+            (3.0, true, 1),
+            (9.25, false, 4),
+            (9.25, true, 1),
+            (20.0, true, 30),
+            (26.5, false, 40),
+            (33.0, true, 3),
+        ];
+        let mut last = p.swell_time(0.0);
+        for (seconds, up, times) in changes {
+            let before = p.swell_time(seconds);
+            let shown = p.controls(p.seconds(0) + seconds).water[2];
+            assert!(before >= last, "the clock ran back by {seconds}");
+            press(&mut p, WaterKnob::Speed, up, times, seconds);
+            let after = p.swell_time(seconds);
+            assert!(
+                (after - before).abs() < 1e-9,
+                "{before} -> {after} at {seconds}"
+            );
+            let shown_after = p.controls(p.seconds(0) + seconds).water[2];
+            assert!(
+                (shown_after - shown).abs() <= 1e-6 * shown.abs(),
+                "{shown} -> {shown_after}"
+            );
+            let ran = p.swell_time(seconds + 0.5) - after;
+            assert!((ran - 0.5 * p.swell_speed()).abs() < 1e-9);
+            last = after;
+        }
+        let before = p.swell_time(38.0);
+        for knob in [
+            WaterKnob::Mirror,
+            WaterKnob::Height,
+            WaterKnob::Size,
+            WaterKnob::Drops,
+        ] {
+            press(&mut p, knob, true, 2, 38.0);
+            press(&mut p, knob, false, 3, 38.0);
+        }
+        assert_eq!(p.swell_time(38.0), before);
     }
 }

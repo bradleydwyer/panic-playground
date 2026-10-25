@@ -866,6 +866,19 @@ mod tests {
         // The map is square, as its spread is the same both ways.
         let (w, h) = super::TRANSMISSION_SIZE;
         assert_eq!(w, h);
+        // The lamp stands on the row the controls give (beam_late.y), not
+        // on the sweep's centre: placed at LAMP_DEPTH so the camera's
+        // projection takes it to that row, 100 less it above the middle.
+        let at = light.find("fn lamp(").unwrap();
+        let lamp = &light[at..at + light[at..].find("\n}\n").unwrap() + 2];
+        assert_eq!(
+            lamp.split_whitespace().collect::<String>(),
+            "fnlamp()->vec3f{returnvec3f(0.0,(100.0-gc.beam_late.y)\
+             *(CAMERA_DISTANCE+LAMP_DEPTH)/CAMERA_DISTANCE,LAMP_DEPTH);}"
+        );
+        assert!(light.contains(
+            "fn project(p:vec3f)->vec2f {return p.xy*CAMERA_DISTANCE/(CAMERA_DISTANCE+p.z);}"
+        ));
     }
 
     /// The air's density tiles: its opposite faces meet without a seam, and
