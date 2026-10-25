@@ -1836,108 +1836,11 @@ cargo run --release --locked --features hires --bin panic-hd -- --ending --faith
 ```
 
 `--ending` continues past part 7 through part 8 to the demo's last frame,
-with the music unbroken. It implies `--greetings`. **M**, **Tab** and **C**
-work as in the earlier parts. Part 7's preview ends on part 8's first
-frame, the monster, at 242.30 seconds; part 8's preview begins on the same
-frame, and part 7's renderer draws it, so the hand-over is exact in both
-views. The clip ends at 249.17, on the demo's last frame, and holds there.
-
-Read from the port, and checked against the engine on every frame by an
-ignored test, part 8 runs like this (steps count from the first that reads
-the music at 35:00):
-
-- It keeps the first 16,000 bytes of each plane, MONSTER.U as part 7 left
-  it, and its palette, and clears the rest of video memory. It holds the
-  picture until the music reaches 35:00: the first step that reads it
-  comes at 246.36 and shows the monster again.
-- Step 2 turns colour 0 white, so the black behind the monster (and its
-  eye and mouth) turn white; step 3 shows the cleared memory, all white.
-- Steps 4 to 7 squeeze the picture with the CRTC: start 16000, stride 2 to
-  5 rows, and a line compare that starts the picture again from the top
-  memory below the middle, so every second to fifth row shows, centred.
-  Steps 8 to 20 copy every 7th, 8th, ... 44th row round row 100 instead
-  (the compressions 7, 8, 9, 10, 12, 14, 16, 19, 22, 26, 31, 37 and 44).
-  Each step also lifts every colour but 0 toward white,
-  `c' = s + c (63 - s) / 63`, by the step before's compression.
-- Step 21 copies the top row over rows 98, 99, 101 and 102, leaving source
-  row 100 as a line. Steps 22 to 67 write the top row's last four pixels
-  (held in the latches) over four columns at each end of the line, 3
-  columns further in each step, from columns 20 and 300; the monster's row
-  100 holds colour only in columns 44 to 268, so the line starts to
-  shorten at step 29.
-- Step 68 sets one pixel, (160, 100), to colour 1, white. Steps 69 to 128
-  set colour 1 to `31 cos(pi i / 20) + 32`, i = 0 to 59: white, dark, white,
-  dark, a pulse 40 steps long. Then the scene waits 70 more steps (the
-  original's one-second sleep) and the demo ends.
-
-The preview keeps each frame's step, its palette and the distinct pictures
-the frames show (`Ending::hd_frame`), and reads the compression each step
-shows and the line's ends as each step erases them from the scene
-(`ending::hd_compression`, `hd_line_ends`); a default test checks those
-against the scene stepped on an invented picture.
-
-Observed in a DOSBox capture of the original: the white behind the
-monster shows for two or three frames, no whole white frame appears, and
-the first squeeze shown keeps every third row. Why is not established; a
-guess is the timing of the CRTC and palette writes against the retrace,
-which the port groups at each retrace wait. The rest of the stages and
-their timing match the port's: the dot is set 66 frames after the white in
-both, and the exit to DOS comes 194 frames after it, where the port's demo
-ends 196 frames after it.
-
-Interpretation: the stages read as a monitor switching off. Nothing in
-the code names them.
-
-Faithful HD shows the original's look at display resolution, in the 4:3
-frame: every pixel's colour index is the original's on every frame, upscaled
-smoothly as part 7's monster is, the palette moving between frames as the
-original's changes (the lift toward white, the dot's pulse).
-
-The modern view is a bank of nine old monitors, switched off. All of it is
-authored, on the port's pictures, palettes, stages and timing:
-
-- The pull back. The camera starts where the centre set's face fills the
-  frame as part 7's picture does, with the glass flat and the sets unlit,
-  and draws back over 3.4 seconds of the 4.1-second hold until a 3 × 3
-  bank of monitors fills 86% of the frame's height, centred in the dark.
-  On the way the face becomes a tube's: the glass bulges and its outline
-  rounds into bowed sides and deep corners, set back into a thick dark
-  bezel, and the picture takes the original's 200 lines as scanlines (each
-  line's spot wider as it is brighter, fading out once a line is under two
-  of the frame's pixels), with a little halation, convergence error and a
-  vignette. The sets, ray-marched, nearly touch; each neighbour shows the
-  monster a little brighter or dimmer, warmer or cooler, and slightly
-  shifted and turned, as real sets do.
-- The light. There is no room: the screens are the only light. Each set is
-  lit by its own screen (twelve patches, from the original picture's mean
-  colours) and its neighbours', on its rims, the tunnels down to the glass
-  and the bezels' rounded edges; the glass shows the lit rim in its curve,
-  a faint glare and a little light scattered by the phosphor. As the
-  screens go dark, so does the bank.
-- The switch-off, on every set at once, from the white; the camera eases
-  in until the bank fills 96% of the frame, the centre set a third of it.
-  The white behind the monster and the white frame flash the faces and
-  light the bank. The picture squeezes with the original's compression and
-  palettes, so it lifts toward white, its light rising with the
-  compression to the power 0.35 as the beam's lines crowd together. The
-  line keeps the original's row and erased ends, brightening as it
-  shortens. The dot is a glowing point of phosphor following the original's
-  colour 1, so it pulses as the original does, with a slower, greener
-  afterglow that decays through the last second; everything fades to black
-  over the last third of a second. What the beam lit a few frames before
-  still glows, fading.
-
-Nothing flickers: every value moves smoothly between the original's
-frames. Everything is a function of the clip's time; an ignored test checks
-that part 8's first frame is part 7's last, byte for byte, that its own
-drawing a moment later is within two steps of a channel of it, that frames
-drawn after others match a new renderer's and that the end is black. The
-pictures' constants are at the top of `ending_crt.wgsl`, the bank's in
-`ending_set.wgsl`, the timing and the camera in `hd/ending.rs`.
-
-At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (120 frames,
-on a machine in use), modern part 8 takes about 2 to 3 ms a frame; faithful
-HD under 1 ms.
+with the music unbroken: the monster held, then a monitor switched off. The
+modern view is an endless wall of old green surveillance monitors the
+camera scrolls out from, all switched off together. [Part 8's
+notes](../docs/part8-ending.md) say what is read from the port, what was
+observed, what is interpretation and what is authored.
 
 ### Options and tests
 

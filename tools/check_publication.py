@@ -77,6 +77,8 @@ RESEARCH_FILES = {
     'rust/src/hd/ending.rs', 'rust/src/hd/ending_render.rs',
     'rust/src/hd/ending_common.wgsl', 'rust/src/hd/ending_faithful.wgsl',
     'rust/src/hd/ending_crt.wgsl', 'rust/src/hd/ending_set.wgsl',
+    # Part 8's notes, split from rust/README.md.
+    'docs/part8-ending.md',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
     'rust/src/scenes/scroller.rs', 'rust/src/scenes/field.rs',
     'rust/src/scenes/rings.rs', 'rust/src/scenes/dots.rs',
