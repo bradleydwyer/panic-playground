@@ -139,6 +139,23 @@ SHOTS = (
     _shot('faithful-dots', 'faithful', 151.4, '--dots', '--faithful'),
     _shot('faithful-dots', 'faithful', 179.96, '--dots', '--faithful'),
     _shot('original-dots', 'original', 151.4, '--dots', '--original'),
+    # Part 4 (--plasma): the handover from part 3's flare, the slab coming
+    # out of the white, the slab alone, the plasma fading in, its light on
+    # the stone at full level, fading out, the slab sliding away and part
+    # 7's first frame.
+    _shot('plasma', 'plasma', 180.1, '--plasma'),
+    _shot('plasma', 'plasma', 180.6, '--plasma'),
+    _shot('plasma', 'plasma', 184.0, '--plasma'),
+    _shot('plasma', 'plasma', 189.0, '--plasma'),
+    _shot('plasma', 'plasma', 197.0, '--plasma'),
+    _shot('plasma', 'plasma', 214.0, '--plasma'),
+    _shot('plasma', 'plasma', 221.0, '--plasma'),
+    _shot('plasma', 'plasma', 224.8, '--plasma'),
+    _shot('plasma', 'plasma', 225.43, '--plasma'),
+    _shot('faithful-plasma', 'faithful', 180.3, '--plasma', '--faithful'),
+    _shot('faithful-plasma', 'faithful', 197.0, '--plasma', '--faithful'),
+    _shot('faithful-plasma', 'faithful', 224.8, '--plasma', '--faithful'),
+    _shot('original-plasma', 'original', 197.0, '--plasma', '--original'),
 )
 CAPTURE_FLAGS = ('--seek', '--headless', '--size', '--data', '--out')
 

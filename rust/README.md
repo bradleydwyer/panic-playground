@@ -69,8 +69,8 @@ the full importer.
 ## Experimental HD intro and scroller
 
 The `panic-hd` preview covers the opening through the PANIC logo, and with
-`--scroller`, `--rings`, `--field` and `--dots` continues through parts 2, 6,
-5 and 3.
+`--scroller`, `--rings`, `--field`, `--dots` and `--plasma` continues
+through parts 2, 6, 5, 3 and 4.
 Build and run it from the repository root after importing your data:
 
 ```sh
@@ -1488,6 +1488,143 @@ seconds take. Faithful HD takes 0.3 to 0.8 ms. Gathering the air's light in
 the grid and marching it, rather than summing each light's closed-form
 glow at every pixel, cut the dots' frames from about 8.5 ms to 3.6 ms.
 
+### Part 4: Plasma
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --plasma --seek 177
+cargo run --release --locked --features hires --bin panic-hd -- --plasma --faithful --seek 186
+```
+
+`--plasma` continues past part 3 through part 4 to part 7's first frame,
+with the music unbroken. It implies `--dots`. **M**, **Tab** and **C** work
+as in the earlier parts. Part 3's preview ends on part 4's first drawn
+frame, its slab in white at 179.96 seconds; part 4's preview begins on the
+same frame. The clip ends at 225.43, on part 7's first frame, which is
+black, and holds there.
+
+Read from the port, and checked against the engine on every frame by an
+ignored test, part 4 runs like this:
+
+- From 177.11 it waits for 29:00 (part 3's preview shows that). At 179.94
+  it clears video memory and copies in its logo, 320 by 180 pixels shown
+  at 400 lines from raster 237, and from 179.96 fades the logo's colours
+  from white over 64 frames, to 180.86.
+- Then it writes its index field: 200 columns by 223 rows of 200 bytes,
+  each column a sine band, `(sine(5.1 x) / 10 + 200) mod 224`, rising one
+  colour a row. Colours 32 to 255 are one period of a sine, 0 to 62, at a
+  level from 0 to 63, the green channel 30 entries and the blue 40 behind
+  the red, all three turned by one rotation that swings back and forth
+  over 1,050 entries, at up to 9 a frame. The palette a frame shows was
+  filled the frame before, from the rotation and level of the frame before
+  that.
+- The first 225 rasters each move the start address on by twice the sum
+  of two entries of a stride table, plus 200: two reads 2 entries further
+  and 2 back each frame, so two waves run in opposite directions down the
+  rasters. The table alternates nearly opposite values, so the even and
+  odd rasters are two copies of the field, pushed apart by up to 90 bytes,
+  each displaced by its own smooth offset that grows down the screen from
+  a fixed top raster. Raster 226 jumps 510 bytes, past the field, so
+  rasters 226 to 236 are black.
+- The level stays 0 until the music passes 2A00, then rises a step every
+  four frames, from 187.51 to 191.06; once the music passes 2E14 it falls,
+  from 219.33 to 222.87.
+- From 2F00, at 224.23, the line compare moves up a source row and then
+  down a row a frame, so the slab slides off the screen by 225.41. Part 7
+  is made in the next step and its first frame, at 225.43, is black.
+
+The preview keeps part 4 as compact state per frame (`Plasma::hd_state`):
+the counters each frame's step rendered with and the palette it showed,
+with the scene's tables (`Plasma::hd_tables`) and part 7's first frame.
+Each original frame is rebuilt on demand from that state, with the start
+addresses `plasma::raster_starts` gives, the function the scene's own
+render uses; the ignored test checks every frame's pixels and palette,
+that the rotation and level rebuild the plasma's colours from the bank,
+and the PCM.
+
+Some of this is interpretation:
+
+- Between the original's frames the start addresses (where they move a
+  little), the rotation, the level and the line compare are linear, and
+  the field and the palette's sine are evaluated at continuous positions.
+- The even and odd rasters read as two layers of the plasma, the stride
+  table as two waves running through a stack of lines.
+- The logo read as a pinhole view of a right-angled block on square
+  display pixels (`plasma_stone.rs`). Measured when the preview loads, the
+  silhouette's side edges are straight to 0.3 columns, and the vanishing
+  rows of the top face's edges and the front face's give the camera's
+  focal length and the block's tilt: 262.8 rows and 31.3 degrees. Taking
+  part 3's box's width (490), the near edge is 504 units away, and the
+  depth that puts the far edge on the logo's first row is 193.9, within 3%
+  of the box's 200. The logo shades its letters as cut in, dark on the side
+  the light comes from, so where each face, unwarped from the view, is
+  darker than its stone it is carved; thin dark lines are cracks.
+
+Faithful HD shows the original's look at display resolution, in the 4:3
+frame. Each of the 400 rasters reads the field from its own start address
+at a continuous column, so the colours are smooth along a raster and the
+rasters keep their offsets, the original's interlaced look; the palette
+turns and fades between frames. The logo is its pixels' colours,
+interpolated, in the palette each frame shows, with the line compare at a
+continuous raster, so the fade and the slide are smooth. With **Tab** or
+**C** the original is shown at its own 400 lines.
+
+The modern view is light on stone. The original keeps its two halves
+apart; here they share one dark space, and the plasma is the light the
+stone is seen by. All of it is authored, on the port's timing, positions
+and motion, and on the block fitted to the logo.
+
+- The slab is a block of part 3's box's width, the logo's depth and the
+  box's height, in the logo's place, seen through the camera the logo's
+  perspective implies, ray-marched as a distance field: the block with
+  rounded edges, less the carving. Each face's carving is unwarped from the
+  logo when the preview loads, 1024 texels across: where the face is darker
+  than the threshold between its two tones it is cut, 5 units deep a bevel
+  of 8 in from the edge, its outline smoothed; thin dark lines are cracks
+  1.4 deep; and the stone's colour and mottling are the logo's, flattened
+  of its painted light. The faces are polished and the cut and the cracks
+  rough, with a fine grain.
+- The plasma is a sheet of light standing behind the slab, its bottom edge
+  on the plasma's last raster, leaning a little over the slab, wide enough
+  for a 21:9 drawable. On it, at each point, the colour the original shows
+  there: each layer's offset is interpolated between its rasters (the
+  address is not: half way along a row is half way across the field), the
+  palette's sine is taken without the bank's truncation, the two layers
+  are mixed as the eye mixes the original's alternate rasters, over a
+  shutter of about 1/120 s along the palette's turn, and the result is
+  taken back through the shared tonemap by its luminance, so the sheet
+  shows about the original's colours and has the radiance that would.
+- The sheet lights the stone. Its light is drawn each frame at 512 by 256
+  over the sheet and averaged down to 4 by 2; each pixel of stone takes
+  the exact form factor of each of 32 cells of the sheet times the cell's
+  mean radiance, shadowed by the carving toward where the light mostly
+  comes from, and the polished faces mirror the sheet, sharply where
+  polished and blurred in the cut, at the level of the sheet's light that
+  matches the reflection's spread. A dim, warm key light from the upper
+  left, where the logo's painted light comes from, keeps the stone lit
+  while the plasma is dark and dims to a fifth as the plasma rises.
+- A mist hanging at the sheet scatters a little of its light, so it spills
+  softly below the sheet's edge.
+- The arrival: on the slab frame part 3's own modern view, its box flared,
+  is still drawn, and gives way to this one over 0.35 s. The stone comes in
+  overexposed and the exposure settles over the original's 64 frames, so
+  the carving, the darkest, comes out of the white first.
+- Each order's first row swells the sheet's light a little; the slab sinks
+  along the camera's vertical so its far edge, the top of its silhouette,
+  follows the original's line compare.
+
+Part 3's view during the handover is part 3's renderer at a moment past
+its last frame, which it already handles (its slab frame is held and the
+flare's light decays): part 3's code is unchanged. Everything is a
+function of the clip's time, so seeking, captures and video agree; an
+ignored test checks frames drawn after others against a new renderer's,
+byte for byte. The look's constants are at the top of `plasma_light.wgsl`
+and `plasma_stone.rs`.
+
+At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (150 frames,
+on a machine in use), the plasma's seconds take about 5 ms a frame (median
+5.0, slowest 9), the slab alone 1.5 ms, the slide 0.9 ms and the handover,
+which also draws part 3's view, 4.8 ms. Faithful HD takes 0.3 to 0.4 ms.
+
 ### Options and tests
 
 `--fps` starts with the frame-rate counter in the top-left corner, showing
@@ -1523,12 +1660,12 @@ intro's reference pixels and PCM against the existing engine, sampled fly-by
 projection heights, the transition's complete reference frames, audio and
 tile schedule, the scroller's letters and positions against every part-2
 frame, part 6's state, replayed frames and PCM against every part-6 frame,
-part 5's against every part-5 frame and part 3's against every part-3
-frame; one bakes the frame's shape from PSTART and checks what it measures.
+part 5's against every part-5 frame, part 3's against every part-3
+frame and part 4's against every part-4 frame; one bakes the frame's shape from PSTART and checks what it measures.
 Two more need a GPU: one checks that part 5's smoke reaches the same state
 however a moment is reached (it re-simulates from the start at each of
-nine moments, a minute and a half), the other that part 3's frames are the
-same however they are reached:
+nine moments, a minute and a half), the others that part 3's and part 4's
+frames are the same however they are reached:
 
 ```sh
 cargo test --release --locked --features hires
@@ -1543,6 +1680,10 @@ PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --featu
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part3_state_matches_every_engine_frame -- --ignored --nocapture
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires the_clip_ends_on_part4s_slab -- --ignored
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part3_frames_are_the_same_however_reached -- --ignored
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part4_state_matches_every_engine_frame -- --ignored --nocapture
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires the_clip_ends_on_part7s_first_frame -- --ignored
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part4s_sections_start_where_its_labels_change -- --ignored --nocapture
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part4_frames_are_the_same_however_reached -- --ignored
 ```
 
 `--bench N` draws N frames from `--seek`, a sixtieth of a second apart,

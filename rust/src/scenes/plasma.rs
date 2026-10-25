@@ -30,6 +30,115 @@ fn field(sine: &[i32]) -> Vec<u8> {
     }
     field
 }
+/// The CRTC start address of each of the 400 rasters `render` scans: one
+/// source row per physical raster (CRTC09=0), 400 visible lines. A raster's
+/// OUT13 change takes effect on the next row address; the hardware status
+/// polling is represented at this scanline boundary. Animated, each of the
+/// first 225 rasters advances the address by `(sift[add1 + y] + sift[add2 +
+/// y] + 100) mod 256` words, the 226th by 510 bytes; otherwise, and below,
+/// by 80. The raster after `line_compare` starts again at address 0, where
+/// the logo is.
+pub fn raster_starts(
+    sift: &[u8],
+    add1: usize,
+    add2: usize,
+    line_compare: usize,
+    animated: bool,
+) -> [u16; 400] {
+    let mut starts = [0; 400];
+    let mut address = 0x3840usize;
+    for (y, start) in starts.iter_mut().enumerate() {
+        if y == line_compare + 1 {
+            address = 0;
+        }
+        *start = address as u16;
+        let stride = if animated && y < 225 {
+            sift[add1 + y]
+                .wrapping_add(sift[add2 + y])
+                .wrapping_add(100) as usize
+                * 2
+        } else if animated && y == 225 {
+            510
+        } else {
+            80
+        };
+        address = (address + stride) & 65535;
+    }
+    starts
+}
+
+/// Part 4's counters, for the HD preview (hd/plasma.rs). Reading them
+/// changes nothing.
+#[cfg(feature = "hires")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HdPlasma {
+    /// 0 waiting for 29:00, 1 the logo fading from white, 2 the plasma,
+    /// 3 the logo sliding away.
+    pub phase: u8,
+    /// Steps of the fade from white so far (0 to 64).
+    pub fade_frame: usize,
+    /// The palette motion's angle (1024ths of a turn), the plasma's level
+    /// (0 to 63) and the counter it is taken from.
+    pub a: usize,
+    pub fade: i32,
+    pub counter: i32,
+    /// The two offsets into the stride table.
+    pub add1: usize,
+    pub add2: usize,
+    /// Where each colour channel reads the bank: the level's row (`fade <<
+    /// 10`) plus the palette's rotation, 0 to 223.
+    pub pointers: [usize; 3],
+    /// The raster after which the logo starts.
+    pub line_compare: usize,
+}
+
+/// Part 4's tables, for the HD preview: all fixed from the start.
+#[cfg(feature = "hires")]
+pub struct HdPlasmaTables {
+    /// The sine table (amplitude 1023, 1024 a turn).
+    pub sine: Vec<i32>,
+    /// The stride table (`sift`), 5001 bytes.
+    pub sift: Vec<u8>,
+    /// The bank: 64 levels of the palette's sine, 1024 entries each.
+    pub bank: Vec<u8>,
+    /// The index field as video memory holds it from 0x3840, 200 bytes a
+    /// row, 223 rows (zero elsewhere).
+    pub field: Vec<u8>,
+    /// The logo, 320 x 180 indices, and its palette (768 bytes).
+    pub logo: Vec<u8>,
+    pub palette: Vec<u8>,
+}
+
+#[cfg(feature = "hires")]
+impl Plasma {
+    /// Read-only counters for the HD preview.
+    pub fn hd_state(&self) -> HdPlasma {
+        HdPlasma {
+            phase: self.phase,
+            fade_frame: self.fade_frame,
+            a: self.a,
+            fade: self.fade,
+            counter: self.counter,
+            add1: self.add1,
+            add2: self.add2,
+            pointers: self.pointers,
+            line_compare: self.line_compare,
+        }
+    }
+
+    /// The scene's tables.
+    pub fn hd_tables(&self) -> HdPlasmaTables {
+        HdPlasmaTables {
+            sine: self.sine.clone(),
+            sift: self.sift.clone(),
+            bank: self.bank.clone(),
+            field: self.field.clone(),
+            logo: self.logo.clone(),
+            palette: self.original_palette.clone(),
+        }
+    }
+}
+
 pub struct Plasma {
     sine: Vec<i32>,
     sift: Vec<u8>,
@@ -79,31 +188,20 @@ impl Plasma {
         self.a = (self.a + 1) % 1024;
     }
     fn render(&self, vga: &mut Vga, animated: bool) {
-        // One source row per physical raster (CRTC09=0), 400 visible lines.
-        // Rasters' OUT13 changes take effect on the next row address. The
-        // hardware status polling is represented at this scanline boundary.
         vga.width = 320;
         vga.height = 400;
         vga.indices.resize(128000, 0);
-        let mut address = 0x3840usize;
-        for y in 0..400 {
-            if y == self.line_compare + 1 {
-                address = 0;
-            }
+        let starts = raster_starts(
+            &self.sift,
+            self.add1,
+            self.add2,
+            self.line_compare,
+            animated,
+        );
+        for (y, &address) in starts.iter().enumerate() {
             for x in 0..320 {
-                vga.indices[y * 320 + x] = vga.planes[x & 3][(address + (x >> 2)) & 65535];
+                vga.indices[y * 320 + x] = vga.planes[x & 3][(address as usize + (x >> 2)) & 65535];
             }
-            let stride = if animated && y < 225 {
-                self.sift[self.add1 + y]
-                    .wrapping_add(self.sift[self.add2 + y])
-                    .wrapping_add(100) as usize
-                    * 2
-            } else if animated && y == 225 {
-                510
-            } else {
-                80
-            };
-            address = (address + stride) & 65535;
         }
     }
     pub fn step(&mut self, vga: &mut Vga, music: u16) -> bool {

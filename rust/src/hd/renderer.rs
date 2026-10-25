@@ -4,6 +4,8 @@ use super::dots_render::DotsRenderer;
 use super::field::{FRAME_TAKES_PART6_FADE, FieldBlock, FieldPreview, PART5_PHASE};
 use super::field_render::FieldRenderer;
 use super::modern::Modern;
+use super::plasma::{PART4_PHASE, PlasmaBlock, PlasmaPreview};
+use super::plasma_render::PlasmaRenderer;
 use super::rings::{PART6_PHASE, RingsPreview, RingsStyle};
 use super::rings_render::RingsRenderer;
 use bytemuck::{Pod, Zeroable};
@@ -69,6 +71,8 @@ struct Uniforms {
     field: FieldBlock,
     /// Part 3 (`dots::DotsPreview::controls`); all zero before it.
     dots: DotsBlock,
+    /// Part 4 (`plasma::PlasmaPreview::controls`); all zero before it.
+    plasma: PlasmaBlock,
 }
 
 /// The only WGSL declaration of [`Uniforms`] and its binding. [`wgsl`]
@@ -150,6 +154,40 @@ struct DotsBlock {
     // The port's eight echo levels (6-bit blue), echo k 4k frames old.
     echo_levels: array<vec4f,2>,
 }
+// Part 4's controls (hd/plasma.rs, PlasmaBlock), in u.plasma.
+struct PlasmaBlock {
+    // Shown (1), seconds since its slab frame, phase (1 slab from white, 2
+    // plasma, 3 slide, 4 part 7's first frame), part-4 frame.
+    part: vec4f,
+    // The frame shown, the next, the fraction toward it, blend (1).
+    frame: vec4f,
+    // The palette's rotation and level; green's and blue's offsets.
+    palette: vec4f,
+    // Line compare, the slab's slide (source rows), the fade from white
+    // (0 to 1), part 7's frame shown.
+    logo: vec4f,
+    // Part-4 seconds: plasma, fade in, full, fade out; dark, slide, part 7.
+    events: vec4f,
+    events_late: vec4f,
+    // Focal length (rows), axis column, part 3's weight, exposure.
+    camera: vec4f,
+    // The slab: near top edge's centre, rounding; tilt's sine and cosine,
+    // width, depth; height, deepest carving, stone red and green; stone
+    // blue.
+    slab_origin: vec4f,
+    slab_axes: vec4f,
+    slab_size: vec4f,
+    stone: vec4f,
+    // The sheet of light: bottom edge's centre, height; half width, up.
+    sheet: vec4f,
+    sheet_size: vec4f,
+    // Seconds since the last four orders' first rows (newest first, -100
+    // none) and their strengths.
+    hits: vec4f,
+    hit_strength: vec4f,
+    // The palette's rotation per frame, toward the next.
+    motion: vec4f,
+}
 struct Controls {
     screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode
     state: vec4f,  // reference phase, sequence frame, door, temporal shape interpolation
@@ -215,6 +253,8 @@ struct Controls {
     field: FieldBlock,
     // Part 3 (Dots), all zero before it; dots_common.wgsl reads it.
     dots: DotsBlock,
+    // Part 4 (Plasma), all zero before it; plasma_common.wgsl reads it.
+    plasma: PlasmaBlock,
 }
 @group(0) @binding(0) var<uniform> u: Controls;
 ";
@@ -309,6 +349,11 @@ pub struct Renderer {
     dots: Option<DotsRenderer>,
     part3: bool,
     part3_underlay: bool,
+    /// Part 4's, likewise, and whether the moment also draws part 3's
+    /// modern view for the handover.
+    plasma: Option<PlasmaRenderer>,
+    part4: bool,
+    part4_handover: bool,
 }
 
 impl Renderer {
@@ -579,6 +624,9 @@ impl Renderer {
                 dots: None,
                 part3: false,
                 part3_underlay: false,
+                plasma: None,
+                part4: false,
+                part4_handover: false,
             },
             format,
         ))
@@ -597,21 +645,39 @@ impl Renderer {
         self.part6 = false;
         self.part5 = false;
         self.part3 = false;
-        if let Some(dots) = &clip.dots {
-            if self.dots.as_ref().is_none_or(|r| !r.holds(dots)) {
-                self.dots = Some(DotsRenderer::new(
+        self.part4 = false;
+        if let Some(dots) = &clip.dots
+            && self.dots.as_ref().is_none_or(|r| !r.holds(dots))
+        {
+            self.dots = Some(DotsRenderer::new(
+                &self.device,
+                &self.queue,
+                &self.uniform,
+                &self.reference,
+                self.output_format,
+                dots,
+            ));
+        }
+        if let Some(plasma) = &clip.plasma {
+            if self.plasma.as_ref().is_none_or(|r| !r.holds(plasma)) {
+                self.plasma = Some(PlasmaRenderer::new(
                     &self.device,
                     &self.queue,
                     &self.uniform,
-                    &self.reference,
                     self.output_format,
-                    dots,
+                    plasma,
                 ));
             }
-            if dots.frame_at(time).is_some() {
-                self.prepare_dots(clip, dots, view);
+            if plasma.frame_at(time).is_some() {
+                self.prepare_plasma(clip, plasma, view);
                 return;
             }
+        }
+        if let Some(dots) = &clip.dots
+            && dots.frame_at(time).is_some()
+        {
+            self.prepare_dots(clip, dots, view);
+            return;
         }
         if let Some(field) = &clip.field {
             self.hold_field(field);
@@ -981,23 +1047,7 @@ impl Renderer {
         self.tile_transition = false;
         let j = dots.frame_at(time).unwrap_or(0);
         let aspect = size.0 as f64 / size.1.max(1) as f64;
-        let mut block = dots.controls(time, aspect);
-        // The cues: the low band at the moment and each tick before, for the
-        // trails; and each order's first row: a base strength, and more
-        // with the onsets the PCM shows in the tenth of a second after it.
-        for k in 0..40 {
-            block.low[k / 4][k % 4] = clip.audio_at(time - k as f64 / 70.0).intro[2];
-        }
-        for h in 0..4 {
-            let since = block.hits[h] as f64;
-            if since > -50.0 {
-                let at = time - since;
-                let onset = (0..8)
-                    .map(|k| clip.audio_at(at + k as f64 / 70.0).intro[1])
-                    .fold(0.0_f32, f32::max);
-                block.hit_strength[h] = 0.55 + 0.45 * onset;
-            }
-        }
+        let block = dots_block(clip, dots, time, aspect);
         let phase = dots.frames[j].phase;
         let underlay = if modern {
             block.zoom[3] > 0.5 && phase <= super::dots::Phase::Shades
@@ -1060,6 +1110,85 @@ impl Renderer {
         u.audio = audio.intro;
         u.field = field_block;
         u.dots = block;
+        self.queue
+            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+    }
+
+    /// Part 4: the shared controls for this moment, with the music's cues;
+    /// in its first moments, part 3's controls too, for its modern view to
+    /// hand over from; and the original frame when a comparison shows it,
+    /// rebuilt on demand ([`PlasmaPreview::original_full`]).
+    fn prepare_plasma(&mut self, clip: &Clip, plasma: &PlasmaPreview, view: View) {
+        let View {
+            time,
+            size,
+            comparison,
+            modern,
+            hud: _,
+        } = view;
+        self.part4 = true;
+        self.glyphs_active = false;
+        self.scroller = false;
+        self.tile_transition = false;
+        let j = plasma.frame_at(time).unwrap_or(0);
+        let mut block = plasma.controls(time);
+        for (h, &since) in block.hits.iter().enumerate() {
+            if since >= 0.0 {
+                block.hit_strength[h] = hit_strength(clip, time - since as f64);
+            }
+        }
+        let mut dots_controls = DotsBlock::zeroed();
+        self.part4_handover = false;
+        if modern {
+            self.modern_renderer
+                .resize(&self.device, &self.uniform, &self.reference, size);
+            self.plasma.as_mut().unwrap().resize(&self.device, size);
+            if let (true, Some(dots)) = (block.camera[2] > 0.0, &clip.dots) {
+                let aspect = size.0 as f64 / size.1.max(1) as f64;
+                dots_controls = dots_block(clip, dots, time, aspect);
+                self.dots.as_mut().unwrap().resize(&self.device, size);
+                self.part4_handover = true;
+            }
+        } else {
+            block.camera[2] = 0.0;
+        }
+        let index = plasma.start + j;
+        if comparison != 0 {
+            self.plasma
+                .as_mut()
+                .unwrap()
+                .show_original(&self.queue, plasma, j);
+            if self.reference_index != Some(index) {
+                self.queue.write_texture(
+                    self.reference.as_image_copy(),
+                    &plasma.original_rgba(j),
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(WIDTH as u32 * 4),
+                        rows_per_image: Some(HEIGHT as u32),
+                    },
+                    wgpu::Extent3d {
+                        width: WIDTH as u32,
+                        height: HEIGHT as u32,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                self.reference_index = Some(index);
+            }
+        }
+        let audio = clip.audio_at(time);
+        let mut u = Uniforms::zeroed();
+        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
+        u.state = [PART4_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
+        u.misc = [
+            4.0 / 3.0,
+            if self.srgb { 1.0 } else { 0.0 },
+            clip.logo_at as f32,
+            if modern { 1.0 } else { 0.0 },
+        ];
+        u.audio = audio.intro;
+        u.dots = dots_controls;
+        u.plasma = block;
         self.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
     }
@@ -1208,6 +1337,19 @@ impl Renderer {
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        if let (true, Some(plasma)) = (self.part4, &self.plasma) {
+            if self.modern_view {
+                if let (true, Some(dots)) = (self.part4_handover, &self.dots) {
+                    dots.draw_style(encoder, plasma.handover());
+                }
+                plasma.draw_style(encoder, self.modern_renderer.hdr_target());
+                self.modern_renderer.post(encoder, view);
+            } else {
+                plasma.draw_faithful(encoder, view);
+            }
+            self.draw_hud(encoder, view);
+            return;
+        }
         if let (true, Some(dots)) = (self.part3, &self.dots) {
             let field = self.field.as_ref().filter(|_| self.part3_underlay);
             if self.modern_view {
@@ -1437,6 +1579,32 @@ impl Renderer {
     }
 }
 
+/// Everything part 3 puts in `u.dots` at a clip time, with the music's
+/// cues: the low band at the moment and each tick before, for the trails;
+/// and each order's first row's strength.
+fn dots_block(clip: &Clip, dots: &DotsPreview, time: f64, aspect: f64) -> DotsBlock {
+    let mut block = dots.controls(time, aspect);
+    for k in 0..40 {
+        block.low[k / 4][k % 4] = clip.audio_at(time - k as f64 / 70.0).intro[2];
+    }
+    for h in 0..4 {
+        let since = block.hits[h] as f64;
+        if since > -50.0 {
+            block.hit_strength[h] = hit_strength(clip, time - since);
+        }
+    }
+    block
+}
+
+/// An order's first row's strength (authored): a base, and more with the
+/// onsets the PCM shows in the tenth of a second after it.
+fn hit_strength(clip: &Clip, at: f64) -> f32 {
+    let onset = (0..8)
+        .map(|k| clip.audio_at(at + k as f64 / 70.0).intro[1])
+        .fold(0.0_f32, f32::max);
+    0.55 + 0.45 * onset
+}
+
 fn data_texture(
     device: &wgpu::Device,
     (width, height): (u32, u32),
@@ -1637,6 +1805,14 @@ mod tests {
             "part 3 modern".into(),
             super::super::dots_render::light_source(),
         ));
+        modules.push((
+            "part 4 faithful HD".into(),
+            super::super::plasma_render::faithful_source(),
+        ));
+        modules.push((
+            "part 4 modern".into(),
+            super::super::plasma_render::light_source(),
+        ));
         modules
     }
 
@@ -1676,6 +1852,9 @@ mod tests {
             "dots_common.wgsl",
             "dots_faithful.wgsl",
             "dots_light.wgsl",
+            "plasma_common.wgsl",
+            "plasma_faithful.wgsl",
+            "plasma_light.wgsl",
         ] {
             assert!(
                 files.iter().any(|f| f.0 == expected),
@@ -2093,6 +2272,175 @@ mod tests {
         }
     }
 
+    #[test]
+    fn part4_block_matches_its_wgsl_declaration() {
+        macro_rules! fields {
+            ($($field:ident),* $(,)?) => {
+                vec![$((stringify!($field).to_owned(), offset_of!(PlasmaBlock, $field))),*]
+            };
+        }
+        let expected = fields![
+            part,
+            frame,
+            palette,
+            logo,
+            events,
+            events_late,
+            camera,
+            slab_origin,
+            slab_axes,
+            slab_size,
+            stone,
+            sheet,
+            sheet_size,
+            hits,
+            hit_strength,
+            motion,
+        ];
+        assert_eq!(
+            expected.last().unwrap().1 + size_of::<[f32; 4]>(),
+            size_of::<PlasmaBlock>()
+        );
+        for (name, source) in [
+            ("part 4 modern", super::super::plasma_render::light_source()),
+            (
+                "part 4 faithful HD",
+                super::super::plasma_render::faithful_source(),
+            ),
+        ] {
+            let (module, _) = validated(name, &source);
+            let (members, span) = wgsl_members(&module, "PlasmaBlock");
+            assert_eq!(members, expected, "{name}");
+            assert_eq!(span, size_of::<PlasmaBlock>(), "{name}");
+        }
+    }
+
+    /// The constants the part-4 shaders repeat from hd/plasma.rs,
+    /// plasma_render.rs and the scene.
+    #[test]
+    fn part4_shaders_repeat_the_rust_constants() {
+        use super::super::plasma::{
+            FIELD_ROW, FIELD_ROWS, FIELD_START, LOGO_ROWS, PALETTE_PERIOD, PLASMA_RASTERS,
+        };
+        use super::super::plasma_render::{SHEET_LEVELS, SHEET_SIZE};
+        let common = include_str!("plasma_common.wgsl");
+        for constant in [
+            format!("const FIELD_START={FIELD_START}.0;"),
+            format!("const FIELD_ROW={FIELD_ROW}.0;"),
+            format!("const FIELD_ROWS={FIELD_ROWS}.0;"),
+            format!("const PLASMA_RASTERS={PLASMA_RASTERS}u;"),
+            format!("const PALETTE_PERIOD={PALETTE_PERIOD}.0;"),
+            format!("const LOGO_ROWS={LOGO_ROWS}.0;"),
+            "const COLUMN=5.0/6.0;".to_owned(),
+        ] {
+            assert!(
+                common.contains(&constant),
+                "plasma_common.wgsl lacks {constant}"
+            );
+        }
+        let light = include_str!("plasma_light.wgsl");
+        let (w, h) = SHEET_SIZE;
+        assert!(light.contains(&format!("const SHEET_SIZE=vec2f({w}.0,{h}.0);")));
+        // The light's cells and the haze's are one texel of their levels.
+        for (cells, level) in [("CELLS", "CELL_LEVEL"), ("HAZE_CELLS", "HAZE_LEVEL")] {
+            let read = |name: &str| {
+                let at = light.split(&format!("const {name}=")).nth(1).unwrap();
+                at[..at.find(';').unwrap()].to_owned()
+            };
+            let level: u32 = read(level).trim_end_matches(".0").parse().unwrap();
+            assert!(level < SHEET_LEVELS);
+            assert_eq!(
+                read(cells),
+                format!("vec2u({}u,{}u)", w >> level, h >> level),
+                "{cells}"
+            );
+        }
+        // The field starts where the logo (320 x 180, a quarter of it in
+        // each plane) ends.
+        assert_eq!(FIELD_START, 320 * LOGO_ROWS / 4);
+    }
+
+    /// Each part-4 entry point uses only the bindings its pipeline has
+    /// (plasma_render.rs): group 0 everywhere; group 1 binding 3 (a level
+    /// of the sheet) for the levels, bindings 1 and 2 (the sheet and part
+    /// 3's view) for the modern composite.
+    #[test]
+    fn part4_entry_points_use_only_their_bindings() {
+        for (name, source) in [
+            (
+                "part 4 faithful HD",
+                super::super::plasma_render::faithful_source(),
+            ),
+            ("part 4 modern", super::super::plasma_render::light_source()),
+        ] {
+            let (module, info) = validated(name, &source);
+            for (index, entry) in module.entry_points.iter().enumerate() {
+                let allowed: &[(u32, u32)] = match entry.name.as_str() {
+                    "fullscreen" | "faithful" | "plasma_sheet" => &[],
+                    "plasma_downsample" => &[(1, 3)],
+                    "plasma_style" => &[(1, 1), (1, 2)],
+                    n => panic!("unexpected entry point {n}"),
+                };
+                let uses = info.get_entry_point(index);
+                for (handle, global) in module.global_variables.iter() {
+                    let (Some(binding), false) = (&global.binding, uses[handle].is_empty()) else {
+                        continue;
+                    };
+                    assert!(
+                        binding.group == 0 || allowed.contains(&(binding.group, binding.binding)),
+                        "{name}: {} uses {:?} (group {}, binding {})",
+                        entry.name,
+                        global.name,
+                        binding.group,
+                        binding.binding
+                    );
+                }
+            }
+        }
+    }
+
+    /// Part 4 is a function of the moment: a frame drawn after others is
+    /// the same, byte for byte, as one drawn by a new renderer, in both
+    /// views, the handover from part 3 included.
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
+    fn part4_frames_are_the_same_however_reached() {
+        let data = crate::test_support::data();
+        let clip = Clip::load_plasma(&data, ScrollerLighting::Studio).unwrap();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let view = |time, modern| View {
+            time,
+            size: (480, 270),
+            comparison: 0,
+            modern,
+            hud: None,
+        };
+        let slab = clip.plasma.as_ref().unwrap().seconds(0);
+        let moments = [slab + 0.1, 180.6, 184.0, 189.0, 205.0, 221.0, 224.8];
+        for modern in [true, false] {
+            let (mut playing, format) = pollster::block_on(Renderer::new(&instance, None)).unwrap();
+            let mut played = Vec::new();
+            for &t in &moments {
+                for k in (1..4).rev() {
+                    playing
+                        .render_rgba(&clip, view(t - k as f64 / 60.0, modern), format)
+                        .unwrap();
+                }
+                played.push(playing.render_rgba(&clip, view(t, modern), format).unwrap());
+            }
+            for (&t, played) in moments.iter().zip(&played).rev() {
+                let (mut fresh, _) = pollster::block_on(Renderer::new(&instance, None)).unwrap();
+                let pixels = fresh.render_rgba(&clip, view(t, modern), format).unwrap();
+                assert!(
+                    &pixels == played,
+                    "{t} s ({})",
+                    if modern { "modern" } else { "faithful" }
+                );
+                assert!(pixels.iter().any(|&p| p > 8), "{t} s is black");
+            }
+        }
+    }
+
     /// The fluid hook reaches the same state whether the clip plays on,
     /// seeks back to a kept state or starts afresh at a moment, as video
     /// export does: each moment's state matches a new renderer's byte for
@@ -2179,9 +2527,10 @@ mod tests {
             rings_style,
             field,
             dots,
+            plasma,
         ];
         // A field missing from this list leaves bytes unaccounted for.
-        let last = size_of::<DotsBlock>();
+        let last = size_of::<PlasmaBlock>();
         assert_eq!(fields.last().unwrap().1 + last, size_of::<Uniforms>());
         fields
     }

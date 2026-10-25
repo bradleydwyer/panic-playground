@@ -9,8 +9,9 @@ Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 So far this covers the opening through the PANIC logo, the square transition,
 experiments with the following double scroller, part 6's interference
 rings as a pool of liquid chrome under neon, part 5's deep Mandelbrot
-zoom and molten Mandelbrot mountain, and part 3's shade bobs and morphing
-dots as light painting. The idea is to keep the
+zoom and molten Mandelbrot mountain, part 3's shade bobs and morphing
+dots as light painting, and part 4's plasma as the light on a carved stone
+slab. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
 letters that refract the stars behind them, a mirrored plate that reflects the
 warp, motion blur, a starfield that ramps into warp, a heated metal logo with
@@ -18,7 +19,7 @@ slowly moving surface reflections, and lighting that pulses and breathes with
 the music.
 
 This builds on the [Rust port of Panic](https://github.com/bradleydwyer/panic).
-It's a work in progress, with modern treatments for the intro, scroller, part 6, part 5 and part 3. The original
+It's a work in progress, with modern treatments for the intro, scroller, part 6, part 5, part 3 and part 4. The original
 player is included as a reference. The new letterforms and block motion are
 authored approximations, not recovered original 3D models.
 
@@ -292,6 +293,55 @@ authored; the positions, motion and timing are the port's. Faithful HD
 (**M**) shows the original's discs and dots at display resolution. The
 [renderer notes](rust/README.md#part-3-dots) say what is read, what is
 interpreted and what is authored.
+
+### Part 4: Plasma
+
+`--plasma` carries on through part 4 to part 7's first frame, with the
+music unbroken:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --plasma --seek 177
+```
+
+Part 4 draws its logo slab, a stone block carved FUTURE CREW, at 179.96
+seconds, white, and fades it to its colours over 64 frames, to 180.86.
+Above it is a plasma: a fixed field of colour indices, a palette that
+turns back and forth through them, and 400 rasters that each start where
+a table of strides puts them, so the even and odd rasters show two copies
+of the field pushed apart by waves running up and down the screen. It
+stays black until the music passes 2A00, fades in by 191.06, fades out
+from 2E15 (219.33 to 222.87), and from 2F00, at 224.23, the slab slides
+down off the screen. Part 7 starts at 225.43 on a black frame, where
+`--plasma` ends. All of that is read from the port and checked against it
+frame by frame.
+
+The modern look puts the two halves, which the original keeps apart with
+its line compare, in one dark space, and makes the plasma the light the
+stone is seen by:
+
+- The slab becomes a block of stone in the original's place. The logo's
+  silhouette fits a right-angled block seen in perspective; with part 3's
+  box's width its depth comes out within 3% of the box's, so the box part 3
+  lands is this block, made solid. Its faces are carved as the logo shades
+  them, FUTURE in the top, CREW in the front and the cracks, the faces
+  polished and the cut rough, as a mason finishes a slab.
+- The plasma becomes a sheet of light standing behind the slab, showing
+  the original's field and palette at every point, its two interlaced
+  copies mixed as the eye mixes them, and its fades as the light's.
+- The sheet lights the stone: its moving colours rake across the carving
+  from behind and above and slide across the polished top as reflections,
+  shadowed by the cut. A dim key light from where the logo's painted light
+  comes from keeps the stone lit while the plasma is dark, and gives way
+  as it rises.
+- Part 3's flare overexposes the camera, and the exposure settles over the
+  original's 64 frames of fade from white, so the carving comes out of the
+  white first. The slab sinks with the original's line compare.
+
+The stone, its carving and finish, the sheet, the lighting and the arrival
+are authored; the positions, motion and timing are the port's. Faithful HD
+(**M**) shows the original's rasters at display resolution, the field
+smooth along each raster. The [renderer notes](rust/README.md#part-4-plasma)
+say what is read, what is interpreted and what is authored.
 
 ### Keys
 

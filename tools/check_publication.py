@@ -56,6 +56,12 @@ RESEARCH_FILES = {
     'rust/src/hd/dots.rs', 'rust/src/hd/dots_render.rs',
     'rust/src/hd/dots_common.wgsl', 'rust/src/hd/dots_faithful.wgsl',
     'rust/src/hd/dots_light.wgsl',
+    # Part 4: its state and tables, the slab fitted to the logo, its GPU
+    # side, the shared shader code, faithful HD and the modern light on
+    # stone.
+    'rust/src/hd/plasma.rs', 'rust/src/hd/plasma_stone.rs',
+    'rust/src/hd/plasma_render.rs', 'rust/src/hd/plasma_common.wgsl',
+    'rust/src/hd/plasma_faithful.wgsl', 'rust/src/hd/plasma_light.wgsl',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
     'rust/src/scenes/scroller.rs', 'rust/src/scenes/field.rs',
     'rust/src/scenes/rings.rs', 'rust/src/scenes/dots.rs',

@@ -1,5 +1,6 @@
 use super::dots::DotsPreview;
 use super::field::FieldPreview;
+use super::plasma::PlasmaPreview;
 use super::rings::RingsPreview;
 use crate::{
     data::Data,
@@ -163,6 +164,9 @@ pub struct Clip {
     /// Part 3, after part 5 (`--dots`), with part 4's wait and first frame;
     /// see [`DotsPreview`].
     pub dots: Option<DotsPreview>,
+    /// Part 4, after part 3 (`--plasma`), from its first frame to part 7's
+    /// first; see [`PlasmaPreview`].
+    pub plasma: Option<PlasmaPreview>,
 }
 
 /// Authored lighting cues for one 70 Hz window of the clip's PCM, each 0..=1.
@@ -278,17 +282,17 @@ pub struct TileTransition {
 
 impl Clip {
     pub fn load(data: &Data) -> Result<Self, String> {
-        Self::load_mode(data, false, false, false, false, false)
+        Self::load_mode(data, false, false, false, false, false, false)
     }
 
     /// Continue through the tile transition to the next backdrop, with
     /// uninterrupted PCM. The modern renderer draws it as a laser cut.
     pub fn load_transition(data: &Data) -> Result<Self, String> {
-        Self::load_mode(data, true, false, false, false, false)
+        Self::load_mode(data, true, false, false, false, false, false)
     }
 
     pub fn load_scroller(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
-        let mut clip = Self::load_mode(data, true, true, false, false, false)?;
+        let mut clip = Self::load_mode(data, true, true, false, false, false, false)?;
         clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
@@ -297,7 +301,7 @@ impl Clip {
     /// with uninterrupted PCM. Part 6's frames are kept as compact state;
     /// see [`RingsPreview`].
     pub fn load_rings(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
-        let mut clip = Self::load_mode(data, true, true, true, false, false)?;
+        let mut clip = Self::load_mode(data, true, true, true, false, false, false)?;
         clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
@@ -306,7 +310,7 @@ impl Clip {
     /// which shows part 5's last, with uninterrupted PCM. Part 5's frames are
     /// kept as compact state; see [`FieldPreview`].
     pub fn load_field(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
-        let mut clip = Self::load_mode(data, true, true, true, true, false)?;
+        let mut clip = Self::load_mode(data, true, true, true, true, false, false)?;
         clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
@@ -315,7 +319,16 @@ impl Clip {
     /// first drawn frame, its logo slab in white, with uninterrupted PCM.
     /// Part 3's frames are kept as compact state; see [`DotsPreview`].
     pub fn load_dots(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
-        let mut clip = Self::load_mode(data, true, true, true, true, true)?;
+        let mut clip = Self::load_mode(data, true, true, true, true, true, false)?;
+        clip.scroller.as_mut().unwrap().lighting = lighting;
+        Ok(clip)
+    }
+
+    /// Continue past part 3 through part 4 to part 7's first frame, with
+    /// uninterrupted PCM. Part 4's frames are kept as compact state; see
+    /// [`PlasmaPreview`].
+    pub fn load_plasma(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
+        let mut clip = Self::load_mode(data, true, true, true, true, true, true)?;
         clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
@@ -340,6 +353,7 @@ impl Clip {
         play_rings: bool,
         play_field: bool,
         play_dots: bool,
+        play_plasma: bool,
     ) -> Result<Self, String> {
         let mut vga = Vga::new();
         let mut intro = Intro::new(data, &mut vga)?;
@@ -377,7 +391,8 @@ impl Clip {
         let mut scroller_preview = None;
         let mut rings: Option<RingsPreview> = None;
         let mut field: Option<FieldPreview> = None;
-        let mut dots = None;
+        let mut dots: Option<DotsPreview> = None;
+        let mut plasma = None;
         let transition = if extend {
             // The last intro snapshot is also the first frame of part 2. Replace
             // it, rather than adding an extra frame or restarting the music.
@@ -543,6 +558,13 @@ impl Clip {
                     field.start + field.frames.len(),
                 )?);
             }
+            if let (true, Some(dots)) = (play_plasma, &dots) {
+                // Part 3's preview ends on part 4's first drawn frame; part
+                // 4's begins there.
+                plasma = Some(PlasmaPreview::load(
+                    data, &mut vga, &mut music, &mut pcm, dots,
+                )?);
+            }
             Some(transition)
         } else {
             // Standalone logo preview continues the music through a short hold.
@@ -561,6 +583,7 @@ impl Clip {
             rings,
             field,
             dots,
+            plasma,
         })
     }
 
@@ -608,15 +631,21 @@ impl Clip {
     pub fn dots_frame(&self, time: f64) -> Option<usize> {
         self.dots.as_ref()?.frame_at(time)
     }
+    /// Part-4 frame at a clip time, when the clip has reached part 4's
+    /// first drawn frame.
+    pub fn plasma_frame(&self, time: f64) -> Option<usize> {
+        self.plasma.as_ref()?.frame_at(time)
+    }
     /// The times at which [`Clip::label`] changes, found at each engine
     /// frame, with 0 first: the starts of the sections the preview steps
-    /// through.
+    /// through. The clip's last frame, a fraction of a sample past its
+    /// duration, is taken at the duration (which shows it).
     pub fn sections(&self) -> Vec<f64> {
         let mut starts = vec![0.0];
         let mut last = self.label(0.0);
-        let frames = (self.duration() * FRAME_RATE as f64) as usize;
+        let frames = (self.duration() * FRAME_RATE as f64).round() as usize;
         for k in 1..=frames {
-            let time = k as f64 / FRAME_RATE as f64;
+            let time = (k as f64 / FRAME_RATE as f64).min(self.duration());
             let label = self.label(time);
             if label != last {
                 starts.push(time);
@@ -627,6 +656,9 @@ impl Clip {
     }
 
     pub fn label(&self, time: f64) -> &'static str {
+        if let (Some(plasma), Some(j)) = (&self.plasma, self.plasma_frame(time)) {
+            return plasma.label(j);
+        }
         if let (Some(dots), Some(j)) = (&self.dots, self.dots_frame(time)) {
             return dots.label(j);
         }
@@ -1915,6 +1947,7 @@ mod tests {
             rings: None,
             field: None,
             dots: None,
+            plasma: None,
         };
         assert_eq!(clip.scroll_at(1.0), None);
         clip.scroller = Some(ScrollerPreview {
@@ -2143,6 +2176,7 @@ mod tests {
             rings: None,
             field: None,
             dots: None,
+            plasma: None,
         };
         let intro = |time: f64| clip.audio_at(time).intro;
         // Window 0 is known once it has played, at 1/70 s.
