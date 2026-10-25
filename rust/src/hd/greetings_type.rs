@@ -13,12 +13,15 @@
 //!   28, is the letter as it stands on a face. The shading reads as a bevel
 //!   lit from above: white (1) on the strokes' crowns, teal (6) at their
 //!   edges.
-//! - Authored: the letter's outline is the front view's colours 1 to 4
-//!   (5 and 6 also shade the inside of strokes, so enclosed specks of up to
-//!   three pixels are filled; real counters are larger), upsampled, softened
-//!   a little and cut at half, then measured as a signed distance, so its
-//!   edge stays sharp at any size; the relief is that distance rounded into
-//!   a bevel and tilted by the original's shading.
+//! - Authored: the letter's outline is every pixel of the front view the
+//!   letter colours (1 to 6; the darkest, 5 and 6, shade the strokes' sides
+//!   and insides, so leaving them out cuts notches and holes into the
+//!   strokes), with enclosed specks of colour 0 of up to two pixels filled
+//!   (G's broken slit; the counters, of A and O, are 8 and 14 pixels),
+//!   upsampled, softened a little and cut at half, then measured as a
+//!   signed distance, so its edge stays sharp at any size; the relief is
+//!   that distance rounded into a bevel and tilted by the original's
+//!   shading.
 
 use half::f16;
 
@@ -71,71 +74,50 @@ pub fn front_view(planes: &[u8], g: usize) -> [[u8; FACE_COLUMNS]; FACE_ROWS] {
     })
 }
 
-/// The outline's pixels: colours 1 to 4, with enclosed specks of up to
-/// three pixels filled.
+/// Enclosed specks of colour 0 up to this many pixels are filled.
+const SPECK: usize = 2;
+
+/// The outline's pixels: every pixel the letter colours (1 to 6), and the
+/// enclosed specks between them.
 fn outline(view: &[[u8; FACE_COLUMNS]; FACE_ROWS]) -> Vec<bool> {
     let (w, h) = (FACE_COLUMNS, FACE_ROWS);
-    let inside: Vec<bool> = (0..w * h)
-        .map(|i| (1..=4).contains(&view[i / w][i % w]))
-        .collect();
-    // Reach the background from the border, four-connected.
-    let mut outside = vec![false; w * h];
-    let mut stack: Vec<usize> = (0..w * h)
-        .filter(|&i| {
-            let (x, y) = (i % w, i / w);
-            (x == 0 || y == 0 || x == w - 1 || y == h - 1) && !inside[i]
-        })
-        .collect();
-    while let Some(i) = stack.pop() {
-        if outside[i] || inside[i] {
-            continue;
-        }
-        outside[i] = true;
+    let inside: Vec<bool> = view.iter().flatten().map(|c| (1..=6).contains(c)).collect();
+    let neighbours = |i: usize| {
         let (x, y) = (i % w, i / w);
-        if x > 0 {
-            stack.push(i - 1);
-        }
-        if x + 1 < w {
-            stack.push(i + 1);
-        }
-        if y > 0 {
-            stack.push(i - w);
-        }
-        if y + 1 < h {
-            stack.push(i + w);
-        }
-    }
-    // The enclosed holes, each filled when small.
+        [
+            (x > 0).then(|| i - 1),
+            (x + 1 < w).then(|| i + 1),
+            (y > 0).then(|| i - w),
+            (y + 1 < h).then(|| i + w),
+        ]
+        .into_iter()
+        .flatten()
+    };
+    // Each region of colour 0, four-connected: filled when it is small and
+    // does not reach the border.
     let mut filled = inside.clone();
     let mut seen = vec![false; w * h];
     for start in 0..w * h {
-        if inside[start] || outside[start] || seen[start] {
+        if inside[start] || seen[start] {
             continue;
         }
-        let mut hole = Vec::new();
+        let mut region = Vec::new();
+        let mut open = false;
         let mut stack = vec![start];
+        seen[start] = true;
         while let Some(i) = stack.pop() {
-            if seen[i] || inside[i] || outside[i] {
-                continue;
-            }
-            seen[i] = true;
-            hole.push(i);
+            region.push(i);
             let (x, y) = (i % w, i / w);
-            if x > 0 {
-                stack.push(i - 1);
-            }
-            if x + 1 < w {
-                stack.push(i + 1);
-            }
-            if y > 0 {
-                stack.push(i - w);
-            }
-            if y + 1 < h {
-                stack.push(i + w);
+            open |= x == 0 || y == 0 || x == w - 1 || y == h - 1;
+            for j in neighbours(i) {
+                if !inside[j] && !seen[j] {
+                    seen[j] = true;
+                    stack.push(j);
+                }
             }
         }
-        if hole.len() <= 3 {
-            for i in hole {
+        if !open && region.len() <= SPECK {
+            for i in region {
                 filled[i] = true;
             }
         }
@@ -324,14 +306,17 @@ mod tests {
     }
 
     #[test]
-    fn small_specks_fill_and_counters_stay() {
+    fn shading_stays_inside_and_counters_stay_open() {
         // A block of colour 2 over columns 7..=20, rows 2..=12, with a
-        // one-pixel speck of colour 6 and a 3 x 3 counter of colour 0.
+        // one-pixel speck of colour 6, one of colour 0 and a 3 x 3 counter
+        // of colour 0.
         let planes = planes_with(3, |x, r| {
             if !(7..=20).contains(&x) || !(2..=12).contains(&r) {
                 0
             } else if x == 9 && r == 4 {
                 6
+            } else if x == 9 && r == 10 {
+                0
             } else if (14..=16).contains(&x) && (6..=8).contains(&r) {
                 0
             } else {
@@ -345,7 +330,8 @@ mod tests {
             let y = (r / 15.0 * CELL as f64) as usize;
             face[y * CELL + x]
         };
-        assert!(at(9.0 - 5.0 + 0.5, 4.5)[0] < 0.0, "speck filled");
+        assert!(at(9.0 - 5.0 + 0.5, 4.5)[0] < 0.0, "shading inside");
+        assert!(at(9.0 - 5.0 + 0.5, 10.5)[0] < 0.0, "speck filled");
         assert!(at(15.0 - 5.0 + 0.5, 7.5)[0] > 0.0, "counter kept");
         assert!(at(10.5 - 5.0, 10.0)[0] < -0.4, "inside");
         assert!(at(0.5, 0.5)[0] > 1.0, "outside");

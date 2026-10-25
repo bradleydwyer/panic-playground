@@ -2606,7 +2606,7 @@ mod tests {
     /// Each part-7 entry point uses only the bindings its pipeline has
     /// (greetings_render.rs): group 0 everywhere; in group 1, the dust for
     /// the cubes, the shafts' source for the shafts, and the dust, the
-    /// cubes and the shafts for the picture.
+    /// cubes, the shafts and the cubes' mirror for the picture.
     #[test]
     fn part7_entry_points_use_only_their_bindings() {
         for (name, source) in [
@@ -2625,7 +2625,7 @@ mod tests {
                     "fullscreen" | "faithful" | "dust_vertex" | "dust_fragment" => &[],
                     "cubes" => &[(1, 1)],
                     "shafts" => &[(1, 2)],
-                    "style" => &[(1, 1), (1, 3), (1, 4)],
+                    "style" => &[(1, 1), (1, 3), (1, 4), (1, 5)],
                     n => panic!("unexpected entry point {n}"),
                 };
                 let uses = info.get_entry_point(index);

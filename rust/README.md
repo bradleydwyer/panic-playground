@@ -1723,28 +1723,38 @@ user's data:
 - The cycle is also one hard beam from a lamp at the sweep's centre,
   behind the strips: the top of the pulse, full within about 8 degrees of
   its peak, turning once every 64 frames (about 1.1 turns a second), in the
-  stars' cream. The dust in it glows, and its light streams past the cubes
-  in shafts (scattering gathered toward the lamp in screen space at half
-  size, the cubes standing in its way). The beam and the dust are taken
-  over a shutter of one 70 Hz frame, six instants along the turn, so the
-  beam sweeps rather than steps.
-- Each letter is a polished black cube with the letter on its four faces
-  as a panel of frosted light in the original's letter colours (white
-  crowns, teal edges), always readable; the beam behind a cube brightens
-  its panels, and as the cubes turn their faces catch it in glints and
-  mirror the dust. Each row of a cube is turned by the original's sine, so
-  the letters twist as the original's do. The gaps between the cubes stay
-  open; faithful HD keeps the smear.
+  stars' cream. The lamp is a bulb glowing all round, placed so it projects
+  on the sweep's centre, with the beam leaving it. The dust in the beam
+  glows, and its light streams past the cubes in shafts (scattering
+  gathered toward the lamp in screen space at half size, the cubes
+  standing in its way). The beam and the dust are taken over a shutter of
+  one 70 Hz frame, six instants along the turn, so the beam sweeps rather
+  than steps.
+- Each letter is a polished black cube with rounded edges, the letter
+  inset on its four faces (at 80% of the face, a border of the black round
+  it) as a panel of frosted light in the original's letter colours (white
+  crowns, teal edges), always readable. The lamp lights the cubes all round
+  and the beam more, so their edges and the faces turned toward it catch
+  highlights and glints as they turn; the beam behind a cube brightens its
+  panels; the polish mirrors the dust, the shafts and the lamp (toward the
+  camera, the picture behind the strips mirrored about their plane, as if
+  it surrounded them). Each row of a cube is turned by the original's
+  sine, so the letters twist as the original's do, and the panels are
+  taken over half a frame as the cubes turn and rise. The gaps between the
+  cubes stay open; faithful HD keeps the smear.
 - The letterforms are derived when the preview loads from the TRUG maps:
   each letter's front view (columns 5 to 22 of view 0, rows 0 to 14),
-  colours 1 to 4 with enclosed specks of up to three pixels filled (so
-  the counters stay open), upsampled, softened, cut at half and measured
-  as a signed distance, with a bevel tilted by the original's shading. No
-  glyph data is stored in the repository.
+  every pixel the letter colours (1 to 6: the darkest, 5 and 6, shade the
+  strokes, and leaving them out cut notches and holes into them), with
+  enclosed specks of colour 0 of up to two pixels filled (G's broken slit;
+  the counters of A and O are 8 and 14 pixels), upsampled, softened, cut
+  at half and measured as a signed distance, with a bevel tilted by the
+  original's shading. No glyph data is stored in the repository.
 - The end: the beam swings into the lens, its cone opening round the lamp
-  ahead of the original's feedback fade, which then blends every colour
-  toward white; the monster, upscaled, develops out of the white at the
-  original's levels.
+  and the lamp brightening from 0.4 s before the original's feedback fade
+  (authored motion), which then blends every colour toward white at the
+  original's timing and levels; the monster, upscaled, develops out of the
+  white at the original's levels.
 
 Nothing follows the music, as in the original. Everything is a function of
 the clip's time; an ignored test checks frames drawn after others against

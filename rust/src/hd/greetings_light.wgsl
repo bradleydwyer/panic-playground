@@ -11,22 +11,29 @@
 //   cycle's pulse), so the original's broad band still sweeps the dust.
 // - The cycle is also one hard beam from a lamp at the sweep's centre,
 //   behind the strips: the top of the pulse, turning once every 64 frames,
-//   in the stars' cream. The dust in it glows, and the beam's light streams
+//   in the stars' cream. The lamp is a bulb glowing all round with the beam
+//   leaving it; the dust in the beam glows, and the beam's light streams
 //   past the cubes in shafts (screen-space scattering of the lamp's glow
 //   and the lit dust, the cubes standing in its way).
-// - Each letter is a cube of polished black with the letter on its four
-//   faces as a panel of frosted light, coloured as the original shades its
-//   letters (white crowns, teal edges) and always readable; the beam behind
-//   a cube brightens its panels, and as the cubes turn their polished faces
-//   catch it in glints and mirror the dust. The cubes turn as the
-//   original's sine turns each row of a letter (5.625 degrees a step of its
-//   view index, continuous), and the gaps between them stay open (the
-//   original's padding rows; its smear, from a quirk, is faithful HD's).
+// - Each letter is a cube of polished black with rounded edges, the letter
+//   inset on each of its four faces as a panel of frosted light with a
+//   border of the black round it, coloured as the original shades its
+//   letters (white crowns, teal edges) and always readable. The lamp lights
+//   the cubes all round and the beam more: their edges and the faces
+//   turned toward it catch it in highlights and glints as they turn, the
+//   beam behind a cube brightens its panels, and the polish mirrors the
+//   dust, the shafts and the lamp. The cubes turn as the original's sine
+//   turns each row of a letter (5.625 degrees a step of its view index,
+//   continuous), and the gaps between them stay open (the original's
+//   padding rows; its smear, from a quirk, is faithful HD's).
 // - The shutter: the beam turns about 400 degrees a second, so its light
-//   and the dust's are taken over SHUTTER of a 70 Hz frame up to the moment.
-// - The end: the beam swings into the lens over the original's feedback
-//   fade, which blends every colour toward white; the monster (MONSTER.U,
-//   upscaled) develops out of the white at the original's levels.
+//   and the dust's are taken over SHUTTER of a 70 Hz frame up to the moment;
+//   the panels over CUBE_SHUTTER as the cubes turn and rise.
+// - The end: the beam swings into the lens (authored motion, from a little
+//   before the original's feedback fade), which then blends every colour
+//   toward white at the original's timing and levels; the monster
+//   (MONSTER.U, upscaled) develops out of the white at the original's
+//   levels.
 // Module: the shared controls, greetings_common.wgsl and this file.
 
 // ---- The look (authored) -------------------------------------------------------
@@ -47,14 +54,19 @@ const BEAM_EDGE=vec2f(.82,.95);
 const MOTE_RADIUS=.85;
 const DUST_GAIN=.32;
 const BEAM_DUST=1.0;
-// The lamp's glow for the shafts: its core and halo (rows) and their gains,
-// a floor of glow outside the beam; the shafts' samples, decay, length and
-// gain, and the lit dust's share in them.
-const CORE=4.0;
-const HALO=30.0;
+// The lamp: a bulb glowing all round, its core and halo (rows) and their
+// gains, and the beam's own glow where it leaves the bulb, its reach (rows)
+// and gain; how much brighter the lamp grows as the beam turns to the lens.
+// Of the bulb's glow, the share the shafts scatter. Then the shafts'
+// samples, decay, length and gain, and the lit dust's share in them.
+const CORE=2.6;
+const HALO=22.0;
 const CORE_GAIN=9.0;
-const HALO_GAIN=.8;
-const BEAM_FLOOR=.04;
+const HALO_GAIN=.12;
+const BEAM_REACH=45.0;
+const BEAM_GLOW=2.2;
+const LAMP_SWELL=3.0;
+const BULB_SCATTER=.1;
 const SHAFT_SAMPLES=80u;
 const SHAFT_DECAY=.986;
 const SHAFT_LENGTH=.85;
@@ -66,7 +78,7 @@ const DUST_SCATTER=1.4;
 // the slots (greetings::SLOT_ROWS, SLOTS), and the turn per step of the
 // sine's view index (90 degrees over 16, read as a turn of the column).
 const HALF=7.5;
-const ROUNDING=.55;
+const ROUNDING=1.15;
 const SLOT_ROWS=18.0;
 const SLOTS=16u;
 const TWIST_STEP=.09817477;
@@ -76,26 +88,43 @@ const LIPSCHITZ=.8;
 const CELL=128.0;
 const ATLAS_COLUMNS=8u;
 const ATLAS_SIZE=vec2f(1024.0,512.0);
-// The panels: their glow at rest and with the beam behind, the bevel's
-// bump; the polish: reflectance at normal incidence, roughness (GGX alpha)
-// of the black and of the panels, and the glints' strength.
+// The panels: inset in each face (the letter's square is this share of
+// the face's side, leaving a border of polished black), their glow at rest
+// and with the beam behind, the bevel's bump.
+const PANEL_SCALE=.8;
 const PANEL_REST=.55;
 const PANEL_BEAM=1.3;
 const BUMP=.35;
+// The black: its albedo; the polish: reflectance at normal incidence,
+// roughness (GGX alpha) of the black and of the panels, and the glints'
+// strength; a broader sheen, so the faces catch the light as they turn
+// toward it. The lamp lights the cubes all round with BULB_LIGHT and in the
+// beam with BEAM_LIGHT more.
+const BLACK=.02;
 const SHEEN=.04;
 const BLACK_ROUGH=.07;
 const PANEL_ROUGH=.16;
-const GLINT=60.0;
-// The mirrored dust's strength, the share of it toward the camera, and the
-// rim where the beam passes behind.
+const GLINT=30.0;
+const SHEEN_ROUGH=.35;
+const SHEEN_GLINT=6.0;
+const BULB_LIGHT=.6;
+const BEAM_LIGHT=2.0;
+// What the polish mirrors: the picture behind the strips (the dust, the
+// shafts and the lamp), and toward the camera the same picture mirrored
+// about the strips' plane, as if it surrounded them (authored), dimmer;
+// the mirror's strength, and the rim where the beam passes behind.
 const MIRROR=2.5;
 const FRONT_MIRROR=.5;
 const RIM=.6;
-// A broader sheen, so the faces catch the beam as they turn toward it.
-const SHEEN_ROUGH=.35;
-const SHEEN_GLINT=8.0;
-// The lens flood at the end, and the brightest the monster shows through
+// The cubes' motion over their shutter (70 Hz frames; shorter than the
+// beam's, so the letters stay sharp where they turn fastest): taps along it.
+const CUBE_SHUTTER=.5;
+const CUBE_TAPS=3u;
+// The swing into the lens: it starts this many seconds before the original's
+// fade to white (authored motion; the fade keeps its timing and levels),
+// the flood of light it brings, and the brightest the monster shows through
 // the tonemap once developed (so it keeps its colours, near enough).
+const SWING_LEAD=.4;
 const FLOOD=6.0;
 const MONSTER_WHITE=.9;
 
@@ -107,11 +136,13 @@ const MONSTER_WHITE=.9;
 // brightness.
 @group(0) @binding(9) var<storage,read> motes:array<vec4f>;
 // The passes' images: the dust; the shafts' source; the cubes (colour and
-// coverage); the shafts (half size).
+// coverage); the shafts (half size); where the cubes' polish mirrors the
+// picture (its uv, and the mirror's weight).
 @group(1) @binding(1) var dust_image:texture_2d<f32>;
 @group(1) @binding(2) var scatter_image:texture_2d<f32>;
 @group(1) @binding(3) var cubes_image:texture_2d<f32>;
 @group(1) @binding(4) var shafts_image:texture_2d<f32>;
+@group(1) @binding(5) var mirror_image:texture_2d<f32>;
 
 // ---- The beam -----------------------------------------------------------------------
 // The stars' colour, (v, 8v/9, 7v/9) as the scanout shows it, in linear
@@ -120,9 +151,19 @@ fn star_colour()->vec3f {return srgb_decode(vec3f(1.0,8.0/9.0,7.0/9.0));}
 // The star colours' intensity scales their 6-bit DAC values, which the
 // display shows at about their 2.2 power: so does all the light here.
 fn intensity()->f32 {return pow(clamp(gc.sweep.y,0.0,1.0),2.2);}
-// The lamp in camera space and on the screen (scene coordinates).
-fn lamp()->vec3f {return vec3f(0.0,100.0-SWEEP_CENTRE.y,LAMP_DEPTH);}
+// The lamp in camera space, placed so it projects on the sweep's centre,
+// where the beam's directions turn round.
+fn lamp()->vec3f {
+    return vec3f(0.0,(100.0-SWEEP_CENTRE.y)*(CAMERA_DISTANCE+LAMP_DEPTH)/CAMERA_DISTANCE,LAMP_DEPTH);
+}
 fn project(p:vec3f)->vec2f {return p.xy*CAMERA_DISTANCE/(CAMERA_DISTANCE+p.z);}
+// The lamp's glow at r rows from it on the screen: the bulb all round, and
+// the beam's glow where it leaves the bulb, `toward` the beam's strength in
+// that direction.
+fn bulb_glow(r:f32)->f32 {
+    return (exp(-(r/CORE)*(r/CORE))*CORE_GAIN+exp(-r/HALO)*HALO_GAIN)*(1.0+LAMP_SWELL*swing());
+}
+fn beam_glow(r:f32,toward:f32)->f32 {return exp(-r/BEAM_REACH)*BEAM_GLOW*toward;}
 // The direction round the sweep's centre (source pixels, y down) of a
 // scene point.
 fn sweep_angle(q:vec2f)->f32 {
@@ -150,10 +191,17 @@ fn beam(angle:f32)->f32 {
     }
     return l/f32(SHUTTER_TAPS);
 }
-// How far the beam has swung into the lens: ahead of the fade to white
-// (which is half way in four of its 15 steps), so the opening shows before
-// the white covers it.
-fn swing()->f32 {let w=clamp(gc.sweep.z*2.5,0.0,1.0);return w*w*(3.0-2.0*w);}
+// How far the beam has swung into the lens (authored motion): it begins
+// SWING_LEAD seconds before the original's fade to white and is all but
+// done by the fade's third step, so the turn shows before the white covers
+// it; the fade itself keeps the original's timing and levels.
+fn swing()->f32 {
+    let white=gc.events.w;
+    var lead=0.0;
+    if white>=0.0 {lead=smoothstep(white-SWING_LEAD,white+.05,greetings_seconds());}
+    let w=clamp(gc.sweep.z*2.5,0.0,1.0);
+    return max(lead,w*w*(3.0-2.0*w));
+}
 
 // ---- The dust ------------------------------------------------------------------------
 struct DustVertex {
@@ -205,11 +253,14 @@ fn twist(s:u32,row:f32)->f32 {
 }
 // A point in slot k's cube's frame: across, up from its centre, toward the
 // back; the turn is the row's, so the letter twists as the original's does.
-fn cube_local(s:u32,k:f32,p:vec3f)->vec3f {
+fn cube_local(s:u32,k:f32,p:vec3f)->vec3f {return cube_local_at(s,k,p,0.0);}
+// The same with the cube's pose `tau` frames earlier, when it was tau rows
+// lower and its sine position tau further on (both fall one a frame).
+fn cube_local_at(s:u32,k:f32,p:vec3f,tau:f32)->vec3f {
     let x=p.x-strip_x(s);
     let row=100.0-p.y;
-    let a=twist(s,row);
-    let centre=100.0-(first_top()+SLOT_ROWS*k+HALF);
+    let a=TWIST_STEP*(40.0*sin(PI*(position_of(s)+tau+row)/200.0)+60.0);
+    let centre=100.0-(first_top()+tau+SLOT_ROWS*k+HALF);
     return vec3f(cos(a)*x+sin(a)*p.z,p.y-centre,-sin(a)*x+cos(a)*p.z);
 }
 fn box_distance(l:vec3f)->f32 {
@@ -262,70 +313,94 @@ fn ggx(n:vec3f,h:vec3f,alpha:f32)->f32 {
     return a2/(PI*den*den);
 }
 fn fresnel(cosine:f32)->f32 {return SHEEN+(1.0-SHEEN)*pow(1.0-clamp(cosine,0.0,1.0),5.0);}
-// A point on strip s's cubes, seen along d from o, `footprint` rows a
-// pixel there.
-fn shade_cube(s:u32,p:vec3f,d:vec3f,footprint:f32)->vec3f {
-    let near=stack_near(s,p);
-    let k=max(near.slot,0.0);
-    let l=cube_local(s,k,p);
-    var n=stack_normal(s,p);
-    // The face: across (u) and up (v) as seen from outside it.
-    let side=abs(l.y)<max(abs(l.x),abs(l.z))+.3;
+// The letter panel on the face of slot k's cube that point p lies on, with
+// the cube's pose tau frames earlier: coverage, relief and its slopes
+// across and up, and the face's across in the cube's frame (x, z).
+struct Panel { cover:f32, relief:f32, slope:vec2f, across:vec2f }
+fn panel_at(s:u32,k:f32,p:vec3f,tau:f32,footprint:f32)->Panel {
+    let l=cube_local_at(s,k,p,tau);
     var nl=vec3f(0,0,sign(l.z));
     if abs(l.x)>=abs(l.z) {nl=vec3f(sign(l.x),0,0);}
     let r=vec3f(-nl.z,0,nl.x);
-    let uv=vec2f(dot(l,r),l.y);
+    var out=Panel(0.0,0.0,vec2f(0),r.xz);
+    if abs(l.y)>=max(abs(l.x),abs(l.z))+.3 {return out;}
+    let t=vec2f(dot(l,r),-l.y)/(2.0*HALF*PANEL_SCALE)+.5;
+    if any(t<vec2f(.5/CELL)) || any(t>vec2f(1.0-.5/CELL)) {return out;}
+    let g=letter_in(s,u32(k));
+    let cell=vec2f(f32(g%ATLAS_COLUMNS),f32(g/ATLAS_COLUMNS))*CELL;
+    let face=textureSampleLevel(glyphs,linear,(cell+t*CELL)/ATLAS_SIZE,0.0);
+    // The atlas's distances are in rows of the face; the panel is smaller.
+    let d=face.r*PANEL_SCALE;
+    let aa=max(footprint*.7,.02);
+    out.cover=1.0-smoothstep(-aa,aa,d);
+    out.relief=face.g;
+    out.slope=face.ba/PANEL_SCALE;
+    return out;
+}
+struct Shade { colour:vec3f, mirror:vec3f }
+// A point on strip s's cubes, seen along d from o, `footprint` rows a
+// pixel there: its colour, and where its polish mirrors the picture (uv)
+// with the mirror's weight.
+fn shade_cube(s:u32,p:vec3f,d:vec3f,footprint:f32)->Shade {
+    let near=stack_near(s,p);
+    let k=max(near.slot,0.0);
+    var n=stack_normal(s,p);
+    // The panel over the shutter: its coverage and relief averaged as the
+    // cube turns and rises; its bevel from the moment itself.
+    let now=panel_at(s,k,p,0.0,footprint);
     var panel=0.0;
     var relief=0.0;
-    var slope=vec2f(0);
-    if side {
-        let g=letter_in(s,u32(k));
-        let cell=vec2f(f32(g%ATLAS_COLUMNS),f32(g/ATLAS_COLUMNS))*CELL;
-        let t=clamp(vec2f(uv.x,-uv.y)/(2.0*HALF)+.5,vec2f(.5/CELL),vec2f(1.0-.5/CELL));
-        let face=textureSampleLevel(glyphs,linear,(cell+t*CELL)/ATLAS_SIZE,0.0);
-        let aa=max(footprint*.7,.02);
-        panel=1.0-smoothstep(-aa,aa,face.r);
-        relief=face.g;
-        slope=face.ba;
+    let span=CUBE_SHUTTER*gc.frame.w;
+    for(var i=0u;i<CUBE_TAPS;i++) {
+        let tap=panel_at(s,k,p,span*f32(i)/f32(CUBE_TAPS-1u),footprint);
+        panel+=tap.cover;
+        relief+=tap.relief*tap.cover;
     }
-    // The panel's bevel tilts the normal; across is r turned to the world.
+    relief/=max(panel,1e-4);
+    panel/=f32(CUBE_TAPS);
+    // The panel's bevel tilts the normal; across is the face's turned to
+    // the world.
     let a=twist(s,100.0-p.y);
-    let rw=vec3f(cos(a)*r.x-sin(a)*r.z,0,sin(a)*r.x+cos(a)*r.z);
-    n=normalize(n-BUMP*panel*(slope.x*rw+slope.y*vec3f(0,1,0)));
+    let rw=vec3f(cos(a)*now.across.x-sin(a)*now.across.y,0,sin(a)*now.across.x+cos(a)*now.across.y);
+    n=normalize(n-BUMP*now.cover*(now.slope.x*rw+now.slope.y*vec3f(0,1,0)));
     let v=-d;
-    let to_lamp=lamp()-p;
-    let L=normalize(to_lamp);
+    let L=normalize(lamp()-p);
     let h=normalize(L+v);
     let at=beam(sweep_angle(p.xy));
+    // The lamp lights the cube all round, and the beam more.
+    let light=BULB_LIGHT*(1.0+LAMP_SWELL*swing())+BEAM_LIGHT*at;
+    let nl=max(dot(n,L),0.0);
+    let rough=mix(BLACK_ROUGH,PANEL_ROUGH,panel);
+    let spec=(ggx(n,h,rough)*GLINT+ggx(n,h,SHEEN_ROUGH)*SHEEN_GLINT)*fresnel(dot(h,v))*nl*light;
+    let diffuse=BLACK*nl*light*(1.0-panel);
     // Behind the cube, the beam shining through its panels.
     let centre=vec2f(strip_x(s),100.0-(first_top()+SLOT_ROWS*k+HALF));
     let behind=beam(sweep_angle(centre));
-    let rough=mix(BLACK_ROUGH,PANEL_ROUGH,panel);
-    let lit=max(dot(n,L),0.0)*fresnel(dot(h,v))*at;
-    let glint=(ggx(n,h,rough)*GLINT+ggx(n,h,SHEEN_ROUGH)*SHEEN_GLINT)*lit;
-    // The polish mirrors the dust: behind, where it looks back toward it;
-    // toward the camera, the dust taken as all round, mirrored about the
-    // strips' plane (authored), dimmer.
+    let rim=pow(1.0-max(dot(n,v),0.0),3.0)*RIM*at*(1.0-panel);
+    let ramp=letter_ramp(relief);
+    let glow=(ramp*PANEL_REST+mix(ramp,star_colour(),.5)*PANEL_BEAM*behind)*panel;
+    // Where the polish mirrors the picture (see MIRROR).
     let rd=reflect(d,n);
-    var mirrored=vec3f(0);
-    let back=rd.z>.05;
     let toward=vec3f(rd.xy,abs(rd.z)+.05);
     let q=p+toward*((DUST_DEPTH-p.z)/toward.z);
     let uvq=uv_of_scene(project(q));
+    let weight=fresnel(dot(n,v))*MIRROR*select(FRONT_MIRROR,1.0,rd.z>.05)*(1.0-.5*panel);
+    var mirrored=vec3f(0);
     if all(uvq>vec2f(0)) && all(uvq<vec2f(1)) {
-        mirrored=textureLoad(dust_image,vec2i(uvq*u.screen.xy),0).rgb*select(FRONT_MIRROR,1.0,back);
+        mirrored=textureLoad(dust_image,vec2i(uvq*u.screen.xy),0).rgb;
     }
-    // The beam behind the cube wraps its edges.
-    let rim=pow(1.0-max(dot(n,v),0.0),3.0)*RIM*beam(sweep_angle(p.xy))*(1.0-panel);
-    let ramp=letter_ramp(relief);
-    let glow=(ramp*PANEL_REST+mix(ramp,star_colour(),.5)*PANEL_BEAM*behind)*panel;
-    let colour=((glint+rim)*star_colour()+mirrored*fresnel(dot(n,v))*MIRROR)*intensity()+glow*intensity();
-    return colour;
+    let colour=((spec+rim+diffuse)*star_colour()+glow)*intensity()+mirrored*weight;
+    return Shade(colour,vec3f(uvq,weight));
 }
 
-struct CubesOut { @location(0) colour:vec4f, @location(1) scatter:vec4f }
-// The cubes, and the shafts' source: the lamp's glow and the lit dust where
-// no cube stands in front of them.
+struct CubesOut {
+    @location(0) colour:vec4f,
+    @location(1) scatter:vec4f,
+    @location(2) mirror:vec4f,
+}
+// The cubes, where their polish mirrors the picture, and the shafts'
+// source: the lamp's glow and the lit dust where no cube stands in front
+// of them.
 @fragment fn cubes(v:Vertex)->CubesOut {
     greetings_begin();
     let pixel=vec2i(v.position.xy);
@@ -334,6 +409,7 @@ struct CubesOut { @location(0) colour:vec4f, @location(1) scatter:vec4f }
     let d=normalize(vec3f(q,CAMERA_DISTANCE));
     let row_per_pixel=200.0/u.screen.y;
     var colour=vec3f(0);
+    var mirror=vec3f(0);
     var cover=0.0;
     if stage()>=STAGE_WORDS-.5 && stage()<STAGE_MONSTER-.5 {
         for(var s=0u;s<STRIPS;s++) {
@@ -355,20 +431,20 @@ struct CubesOut { @location(0) colour:vec4f, @location(1) scatter:vec4f }
             let c=select(clamp(1.0-closest,0.0,1.0),1.0,hit);
             if c>0.0 {
                 let at=select(closest_t,t,hit);
-                colour=shade_cube(s,o+d*at,d,row_per_pixel*at/CAMERA_DISTANCE)*c;
+                let shade=shade_cube(s,o+d*at,d,row_per_pixel*at/CAMERA_DISTANCE);
+                colour=shade.colour*c;
+                mirror=vec3f(shade.mirror.xy,shade.mirror.z*c);
                 cover=c;
                 break;
             }
         }
     }
-    // The lamp's glow and the dust in the beam.
-    let lq=project(lamp());
-    let r=length(q-lq);
+    let r=length(q-project(lamp()));
     let toward=beam(sweep_angle(q));
-    let glow=(exp(-(r/CORE)*(r/CORE))*CORE_GAIN+exp(-r/HALO)*HALO_GAIN)*(BEAM_FLOOR+toward);
+    let glow=(bulb_glow(r)*BULB_SCATTER+beam_glow(r,toward))*star_colour()*intensity();
     let dust=textureLoad(dust_image,pixel,0).rgb;
-    let source=(glow*star_colour()*intensity()+dust*toward*DUST_SCATTER)*(1.0-cover);
-    return CubesOut(vec4f(colour,cover),vec4f(source,1));
+    let source=(glow+dust*toward*DUST_SCATTER)*(1.0-cover);
+    return CubesOut(vec4f(colour,cover),vec4f(source,1),vec4f(mirror,1));
 }
 
 // ---- The shafts --------------------------------------------------------------------------
@@ -429,8 +505,20 @@ fn monster_picture(s:vec2f)->vec3f {
     let cubes=textureLoad(cubes_image,pixel,0);
     let dust=textureLoad(dust_image,pixel,0).rgb;
     let shafts=textureSampleLevel(shafts_image,linear,v.uv,0.0).rgb;
-    // The cubes stand in front of the dust and most of the beam's light.
-    var c=(dust+shafts*SHAFT_GAIN)*(1.0-cubes.a)+cubes.rgb+shafts*SHAFT_GAIN*FRONT_HAZE*cubes.a;
+    // The lamp, seen directly where no cube stands in front of it.
+    let lq=project(lamp());
+    let lamp_light=star_colour()*intensity();
+    let glow=(bulb_glow(length(q-lq))+beam_glow(length(q-lq),beam(sweep_angle(q))))*lamp_light;
+    // The cubes stand in front of the dust, the lamp and most of the beam's
+    // light; their polish mirrors the shafts and the lamp too.
+    var c=(dust+glow+shafts*SHAFT_GAIN)*(1.0-cubes.a)+cubes.rgb+shafts*SHAFT_GAIN*FRONT_HAZE*cubes.a;
+    let mirror=textureLoad(mirror_image,pixel,0);
+    if mirror.z>0.0 {
+        let mq=scene_of_uv(mirror.xy);
+        let mirrored=textureSampleLevel(shafts_image,linear,mirror.xy,0.0).rgb*SHAFT_GAIN
+            +bulb_glow(length(mq-lq))*lamp_light;
+        c+=mirrored*mirror.z;
+    }
     // The beam into the lens: a flood of its light, then every colour
     // blended toward white as the feedback fade has it.
     let w=clamp(gc.sweep.z,0.0,1.0);

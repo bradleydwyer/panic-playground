@@ -32,6 +32,7 @@ struct Targets {
     dust: TextureView,
     cubes: TextureView,
     scatter: TextureView,
+    mirror: TextureView,
     shafts: TextureView,
     cubes_inputs: BindGroup,
     shafts_inputs: BindGroup,
@@ -322,7 +323,7 @@ impl GreetingsRenderer {
         };
         let cubes_layout = inputs("Part 7 cubes' inputs", &[1]);
         let shafts_layout = inputs("Part 7 shafts' inputs", &[2]);
-        let style_layout = inputs("Part 7 picture's inputs", &[1, 3, 4]);
+        let style_layout = inputs("Part 7 picture's inputs", &[1, 3, 4, 5]);
         let layout = |groups: &[&BindGroupLayout]| {
             let groups: Vec<Option<&BindGroupLayout>> = groups.iter().map(|&g| Some(g)).collect();
             device.create_pipeline_layout(&PipelineLayoutDescriptor {
@@ -396,7 +397,7 @@ impl GreetingsRenderer {
             &light_module,
             "fullscreen",
             "cubes",
-            &[target(HDR, None), target(HDR, None)],
+            &[target(HDR, None), target(HDR, None), target(HDR, None)],
         );
         let shafts = pipeline(
             "Part 7 shafts",
@@ -463,6 +464,7 @@ impl GreetingsRenderer {
         let dust = make("Part 7 dust image", size);
         let cubes = make("Part 7 cubes image", size);
         let scatter = make("Part 7 shafts' source", size);
+        let mirror = make("Part 7 cubes' mirror", size);
         let half = (size.0.div_ceil(2).max(1), size.1.div_ceil(2).max(1));
         let shafts = make("Part 7 shafts", half);
         let group = |label, layout: &BindGroupLayout, entries: &[BindGroupEntry]| {
@@ -485,13 +487,19 @@ impl GreetingsRenderer {
         let style_inputs = group(
             "Part 7 picture's inputs",
             &self.style_layout,
-            &[view(1, &dust), view(3, &cubes), view(4, &shafts)],
+            &[
+                view(1, &dust),
+                view(3, &cubes),
+                view(4, &shafts),
+                view(5, &mirror),
+            ],
         );
         self.targets = Some(Targets {
             size,
             dust,
             cubes,
             scatter,
+            mirror,
             shafts,
             cubes_inputs,
             shafts_inputs,
@@ -525,8 +533,9 @@ impl GreetingsRenderer {
         })
     }
 
-    /// The modern view into the HDR target: the dust, the cubes and the
-    /// shafts' source, the shafts, then the picture. Call
+    /// The modern view into the HDR target: the dust, the cubes, the shafts'
+    /// source and where the cubes mirror the picture, the shafts, then the
+    /// picture. Call
     /// [`GreetingsRenderer::resize`] first.
     pub fn draw_style(&self, encoder: &mut CommandEncoder, hdr: &TextureView) {
         let t = self.targets.as_ref().unwrap();
@@ -537,7 +546,7 @@ impl GreetingsRenderer {
             pass.draw(0..6, 0..self.motes);
         }
         {
-            let mut pass = Self::pass(encoder, "Part 7 cubes", &[&t.cubes, &t.scatter]);
+            let mut pass = Self::pass(encoder, "Part 7 cubes", &[&t.cubes, &t.scatter, &t.mirror]);
             pass.set_bind_group(0, &self.data, &[]);
             pass.set_bind_group(1, &t.cubes_inputs, &[]);
             pass.set_pipeline(&self.cubes);

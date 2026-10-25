@@ -367,18 +367,20 @@ from the port and checked against it frame by frame.
 The modern look is a lighthouse in the dust:
 
 - The stars become dust lit as the original lights it, and the turning
-  colours become one hard cream beam from a lamp at the sweep's centre,
-  turning as fast as the original's band, its light streaming past the
-  letters in shafts. It is taken over a shutter so it sweeps smoothly.
+  colours become one hard cream beam from a glowing lamp at the sweep's
+  centre, turning as fast as the original's band, its light streaming
+  past the letters in shafts. It is taken over a shutter so it sweeps
+  smoothly.
 - The 16 views read as a square column turning, so each letter is a cube
-  of polished black with the letter on its four faces as a panel of light
-  in the original's white-to-teal, turned row by row by the original's
-  sine; the beam glints off the faces as they turn and lights the panels
-  from behind. The letterforms are derived from your data when the
-  preview loads; none are stored here.
-- At the end the beam swings into the lens over the original's fade to
-  white, and the monster develops out of the white at the original's
-  levels.
+  of polished black with rounded edges, the letter inset on its four faces
+  as a panel of light in the original's white-to-teal, turned row by row by
+  the original's sine; the lamp catches the edges and the beam glints off
+  the faces as they turn, and lights the panels from behind. The
+  letterforms are derived from your data when the preview loads; none are
+  stored here.
+- At the end the beam swings into the lens, from a little before the
+  original's fade to white, and the monster develops out of the white at
+  the original's levels.
 
 The dust's depth, the beam, the cubes and their material, and the swing
 into the lens are authored; the positions, motion, letters and timing are
