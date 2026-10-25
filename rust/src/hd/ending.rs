@@ -86,23 +86,24 @@ pub const PICTURE_SCALE: f64 = 0.7;
 /// the face's full size, the centre set's face at the origin, its front
 /// toward +z). Its vertical field of view (degrees): from 100 PICTURE_SCALE
 /// / tan(half of it) the picture's 200 rows fill the frame's height, as part
-/// 7's picture does, which is where it starts. It draws back from there and never stops, eased in on the
-/// logarithm of its distance: its speed there (a 70 Hz frame) rises from
-/// rest as a smootherstep over the first EASE frames to SPEED, gently at
-/// first so the centre set still fills the frame while the CRT comes on, and
-/// keeps rising, by GAIN of SPEED over SPAN frames, so the zoom out
-/// accelerates through the hold and keeps its momentum through the
-/// switch-off to the end. By the white flash (frame 284) a field of about
-/// 5 sets across is in view, about 10 when the dots appear (frame 350),
-/// about 20 as the pulse ends and about 50 at the end. The player tunes the
-/// speed live (Q and E, [`EndingPreview::pull_speed`]), the ease keeping
-/// its shape.
+/// 7's picture does, which is where it starts. It draws back from there
+/// and never stops, eased in on the logarithm of its distance: its speed
+/// there (a 70 Hz frame) rises from rest as a smootherstep over the first
+/// EASE frames to SPEED, gently at first so the centre set still fills the
+/// frame while the CRT comes on, and keeps rising, by GAIN of SPEED over
+/// SPAN frames, so the zoom out accelerates through the hold and keeps its
+/// momentum through the switch-off to the end. SPEED was chosen by eye with
+/// the player's keys (Q and E, [`EndingPreview::pull_speed`], the ease
+/// keeping its shape): by the white flash (frame 284) about 2.9 sets across
+/// and 2 down are in view, the centre set and its neighbours round it,
+/// about 5 when the dots appear (frame 350), 9 as the pulse ends and 16 at
+/// the end.
 /// It turns a little as it draws back (TURN, degrees across and down,
 /// approached as the logarithm grows past TURN_LOG). The wall
 /// (ending_set.wgsl) has a set every SET_PITCH rows up.
 pub const FIELD_OF_VIEW: f64 = 30.0;
 pub const EASE: f64 = 220.0;
-pub const SPEED: f64 = 0.0105;
+pub const SPEED: f64 = 0.007875;
 pub const GAIN: f64 = 0.15;
 pub const SPAN: f64 = 481.0;
 pub const TURN: (f64, f64) = (2.0, 3.0);
@@ -875,30 +876,26 @@ mod tests {
         );
     }
 
-    /// The camera starts where the face's 200 rows fill the frame, straight
+    /// The camera starts where the picture's 200 rows fill the frame, straight
     /// on and at rest; it holds close while the CRT comes on, then draws
     /// back, eased in on the logarithm of its distance: that speed rises
-    /// from rest and never falls, so it never stops or slows, and the
-    /// switch-off shows a field of sets, many dozens of them.
+    /// from rest and never falls, so it never stops or slows; the switch-off
+    /// shows the centre set and its neighbours, and the end a field of sets.
     #[test]
     fn camera_starts_on_the_face_and_accelerates_away() {
         let (eye, aim, tan_half) = camera(0.0, SPEED);
         assert_eq!(aim, [0.0; 3]);
         assert_eq!(&eye[..2], &[0.0, 0.0]);
-        assert!((eye[2] * tan_half - 100.0).abs() < 1e-9);
+        assert!((eye[2] * tan_half - 100.0 * PICTURE_SCALE).abs() < 1e-9);
         let length = |e: [f64; 3]| (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]).sqrt();
         // Sets across a 16:9 frame (the pitch across is 376 rows), and the
         // frame's height a set takes.
         let across = |tau: f64| 2.0 * length(camera(tau, SPEED).0) * tan_half * 16.0 / 9.0 / 376.0;
         let share = |tau: f64| SET_PITCH / (2.0 * length(camera(tau, SPEED).0) * tan_half);
         assert!(share(CRT_RAMP) > 1.4, "{}", share(CRT_RAMP));
-        assert!((15.0..22.0).contains(&across(284.0)), "{}", across(284.0));
-        assert!(across(284.0) * 9.0 / 16.0 * 376.0 / 300.0 > 8.0);
-        assert!(
-            (100.0..1000.0).contains(&across(481.0)),
-            "{}",
-            across(481.0)
-        );
+        assert!((2.5..3.3).contains(&across(284.0)), "{}", across(284.0));
+        assert!(across(284.0) * 9.0 / 16.0 * 376.0 / 300.0 > 1.8);
+        assert!((13.0..20.0).contains(&across(481.0)), "{}", across(481.0));
         // Tenths of a frame: the logarithm of the distance always rising,
         // its speed never falling and never changing suddenly, each step
         // small against the distance.

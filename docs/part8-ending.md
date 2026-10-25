@@ -92,11 +92,13 @@ and timing:
   the logarithm of its distance: that speed rises from rest over the first
   220 frames (a smootherstep) and keeps rising gently to the end, so the
   zoom out starts softly out of the centre screen and keeps accelerating,
-  with its momentum through the switch-off. It shows the empty glass round
-  the picture first, then the bezel, then the wall: about 1.5 sets across
-  the frame at 244.4 s, 3.5 at 245.2 s, 9 at 245.9 s and 16 across (some
-  190 sets in view) at the switch-off at 246.36 s; the dots appear with
-  some 57 across and the pulse ends with about 185. The face becomes a
+  with its momentum through the switch-off; its speed was chosen by eye
+  with the player's Q and E. It shows the empty glass round the picture
+  first, then the bezel, then the neighbouring sets: about 0.9 sets across
+  the frame at 244.4 s, 1.5 at 245.2 s, 2.2 at 245.9 s and 2.9 across (2
+  down) at the switch-off at 246.36 s, the centre set and its neighbours
+  round it; the dots appear with some 5 across, the pulse ends with about
+  9 and the demo with 16. The face becomes a
   tube's, its glass bulging into bowed sides and deep corners, set deep into
   a thick chamfered bezel with a row of buttons and a knob below it, and
   more and more sets come into view in every direction; the wall has no

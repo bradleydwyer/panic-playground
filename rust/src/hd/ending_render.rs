@@ -599,7 +599,7 @@ mod tests {
         // screen: no set moves, turns, sizes, rolls or skews its picture.
         let compact_bank = compact(bank);
         assert!(compact_bank.contains("fnplaced(local:vec2f)->vec2f{returnlocal/PICTURE;}"));
-        assert!(compact_bank.contains("structLook{brightness:f32,exponents:vec3f}"));
+        assert!(compact_bank.contains("structLook{brightness:f32,tint:vec3f}"));
     }
 
     /// The far pictures: one layer for each palette shown up to the line,
