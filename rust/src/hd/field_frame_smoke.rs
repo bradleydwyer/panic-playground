@@ -27,8 +27,17 @@
 //! come from the block at its start, computed in f64 on the CPU, and the
 //! kernels only gather. State n is the smoke at the fluid's start (part 6's
 //! PSTART fade, after a pre-roll of [`PREROLL`] steps that develops it
-//! unseen) plus n steps at [`FLUID`]'s rate. A state is kept every
-//! `FLUID.checkpoint` steps as it is first reached, so seeking back runs at
+//! unseen) plus n steps at [`FLUID`]'s rate. The pre-roll runs ahead, in
+//! the frames before the start, on an authored schedule over the half
+//! minute of part 6 before it ([`PREROLL_RATE`] steps a second, done
+//! [`PREROLL_LEAD`] seconds early): a step every three or four frames at 60
+//! a second, so that the start's frame runs one step rather than all of
+//! them. A frame runs at most [`PREROLL_BATCH`], catching up after a seek
+//! into part 6; a seek past the start runs what is left there, and a seek
+//! back before it keeps a finished pre-roll. Each step takes the block at
+//! its own time, not the frame's, so state 0 is the same whenever its steps
+//! run. A state is kept every `FLUID.checkpoint` steps as it is first
+//! reached (state 0 at the pre-roll's last step), so seeking back runs at
 //! most that many steps; playing on runs a step a frame. Bit-exactness holds
 //! on one machine, GPU and driver (the prototype measured it on Metal); the
 //! simulation is chaotic, so any change to a kernel or a parameter changes
@@ -61,6 +70,21 @@ pub const SMOKE: SmokeKind = SmokeKind::Volume;
 /// Steps of pre-roll before the fluid's start: 8 s, so that the smoke has
 /// developed, unseen, when part 6's fade brings the frame in.
 pub const PREROLL: usize = 480;
+
+/// The pre-roll's pace ahead of the fluid's start, in the frames before it
+/// ([`FrameFluid::preroll`]): steps a second of clip time, so that it runs
+/// over the 30 s of part 6 before the start's last [`PREROLL_LEAD`]
+/// seconds, a step every three or four frames at 60 a second. Authored, to
+/// keep those frames well within 1/60 s: observed with `--bench` at
+/// 2560 x 1440 on an Apple M5 Max, part 6's frames take about 3 ms and
+/// those with a step about 8.
+const PREROLL_RATE: f64 = 16.0;
+/// Seconds before the fluid's start by which the pre-roll is due in full.
+const PREROLL_LEAD: f64 = 2.0;
+/// The most pre-roll steps one frame runs ahead of the start, catching up
+/// after a seek (such frames take about 10 ms, as above); whatever is left
+/// when the start comes runs then.
+const PREROLL_BATCH: usize = 2;
 
 /// The 16:9 screen's width in its heights.
 const SCREEN_W: f64 = 16.0 / 9.0;
@@ -1045,6 +1069,8 @@ pub struct FrameFluid {
     kept: Vec<Option<Vec<Buffer>>>,
     /// The state the solver holds, once the first has been made.
     done: Option<usize>,
+    /// The pre-roll's steps that have run, all of them once state 0 is made.
+    prerolled: usize,
     start: f64,
 }
 
@@ -1167,6 +1193,7 @@ impl FrameFluid {
             _layers: layers,
             kept: (0..count).map(|_| None).collect(),
             done: None,
+            prerolled: 0,
             start,
         }
     }
@@ -1182,8 +1209,63 @@ impl FrameFluid {
         (one, one * self.kept.iter().flatten().count() as u64)
     }
 
+    /// Pre-roll steps due by `time`: [`PREROLL_RATE`] a second, ending
+    /// with all of them [`PREROLL_LEAD`] seconds before the fluid's start,
+    /// so beginning 32 s before it.
+    fn preroll_due(&self, time: f64) -> usize {
+        let begin = self.start - PREROLL_LEAD - PREROLL as f64 / PREROLL_RATE;
+        ((time - begin) * PREROLL_RATE)
+            .floor()
+            .clamp(0.0, PREROLL as f64) as usize
+    }
+
+    /// Pre-roll steps `steps` of [`PREROLL`] from rest: each step's time,
+    /// and the state it makes, state 0 at the last and none before.
+    fn preroll_runs(&self, steps: std::ops::Range<usize>) -> Vec<(f64, Option<usize>)> {
+        let dt = 1.0 / FLUID.rate;
+        steps
+            .map(|k| {
+                let t = self.start - (PREROLL - k) as f64 * dt;
+                (t, (k + 1 == PREROLL).then_some(0))
+            })
+            .collect()
+    }
+
+    /// Bring the solver's state to rest, when the pre-roll is still to
+    /// make its first step.
+    fn start_at_rest(&self, encoder: &mut CommandEncoder) {
+        if self.prerolled == 0 {
+            for b in &self.solver.state {
+                encoder.clear_buffer(b, 0, None);
+            }
+        }
+    }
+
+    /// Ahead of the fluid's start, run the pre-roll steps due by `time`
+    /// that have not run, at most [`PREROLL_BATCH`] of them. Nothing once
+    /// the pre-roll is done: state 0 is kept, and seeking back before the
+    /// start keeps it.
+    pub fn preroll(&mut self, device: &Device, queue: &Queue, preview: &FieldPreview, time: f64) {
+        if self.prerolled == PREROLL {
+            return;
+        }
+        let to = self.preroll_due(time).min(self.prerolled + PREROLL_BATCH);
+        if to <= self.prerolled {
+            return;
+        }
+        let mut encoder = device.create_command_encoder(&Default::default());
+        self.start_at_rest(&mut encoder);
+        let runs = self.preroll_runs(self.prerolled..to);
+        self.run(device, queue, preview, encoder, &runs, None);
+        self.prerolled = to;
+        if to == PREROLL {
+            self.done = Some(0);
+        }
+    }
+
     /// Bring the smoke to the moment `time` shows, the state one step past
-    /// it, and light it. Returns `u.field.fluid`.
+    /// it, and light it; before the fluid's start, run the pre-roll steps
+    /// due ([`FrameFluid::preroll`]). Returns `u.field.fluid`.
     pub fn advance(
         &mut self,
         device: &Device,
@@ -1194,6 +1276,7 @@ impl FrameFluid {
         let dt = 1.0 / FLUID.rate;
         let elapsed = time - self.start;
         if elapsed < 0.0 {
+            self.preroll(device, queue, preview, time);
             return [0.0, 0.0, dt as f32, elapsed as f32];
         }
         let position = elapsed * FLUID.rate;
@@ -1217,27 +1300,48 @@ impl FrameFluid {
                 self.done = Some(k * every);
             }
         }
-        let first = self.done.map_or(0, |done| done + 1);
-        // The steps to run: state 0 is the pre-roll from rest; state n is
-        // made by the step from state n - 1, with the block at its start.
-        let mut runs: Vec<(usize, f64)> = Vec::new();
+        // The steps to run: state 0 is the pre-roll from rest, the rest of
+        // it when it has not finished ahead of the start; state n is made
+        // by the step from state n - 1, with the block at its start.
+        let mut runs = Vec::new();
+        if self.done.is_none() {
+            self.start_at_rest(&mut encoder);
+            runs = self.preroll_runs(self.prerolled..PREROLL);
+            self.prerolled = PREROLL;
+        }
+        let first = self.done.map_or(1, |done| done + 1);
         for n in first..=target {
-            if n == 0 {
-                for k in 0..PREROLL {
-                    runs.push((0, self.start - (PREROLL - k) as f64 * dt));
-                }
-            } else {
-                runs.push((n, self.start + (n - 1) as f64 * dt));
-            }
+            runs.push((self.start + (n - 1) as f64 * dt, Some(n)));
         }
-        if first == 0 {
-            for b in &self.solver.state {
-                encoder.clear_buffer(b, 0, None);
-            }
-        }
+        self.run(device, queue, preview, encoder, &runs, Some((time, target)));
+        self.done = Some(target);
+        [
+            target as f32,
+            (position - (target - 1) as f64) as f32,
+            dt as f32,
+            elapsed as f32,
+        ]
+    }
+
+    /// Run `runs` after what `encoder` holds, and light state `target` for
+    /// the moment `time` when `light` is `Some((time, target))`, unless it
+    /// is lit already; submit it all. Each run is a step's time and the
+    /// state it makes (none for a pre-roll step before the last). State n
+    /// is kept as it is first made, every `FLUID.checkpoint` steps.
+    fn run(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        preview: &FieldPreview,
+        mut encoder: CommandEncoder,
+        runs: &[(f64, Option<usize>)],
+        light: Option<(f64, usize)>,
+    ) {
+        let dt = 1.0 / FLUID.rate;
+        let every = FLUID.checkpoint.max(1);
         let mut slot = 0;
         let mut pass = encoder.begin_compute_pass(&Default::default());
-        for (i, &(n, t)) in runs.iter().enumerate() {
+        for &(t, made) in runs {
             if slot == STEP_SLOTS {
                 drop(pass);
                 queue.submit([encoder.finish()]);
@@ -1254,9 +1358,9 @@ impl FrameFluid {
             slot += 1;
             // Keep state n as it is first made, at the last pre-roll step for
             // state 0.
-            let last = runs.get(i + 1).is_none_or(|next| next.0 != n);
+            let Some(n) = made else { continue };
             let k = n / every;
-            if last && n % every == 0 && k < self.kept.len() && self.kept[k].is_none() {
+            if n % every == 0 && k < self.kept.len() && self.kept[k].is_none() {
                 drop(pass);
                 let copies: Vec<Buffer> = self
                     .solver
@@ -1277,23 +1381,24 @@ impl FrameFluid {
                 pass = encoder.begin_compute_pass(&Default::default());
             }
         }
-        self.done = Some(target);
         // Light the state for this moment, unless it is lit already.
-        let block = preview.controls(time);
-        let light = lighting(&Moment { t: time, b: &block }, &self.grids);
-        if self.lit != Some((target, light)) {
-            queue.write_buffer(&self.lighting, 0, bytemuck::bytes_of(&light));
-            self.solver.run(&mut pass, &self.solver.light, 0);
-            self.lit = Some((target, light));
+        if let Some((time, target)) = light {
+            let block = preview.controls(time);
+            let light = lighting(&Moment { t: time, b: &block }, &self.grids);
+            if self.lit != Some((target, light)) {
+                queue.write_buffer(&self.lighting, 0, bytemuck::bytes_of(&light));
+                self.solver.run(&mut pass, &self.solver.light, 0);
+                self.lit = Some((target, light));
+            }
         }
         drop(pass);
         queue.submit([encoder.finish()]);
-        [
-            target as f32,
-            (position - (target - 1) as f64) as f32,
-            dt as f32,
-            elapsed as f32,
-        ]
+    }
+
+    /// The pre-roll's steps that have run, and its length.
+    #[cfg(test)]
+    pub fn prerolled(&self) -> (usize, usize) {
+        (self.prerolled, PREROLL)
     }
 
     /// A hash of the state the solver holds, and its number.

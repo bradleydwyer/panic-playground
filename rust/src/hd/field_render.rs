@@ -6,8 +6,8 @@
 //! The fluid hook is the frame author's [`FrameFluid`] (field_frame_smoke.rs):
 //! a smoke simulation at a fixed step ([`FLUID`]), deterministic per step,
 //! with its own GPU state, kept states for seeking back and lighting. This
-//! file brings it to each moment shown and binds its two light layers for
-//! the fragments.
+//! file runs its pre-roll in the frames before its start, brings it to
+//! each moment shown and binds its two light layers for the fragments.
 //!
 //! The zoom hook is the zoom author's [`ZoomLevels`] (field_zoom.rs): the
 //! deep zoom's reference orbit, tables and level kernel, and the levels it
@@ -431,6 +431,18 @@ impl FieldRenderer {
         self.fluid.advance(device, queue, preview, time)
     }
 
+    /// Before the fluid's start, run the smoke's pre-roll steps due by
+    /// `time`, a few a frame, so that its first state is ready by then.
+    pub fn preroll_fluid(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        preview: &FieldPreview,
+        time: f64,
+    ) {
+        self.fluid.preroll(device, queue, preview, time);
+    }
+
     /// Bring the zoom's levels to the moment `block` shows on a drawable of
     /// `size` pixels: the shown level complete, a band of the next built.
     pub fn advance_zoom(
@@ -447,6 +459,12 @@ impl FieldRenderer {
     #[cfg(test)]
     pub(super) fn read_fluid(&self, device: &Device, queue: &Queue) -> (u64, usize) {
         self.fluid.read(device, queue)
+    }
+
+    /// The fluid's pre-roll steps that have run, and its length.
+    #[cfg(test)]
+    pub(super) fn fluid_prerolled(&self) -> (usize, usize) {
+        self.fluid.prerolled()
     }
 
     /// The fragments' fluid bind group: the smoke's light behind the frame

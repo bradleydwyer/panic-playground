@@ -907,6 +907,11 @@ of the whole state. It is chaotic, so changing a kernel or a parameter
 changes every later frame. Bit-exactness holds on one machine, GPU and
 driver. Seeking and memory, for `Volume`:
 
+- Playing through part 6, the pre-roll runs ahead over the half minute
+  before the fade, a step every three or four frames, so the fade's first
+  frame runs one step. A seek into part 6 catches up two steps a frame. A
+  seek past the fade runs whatever is left there, about 2 seconds for all
+  480 steps.
 - A fresh process, as a one-frame export is, simulates from the fade's
   pre-roll: about 9 seconds to reach 105 seconds and 15 to reach the end.
 - A state is kept every 3 seconds as it is first reached: 76 MB each, up

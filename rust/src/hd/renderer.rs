@@ -813,6 +813,10 @@ impl Renderer {
                 self.prepare_field(clip, field, view);
                 return;
             }
+            // Ahead of part 5, in either view: a few of its smoke's pre-roll
+            // steps, so that they don't all run when the smoke starts.
+            let renderer = self.field.as_mut().unwrap();
+            renderer.preroll_fluid(&self.device, &self.queue, field, time);
         }
         if let Some(rings) = &clip.rings {
             if self.rings.as_ref().is_none_or(|r| !r.holds(rings)) {
@@ -2897,6 +2901,90 @@ mod tests {
             let steps = ((time - start) * FLUID.rate).floor() as usize + 1;
             assert_eq!(state.1, steps, "steps at {time}");
         }
+    }
+
+    /// The fluid's pre-roll runs a few steps a frame in the frames before
+    /// its start, so that the start's frame runs one step, and makes the
+    /// same states as when it all runs at the start: whether played at 60
+    /// frames a second through part 6, caught up after seeks into it and
+    /// back before it, or finished at the start, the state past the start
+    /// matches a new renderer's byte for byte (by a hash of the whole
+    /// state), as does the frame drawn; and seeking back before the start
+    /// keeps a finished pre-roll.
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
+    fn part5_fluid_prerolls_ahead_of_its_start_the_same() {
+        use super::super::field::{FLUID, FluidStart};
+        let data = crate::test_support::data();
+        let clip = Clip::load_field(&data, ScrollerLighting::Studio).unwrap();
+        let field = clip.field.as_ref().unwrap();
+        let start = match FLUID.start {
+            FluidStart::Part5 => field.seconds(0),
+            FluidStart::PictureFade => field.picture_fade.unwrap(),
+        };
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let renderer = || pollster::block_on(Renderer::new(&instance, None)).unwrap();
+        let view = |time| View {
+            time,
+            size: (320, 200),
+            comparison: 0,
+            modern: true,
+            hud: None,
+        };
+        let read = |r: &mut Renderer, time: f64| {
+            r.prepare(&clip, view(time));
+            r.field.as_ref().unwrap().read_fluid(&r.device, &r.queue)
+        };
+        let prerolled = |r: &Renderer| r.field.as_ref().unwrap().fluid_prerolled();
+        let play = |r: &mut Renderer, from: f64, to: f64| {
+            let mut k = 0;
+            while from + k as f64 / 60.0 < to {
+                r.prepare(&clip, view(from + k as f64 / 60.0));
+                k += 1;
+            }
+        };
+        // Played through part 6 from before the pre-roll begins: it has
+        // finished by the start, which runs one step.
+        let (mut playing, format) = renderer();
+        play(&mut playing, start - 35.0, start - 34.0);
+        assert_eq!(prerolled(&playing).0, 0, "no pre-roll 35 s ahead");
+        play(&mut playing, start - 34.0, start);
+        let (done, length) = prerolled(&playing);
+        assert_eq!(done, length, "pre-roll finished ahead of the start");
+        let first = read(&mut playing, start);
+        assert!(
+            first == read(&mut renderer().0, start),
+            "fluid at the start"
+        );
+        assert_eq!(first.1, 1);
+        let time = start + 0.5;
+        let pixels = playing.render_rgba(&clip, view(time), format).unwrap();
+        let fresh = renderer().0.render_rgba(&clip, view(time), format).unwrap();
+        assert!(pixels == fresh, "frame at {time}");
+        // Seeking back before the start keeps the finished pre-roll.
+        play(&mut playing, start - 30.0, start - 29.0);
+        assert_eq!(prerolled(&playing), (length, length));
+        let time = start + 4.0;
+        assert!(
+            read(&mut playing, time) == read(&mut renderer().0, time),
+            "fluid at {time}"
+        );
+        // Seeks into the pre-roll, on and back before it, then into part 5
+        // before it has finished: it carries on from the steps it has run.
+        let (mut seeking, _) = renderer();
+        play(&mut seeking, start - 20.0, start - 19.0);
+        let partial = prerolled(&seeking).0;
+        assert!(partial > 0 && partial < length, "{partial} steps");
+        play(&mut seeking, start - 40.0, start - 39.0);
+        assert_eq!(prerolled(&seeking).0, partial);
+        play(&mut seeking, start - 1.0, start - 0.9);
+        assert!(prerolled(&seeking).0 > partial);
+        let time = start + 3.0;
+        assert!(
+            read(&mut seeking, time) == read(&mut renderer().0, time),
+            "fluid at {time}"
+        );
+        assert_eq!(prerolled(&seeking), (length, length));
     }
 
     /// Rust field names and byte offsets, in declaration order.
