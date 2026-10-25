@@ -1638,9 +1638,10 @@ byte for byte. The look's constants are at the top of `plasma_light.wgsl`
 and `plasma_stone.rs`.
 
 At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (150 frames,
-on a machine in use), the plasma's seconds take about 6 ms a frame (median
-5.9, slowest 10), the slab alone 1.6 ms, the slide 0.9 ms and the handover,
-which also draws part 3's view, 4.9 ms. Faithful HD takes 0.3 to 0.4 ms.
+on a machine in use), the plasma's seconds take about 5 ms a frame (median
+4.5 to 5.0, slowest 6 to 14), the slab alone 1.7 ms, the slide 0.9 ms and
+the handover, which also draws part 3's view, 5 ms. Faithful HD takes 0.3
+to 0.4 ms.
 
 ### Options and tests
 

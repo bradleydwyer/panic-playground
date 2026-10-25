@@ -567,6 +567,7 @@ fn shade_stone(p:vec3f,d:vec3f)->vec3f {
         let d=ray_of_source(s);
         let t=march(d);
         var reach=pc.sheet.z+400.0;
+        var on_sheets=false;
         if t>0.0 {
             c=shade_stone(d*t,d);
             reach=t;
@@ -577,10 +578,13 @@ fn shade_stone(p:vec3f,d:vec3f)->vec3f {
             if hit.z>0.0 {
                 c=layer_light(0u,s)+back_light(d);
                 reach=hit.z;
+                on_sheets=true;
             }
             c+=glow(d);
         }
-        if field_written() && pc.palette.y>0.0 {c+=haze(d,reach);}
+        // The mist shows where the sheets don't: over the stone and below
+        // their edges (over them their own light is far brighter).
+        if field_written() && pc.palette.y>0.0 && !on_sheets {c+=haze(d,reach);}
         // Overexposed, the stone goes white as the film does, not orange:
         // its colour gives way to its luminance while the exposure is high.
         let over=clamp((pc.camera.w-1.0)/ARRIVAL_WASH,0.0,1.0);
