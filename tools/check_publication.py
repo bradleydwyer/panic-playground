@@ -68,6 +68,7 @@ RESEARCH_FILES = {
     'rust/src/hd/greetings.rs', 'rust/src/hd/greetings_type.rs',
     'rust/src/hd/greetings_render.rs', 'rust/src/hd/greetings_common.wgsl',
     'rust/src/hd/greetings_faithful.wgsl', 'rust/src/hd/greetings_light.wgsl',
+    'rust/src/hd/greetings_monster.wgsl',
     'rust/src/hd/greetings_letters.txt',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
     'rust/src/scenes/scroller.rs', 'rust/src/scenes/field.rs',

@@ -1257,6 +1257,8 @@ impl Renderer {
         self.scroller = false;
         self.tile_transition = false;
         let j = greetings.frame_at(time).unwrap_or(0);
+        self.greetings.as_mut().unwrap().shows_monster =
+            greetings.frames[j].stage >= super::greetings::Stage::Monster;
         if modern {
             self.modern_renderer
                 .resize(&self.device, &self.uniform, &self.reference, size);
@@ -1937,6 +1939,10 @@ mod tests {
             "part 7 modern".into(),
             super::super::greetings_render::light_source(),
         ));
+        modules.push((
+            "part 7 modern monster".into(),
+            super::super::greetings_render::monster_source(),
+        ));
         modules
     }
 
@@ -1982,6 +1988,7 @@ mod tests {
             "greetings_common.wgsl",
             "greetings_faithful.wgsl",
             "greetings_light.wgsl",
+            "greetings_monster.wgsl",
         ] {
             assert!(
                 files.iter().any(|f| f.0 == expected),

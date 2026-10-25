@@ -16,6 +16,7 @@ use wgpu::*;
 const COMMON: &str = include_str!("greetings_common.wgsl");
 const FAITHFUL: &str = include_str!("greetings_faithful.wgsl");
 const LIGHT: &str = include_str!("greetings_light.wgsl");
+const MONSTER: &str = include_str!("greetings_monster.wgsl");
 
 /// Faithful HD's module: the shared controls, greetings_common.wgsl and
 /// greetings_faithful.wgsl.
@@ -27,6 +28,12 @@ pub(super) fn faithful_source() -> String {
 /// greetings_light.wgsl.
 pub(super) fn light_source() -> String {
     wgsl_parts(&[COMMON, LIGHT])
+}
+
+/// The modern view's monster, a module of its own: the shared controls,
+/// greetings_common.wgsl and greetings_monster.wgsl.
+pub(super) fn monster_source() -> String {
+    wgsl_parts(&[COMMON, MONSTER])
 }
 
 /// What the blocks let through, seen from the lamp: the map's size (a map
@@ -72,6 +79,10 @@ pub(super) struct GreetingsRenderer {
     dust: RenderPipeline,
     air: RenderPipeline,
     style: RenderPipeline,
+    monster: RenderPipeline,
+    /// Whether the moment shows the monster (the modern view then draws
+    /// only it).
+    pub shows_monster: bool,
 }
 
 const HDR: TextureFormat = TextureFormat::Rgba16Float;
@@ -330,64 +341,77 @@ impl GreetingsRenderer {
             has_dynamic_offset: false,
             min_binding_size: None,
         };
-        let data_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("Part 7 data"),
-            entries: &[
-                entry(
-                    0,
-                    all,
-                    BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                ),
-                entry(1, all, storage),
-                entry(2, all, storage),
-                entry(3, all, storage),
-                entry(4, all, sampled(FLOAT)),
-                entry(5, all, sampled(TextureSampleType::Uint)),
-                entry(6, all, sampled(FLOAT)),
-                entry(7, all, BindingType::Sampler(SamplerBindingType::Filtering)),
-                entry(8, all, sampled(FLOAT)),
-                entry(9, all, storage),
-                entry(
-                    10,
-                    all,
-                    BindingType::Texture {
-                        sample_type: FLOAT,
-                        view_dimension: TextureViewDimension::D3,
-                        multisampled: false,
-                    },
-                ),
-                entry(11, all, BindingType::Sampler(SamplerBindingType::Filtering)),
-            ],
-        });
+        // The data every pass reads: its layout and group.
         let original_view = original.create_view(&Default::default());
-        let data = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("Part 7 data"),
-            layout: &data_layout,
-            entries: &[
-                resource(0, uniform),
-                resource(1, &planes),
-                resource(2, &shown),
-                resource(3, &letters),
-                view(4, &palettes),
-                view(5, &monster),
-                view(6, &original_view),
-                BindGroupEntry {
-                    binding: 7,
-                    resource: BindingResource::Sampler(&sampler),
-                },
-                view(8, &glyphs),
-                resource(9, &motes),
-                view(10, &noise_view),
-                BindGroupEntry {
-                    binding: 11,
-                    resource: BindingResource::Sampler(&repeat),
-                },
-            ],
-        });
+        let data_for = |visibility: ShaderStages| {
+            let layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("Part 7 data"),
+                entries: &[
+                    entry(
+                        0,
+                        visibility,
+                        BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                    ),
+                    entry(1, visibility, storage),
+                    entry(2, visibility, storage),
+                    entry(3, visibility, storage),
+                    entry(4, visibility, sampled(FLOAT)),
+                    entry(5, visibility, sampled(TextureSampleType::Uint)),
+                    entry(6, visibility, sampled(FLOAT)),
+                    entry(
+                        7,
+                        visibility,
+                        BindingType::Sampler(SamplerBindingType::Filtering),
+                    ),
+                    entry(8, visibility, sampled(FLOAT)),
+                    entry(9, visibility, storage),
+                    entry(
+                        10,
+                        visibility,
+                        BindingType::Texture {
+                            sample_type: FLOAT,
+                            view_dimension: TextureViewDimension::D3,
+                            multisampled: false,
+                        },
+                    ),
+                    entry(
+                        11,
+                        visibility,
+                        BindingType::Sampler(SamplerBindingType::Filtering),
+                    ),
+                ],
+            });
+            let group = device.create_bind_group(&BindGroupDescriptor {
+                label: Some("Part 7 data"),
+                layout: &layout,
+                entries: &[
+                    resource(0, uniform),
+                    resource(1, &planes),
+                    resource(2, &shown),
+                    resource(3, &letters),
+                    view(4, &palettes),
+                    view(5, &monster),
+                    view(6, &original_view),
+                    BindGroupEntry {
+                        binding: 7,
+                        resource: BindingResource::Sampler(&sampler),
+                    },
+                    view(8, &glyphs),
+                    resource(9, &motes),
+                    view(10, &noise_view),
+                    BindGroupEntry {
+                        binding: 11,
+                        resource: BindingResource::Sampler(&repeat),
+                    },
+                ],
+            });
+            (layout, group)
+        };
+        let (data_layout, data) = data_for(all);
         let unfiltered = sampled(TextureSampleType::Float { filterable: false });
         let scene_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("Part 7 scene's inputs"),
@@ -544,6 +568,18 @@ impl GreetingsRenderer {
             "style",
             &[target(HDR, None)],
         );
+        let monster_module = device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("Part 7 modern monster"),
+            source: ShaderSource::Wgsl(monster_source().into()),
+        });
+        let monster = pipeline(
+            "Part 7 modern monster",
+            &layout(&[&data_layout]),
+            &monster_module,
+            "fullscreen",
+            "monster_style",
+            &[target(HDR, None)],
+        );
         Self {
             key: key(preview),
             data,
@@ -563,6 +599,8 @@ impl GreetingsRenderer {
             dust,
             air,
             style,
+            monster,
+            shows_monster: false,
         }
     }
 
@@ -655,11 +693,19 @@ impl GreetingsRenderer {
         })
     }
 
-    /// The modern view into the HDR target: the beam's photons traced
+    /// The modern view into the HDR target (or the monster alone, when the
+    /// moment shows it): the beam's photons traced
     /// through the blocks and gathered into the transmission map; the
     /// blocks' coverage and depth; the dust; the lit air; then the picture.
     /// Call [`GreetingsRenderer::resize`] first.
     pub fn draw_style(&self, encoder: &mut CommandEncoder, hdr: &TextureView) {
+        if self.shows_monster {
+            let mut pass = Self::pass(encoder, "Part 7 modern monster", &[hdr]);
+            pass.set_bind_group(0, &self.data, &[]);
+            pass.set_pipeline(&self.monster);
+            pass.draw(0..3, 0..1);
+            return;
+        }
         let t = self.targets.as_ref().unwrap();
         {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {

@@ -1798,7 +1798,9 @@ All of it is authored, on the port's timing, positions and motion:
 Nothing follows the music, as in the original. Everything is a function of
 the clip's time; an ignored test checks frames drawn after others against
 a new renderer's, byte for byte. The look's constants are at the top of
-`greetings_light.wgsl`, the letterforms' in `greetings_type.rs`.
+`greetings_light.wgsl`, the letterforms' in `greetings_type.rs`. The
+monster's frames are drawn by a module of their own,
+`greetings_monster.wgsl`.
 
 At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (on a
 machine in use), modern part 7 takes about 6 to 8 ms a frame, the

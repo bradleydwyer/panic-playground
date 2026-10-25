@@ -50,8 +50,8 @@
 // - The end: the beam swings to the lens (authored motion, from a little
 //   before the original's feedback fade), its forward scattering flooding
 //   the picture, which the fade then blends toward white at the original's
-//   timing and levels; the monster (MONSTER.U, upscaled) develops out of the
-//   white at the original's levels.
+//   timing and levels; the monster develops out of the white
+//   (greetings_monster.wgsl).
 // Module: the shared controls, greetings_common.wgsl and this file.
 
 // ---- The look (authored) -------------------------------------------------------
@@ -195,11 +195,8 @@ const CUT_FLARE=1.2;
 const FRONT_MIRROR=.5;
 const MIRROR_DEPTH=220.0;
 // The swing to the lens: it starts this many seconds before the original's
-// fade to white (authored motion; the fade keeps its timing and levels),
-// and the brightest the monster shows through the tonemap once developed
-// (so it keeps its colours, near enough).
+// fade to white (authored motion; the fade keeps its timing and levels).
 const SWING_LEAD=.45;
-const MONSTER_WHITE=.9;
 
 // ---- Bindings -----------------------------------------------------------------------
 // The letters' faces (greetings_type.rs): signed distance (rows of the
@@ -862,30 +859,6 @@ struct DustOut { @location(0) front:vec4f, @location(1) full:vec4f }
 }
 
 // ---- The picture ----------------------------------------------------------------------------
-fn monster_colour(p:vec2i)->vec3f {
-    let q=clamp(p,vec2i(0),vec2i(319,199));
-    return entry(textureLoad(monster,q,0).r,true);
-}
-fn catmull(t:f32)->vec4f {
-    let t2=t*t;let t3=t2*t;
-    return vec4f(-.5*t3+t2-.5*t,1.5*t3-2.5*t2+1.0,-1.5*t3+2.0*t2+.5*t,.5*t3-.5*t2);
-}
-// MONSTER.U at the frame's palette (the original's level of it), upscaled;
-// outside the 4:3 frame, its colour 0 at that level.
-fn monster_picture(s:vec2f)->vec3f {
-    if !in_frame(s) {return entry(0u,true);}
-    let q=s-.5;
-    let k=vec2i(floor(q));
-    let wx=catmull(q.x-floor(q.x));
-    let wy=catmull(q.y-floor(q.y));
-    var c=vec3f(0);
-    for(var y=0;y<4;y++) {
-        for(var x=0;x<4;x++) {
-            c+=monster_colour(k+vec2i(x-1,y-1))*wx[x]*wy[y];
-        }
-    }
-    return clamp(c,vec3f(0),vec3f(1));
-}
 // The lamp seen directly at r rows from it: the core and halo, and its
 // aperture's flare as the beam turns toward the camera.
 fn lamp_glow(r:f32)->f32 {
@@ -1006,13 +979,6 @@ fn crystal(s:u32,k:f32,p:vec3f,d:vec3f,footprint:f32)->vec3f {
     greetings_begin();
     let pixel=vec2i(v.position.xy);
     let q=scene_of_uv(v.uv);
-    if shows_monster() {
-        // Developed out of the white: shown as the original shows it,
-        // through the tonemap backwards, the whites held a little below
-        // its top once the picture is up.
-        let top=mix(.999,MONSTER_WHITE,clamp(gc.sweep.w,0.0,1.0));
-        return vec4f(tonemap_inverse(min(monster_picture(source_of_scene(q)),vec3f(top))),1);
-    }
     let g=textureLoad(geometry,pixel,0);
     let lq=project(lamp());
     let lamp_light=star_colour()*intensity();
