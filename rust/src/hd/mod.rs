@@ -4,6 +4,8 @@
 pub mod clip;
 pub mod dots;
 mod dots_render;
+pub mod ending;
+mod ending_render;
 pub mod field;
 mod field_render;
 pub mod greetings;

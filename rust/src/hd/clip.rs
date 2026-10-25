@@ -1,4 +1,5 @@
 use super::dots::DotsPreview;
+use super::ending::EndingPreview;
 use super::field::FieldPreview;
 use super::greetings::GreetingsPreview;
 use super::plasma::PlasmaPreview;
@@ -171,6 +172,9 @@ pub struct Clip {
     /// Part 7, after part 4 (`--greetings`), from its first frame to part
     /// 8's first; see [`GreetingsPreview`].
     pub greetings: Option<GreetingsPreview>,
+    /// Part 8, after part 7 (`--ending`), from its first frame to the
+    /// demo's last; see [`EndingPreview`].
+    pub ending: Option<EndingPreview>,
 }
 
 /// Authored lighting cues for one 70 Hz window of the clip's PCM, each 0..=1.
@@ -286,17 +290,17 @@ pub struct TileTransition {
 
 impl Clip {
     pub fn load(data: &Data) -> Result<Self, String> {
-        Self::load_mode(data, false, false, false, false, false, false, false)
+        Self::load_mode(data, false, false, false, false, false, false, false, false)
     }
 
     /// Continue through the tile transition to the next backdrop, with
     /// uninterrupted PCM. The modern renderer draws it as a laser cut.
     pub fn load_transition(data: &Data) -> Result<Self, String> {
-        Self::load_mode(data, true, false, false, false, false, false, false)
+        Self::load_mode(data, true, false, false, false, false, false, false, false)
     }
 
     pub fn load_scroller(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
-        let mut clip = Self::load_mode(data, true, true, false, false, false, false, false)?;
+        let mut clip = Self::load_mode(data, true, true, false, false, false, false, false, false)?;
         clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
@@ -305,7 +309,7 @@ impl Clip {
     /// with uninterrupted PCM. Part 6's frames are kept as compact state;
     /// see [`RingsPreview`].
     pub fn load_rings(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
-        let mut clip = Self::load_mode(data, true, true, true, false, false, false, false)?;
+        let mut clip = Self::load_mode(data, true, true, true, false, false, false, false, false)?;
         clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
@@ -314,7 +318,7 @@ impl Clip {
     /// which shows part 5's last, with uninterrupted PCM. Part 5's frames are
     /// kept as compact state; see [`FieldPreview`].
     pub fn load_field(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
-        let mut clip = Self::load_mode(data, true, true, true, true, false, false, false)?;
+        let mut clip = Self::load_mode(data, true, true, true, true, false, false, false, false)?;
         clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
@@ -323,7 +327,7 @@ impl Clip {
     /// first drawn frame, its logo slab in white, with uninterrupted PCM.
     /// Part 3's frames are kept as compact state; see [`DotsPreview`].
     pub fn load_dots(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
-        let mut clip = Self::load_mode(data, true, true, true, true, true, false, false)?;
+        let mut clip = Self::load_mode(data, true, true, true, true, true, false, false, false)?;
         clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
@@ -332,7 +336,7 @@ impl Clip {
     /// uninterrupted PCM. Part 4's frames are kept as compact state; see
     /// [`PlasmaPreview`].
     pub fn load_plasma(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
-        let mut clip = Self::load_mode(data, true, true, true, true, true, true, false)?;
+        let mut clip = Self::load_mode(data, true, true, true, true, true, true, false, false)?;
         clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
@@ -341,7 +345,16 @@ impl Clip {
     /// uninterrupted PCM. Part 7's frames are kept as compact state; see
     /// [`GreetingsPreview`].
     pub fn load_greetings(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
-        let mut clip = Self::load_mode(data, true, true, true, true, true, true, true)?;
+        let mut clip = Self::load_mode(data, true, true, true, true, true, true, true, false)?;
+        clip.scroller.as_mut().unwrap().lighting = lighting;
+        Ok(clip)
+    }
+
+    /// Continue past part 7 through part 8 to the demo's last frame, with
+    /// uninterrupted PCM. Part 8's frames are kept as compact state; see
+    /// [`EndingPreview`].
+    pub fn load_ending(data: &Data, lighting: ScrollerLighting) -> Result<Self, String> {
+        let mut clip = Self::load_mode(data, true, true, true, true, true, true, true, true)?;
         clip.scroller.as_mut().unwrap().lighting = lighting;
         Ok(clip)
     }
@@ -369,6 +382,7 @@ impl Clip {
         play_dots: bool,
         play_plasma: bool,
         play_greetings: bool,
+        play_ending: bool,
     ) -> Result<Self, String> {
         let mut vga = Vga::new();
         let mut intro = Intro::new(data, &mut vga)?;
@@ -408,7 +422,8 @@ impl Clip {
         let mut field: Option<FieldPreview> = None;
         let mut dots: Option<DotsPreview> = None;
         let mut plasma: Option<PlasmaPreview> = None;
-        let mut greetings = None;
+        let mut greetings: Option<GreetingsPreview> = None;
+        let mut ending = None;
         let transition = if extend {
             // The last intro snapshot is also the first frame of part 2. Replace
             // it, rather than adding an extra frame or restarting the music.
@@ -588,6 +603,13 @@ impl Clip {
                     data, &mut vga, &mut music, &mut pcm, plasma,
                 )?);
             }
+            if let (true, Some(greetings)) = (play_ending, &greetings) {
+                // Part 7's preview ends on part 8's first frame; part 8's
+                // begins there.
+                ending = Some(EndingPreview::load(
+                    data, &mut vga, &mut music, &mut pcm, greetings,
+                )?);
+            }
             Some(transition)
         } else {
             // Standalone logo preview continues the music through a short hold.
@@ -608,6 +630,7 @@ impl Clip {
             dots,
             plasma,
             greetings,
+            ending,
         })
     }
 
@@ -664,6 +687,10 @@ impl Clip {
     pub fn greetings_frame(&self, time: f64) -> Option<usize> {
         self.greetings.as_ref()?.frame_at(time)
     }
+    /// Part-8 frame at a clip time, when the clip has reached part 8.
+    pub fn ending_frame(&self, time: f64) -> Option<usize> {
+        self.ending.as_ref()?.frame_at(time)
+    }
     /// The times at which [`Clip::label`] changes, found at each engine
     /// frame, with 0 first: the starts of the sections the preview steps
     /// through. The clip's last frame, a fraction of a sample past its
@@ -684,6 +711,9 @@ impl Clip {
     }
 
     pub fn label(&self, time: f64) -> &'static str {
+        if let (Some(ending), Some(j)) = (&self.ending, self.ending_frame(time)) {
+            return ending.label(j);
+        }
         if let (Some(greetings), Some(j)) = (&self.greetings, self.greetings_frame(time)) {
             return greetings.label(j);
         }
@@ -1980,6 +2010,7 @@ mod tests {
             dots: None,
             plasma: None,
             greetings: None,
+            ending: None,
         };
         assert_eq!(clip.scroll_at(1.0), None);
         clip.scroller = Some(ScrollerPreview {
@@ -2210,6 +2241,7 @@ mod tests {
             dots: None,
             plasma: None,
             greetings: None,
+            ending: None,
         };
         let intro = |time: f64| clip.audio_at(time).intro;
         // Window 0 is known once it has played, at 1/70 s.
