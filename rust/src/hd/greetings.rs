@@ -82,7 +82,7 @@ pub const SWEEP_CENTRE: (f64, f64) = (160.0, 85.0);
 /// tilt toward the camera by default and at most (degrees, the default
 /// chosen by eye; the beam's soft edge ends about 43 degrees from its axis,
 /// so at 51 the lens catches its faint outer edge on each turn, though never
-/// its body). Its brightness (times the shader's own; the lamp's glow in the
+/// its body; at the most, 90, it points straight at the camera). Its brightness (times the shader's own; the lamp's glow in the
 /// air is left as it is), chosen by eye: it starts at BEAM_BRIGHTNESS (by
 /// default; tuned live within BEAM_BRIGHTNESS_RANGE) and from
 /// BEAM_RAMP_FROM (clip seconds) rises linearly to BEAM_BRIGHTNESS_END by
@@ -91,8 +91,13 @@ pub const SWEEP_CENTRE: (f64, f64) = (160.0, 85.0);
 /// BEAM_PERIOD_END engine frames, also chosen by eye.
 pub const BEAM_PERIOD: f64 = 128.0;
 pub const BEAM_PERIOD_END: f64 = 32.0;
+/// The modern view's beam's width (authored, tuned live with Z/X, like a
+/// spotlight's focus): times the shader's own spread, by default and at
+/// least and at most (at none, a shaft as wide as the lamp's aperture).
+pub const BEAM_WIDTH: f64 = 1.0;
+pub const BEAM_WIDTH_RANGE: (f64, f64) = (0.0, 2.0);
 pub const BEAM_TILT: f64 = 51.0;
-pub const BEAM_TILT_MAX: f64 = 70.0;
+pub const BEAM_TILT_MAX: f64 = 90.0;
 pub const BEAM_BRIGHTNESS: f64 = 0.25;
 pub const BEAM_BRIGHTNESS_RANGE: (f64, f64) = (0.05, 4.0);
 pub const BEAM_RAMP_FROM: f64 = 237.0;
@@ -183,6 +188,9 @@ pub struct GreetingsBlock {
     /// (radians), its brightness, and how fast its phase moves against the
     /// original's colours.
     pub beam: [f32; 4],
+    /// The beam's width (times the shader's own spread), unused, unused,
+    /// unused.
+    pub beam_late: [f32; 4],
 }
 
 /// Part 7 of the HD clip: from its first frame to part 8's first.
@@ -228,6 +236,8 @@ pub struct GreetingsPreview {
     pub beam_period: f64,
     pub beam_tilt: f64,
     pub beam_brightness: f64,
+    /// The beam's width (tuned live with Z/X), times the shader's spread.
+    pub beam_width: f64,
 }
 
 impl GreetingsPreview {
@@ -374,6 +384,7 @@ impl GreetingsPreview {
             beam_period: BEAM_PERIOD,
             beam_tilt: BEAM_TILT,
             beam_brightness: BEAM_BRIGHTNESS,
+            beam_width: BEAM_WIDTH,
             start,
             letterforms: letterforms(LetterSource::Outlines(LETTERS))?,
             motes: motes(&planes),
@@ -779,6 +790,7 @@ impl GreetingsPreview {
                 brightness as f32,
                 beam_rate as f32,
             ],
+            beam_late: [self.beam_width as f32, 0.0, 0.0, 0.0],
         }
     }
 }

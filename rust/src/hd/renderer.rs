@@ -216,6 +216,8 @@ struct GreetingsBlock {
     // turn), its tilt toward the camera (radians), its brightness, and how
     // fast its phase moves against the original's.
     beam: vec4f,
+    // The beam's width (times the shader's spread).
+    beam_late: vec4f,
 }
 struct Controls {
     screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode
@@ -2600,7 +2602,8 @@ mod tests {
             twist_late,
             events,
             events_late,
-            beam
+            beam,
+            beam_late
         ];
         assert_eq!(
             expected.last().unwrap().1 + size_of::<[f32; 4]>(),

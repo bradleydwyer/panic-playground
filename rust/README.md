@@ -404,8 +404,9 @@ optical simulation. All fields are generated locally in memory.
 | ; / ' | Strength of the waves' side light and shadows |
 | N | Part 6: the new symbols in its middle, or the original's throughout |
 | J / K | Part 7: the beam's starting turn 16 frames shorter (faster) or longer (slower); default 128; from 237 s it shortens linearly to 32 by part 8 |
-| U / I | Part 7: the beam's tilt toward the camera, 3° less or more (default 51°) |
+| U / I | Part 7: the beam's tilt toward the camera, 3° less or more (0 to 90°, straight at the camera; default 51°) |
 | G / H | Part 7: the beam's starting brightness, ×0.8 or ×1.25 (0.05 to 4; default 0.25); from 237 s it rises linearly to 1 by part 8 |
+| Z / X | Part 7: the beam's width (its focus), 0.1 narrower or wider (0, a thin shaft, to 2; default 1) |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
@@ -1729,8 +1730,9 @@ All of it is authored, on the port's timing, positions and motion:
   only the swing into the lens at the end points at the camera. It shines
   at a quarter of its full light, and from 237 s brightens linearly to its
   full light by part 8's first frame (both chosen by eye). **J**/**K**,
-  **U**/**I** and **G**/**H** change the turn's length, the tilt and the
-  beam's starting brightness while the preview plays. The lamp stands a
+  **U**/**I**, **G**/**H** and **Z**/**X** change the turn's length, the
+  tilt, the beam's starting brightness and its width while the preview
+  plays. The lamp stands a
   little behind the strips, where it projects on the sweep's centre: a
   bright core with a halo, the
   beam leaving an aperture of finite size. The original lights 40 of its 64

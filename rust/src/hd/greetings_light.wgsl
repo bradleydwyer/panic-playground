@@ -69,7 +69,9 @@ const APERTURE=2.6;
 // along * BEAM_SPREAD (the tangent of about 29 degrees), ending smoothly by
 // q = BEAM_END. The original lights 40 of its 64 colours at once, a very
 // broad band, so the beam is broad and soft: about 32 degrees across at
-// half its light, faintly out to some 60.
+// half its light, faintly out to some 60. Its spread is widened or
+// narrowed live by u.greetings.beam_late.x (greetings::BEAM_WIDTH; Z/X in
+// the preview), as a spotlight's focus would.
 const BEAM_SPREAD=.55;
 const BEAM_SOFTNESS=2.0;
 const BEAM_END=1.7;
@@ -110,7 +112,8 @@ const SHUTTER=1.0;
 // angle's tangent (the beam, its penumbra and its turn over the shutter);
 // the blocks' depth either side of the strips' plane; the photons' grid
 // (greetings_render::PHOTON_GRID); how far along the beam each photon's
-// landing is taken (rows); and the brightest a caustic is let be.
+// landing is taken (rows); and the brightest a caustic is let be. The map
+// widens with a beam wider than the shader's own (map_spread).
 const MAP_SPREAD=1.2;
 const SLAB=11.5;
 const PHOTON_GRID=vec2u(600u,600u);
@@ -269,13 +272,18 @@ fn beam_axis(back:f32)->vec3f {
     // Source y runs down, the scene's up.
     return vec3f(cos(angle)*cos(tilt),-sin(angle)*cos(tilt),-sin(tilt));
 }
+// The beam's width, times BEAM_SPREAD (tuned live), and the map's spread,
+// widened with a beam wider than the shader's own so the map still holds
+// its cone.
+fn beam_width()->f32 {return max(gc.beam_late.x,0.0);}
+fn map_spread()->f32 {return MAP_SPREAD*max(1.0,beam_width());}
 // The beam's profile at x (0 outside the cone): brighter on its axis and
 // soft at its edge, 1 on the axis; and its falloff with the distance.
 fn beam_profile(x:vec3f,axis:vec3f)->f32 {
     let v=x-lamp();
     let along=dot(v,axis);
     if along<=0.0 {return 0.0;}
-    let q=length(v-axis*along)/(APERTURE+along*BEAM_SPREAD);
+    let q=length(v-axis*along)/(APERTURE+along*BEAM_SPREAD*beam_width());
     return exp(-BEAM_SOFTNESS*q*q)*(1.0-smoothstep(BEAM_END*.6,BEAM_END,q));
 }
 // The lamp's light falling off with the distance, and the beam's: the
@@ -310,12 +318,12 @@ fn map_uv(x:vec3f)->vec2f {
     let w=x-lamp();
     let along=dot(w,f.axis);
     if along<=1e-3 {return vec2f(-1);}
-    return vec2f(dot(w,f.across),-dot(w,f.up))/(along*2.0*MAP_SPREAD)+.5;
+    return vec2f(dot(w,f.across),-dot(w,f.up))/(along*2.0*map_spread())+.5;
 }
 // The direction from the lamp for a map uv.
 fn map_direction(uv:vec2f)->vec3f {
     let f=map_frame();
-    let t=(uv-.5)*2.0*MAP_SPREAD;
+    let t=(uv-.5)*2.0*map_spread();
     return normalize(f.axis+f.across*t.x-f.up*t.y);
 }
 // The light the blocks move, toward x, by wavelength, in the beam's units
@@ -330,7 +338,7 @@ fn moved(x:vec3f,blur:f32)->vec3f {
     if any(uv<vec2f(0)) || any(uv>vec2f(1)) {return vec3f(0);}
     let w=x-l;
     let blocks=length(w)*l.z/(l.z-x.z);
-    let spread=APERTURE*max(1.0/max(blocks,1.0)-1.0/length(w),0.0)/(2.0*MAP_SPREAD);
+    let spread=APERTURE*max(1.0/max(blocks,1.0)-1.0/length(w),0.0)/(2.0*map_spread());
     let o=vec2f(cos(blur),sin(blur))*spread;
     return (textureSampleLevel(transmission,linear,uv+o,0.0).rgb
         +textureSampleLevel(transmission,linear,uv-o,0.0).rgb)*.5;
@@ -396,7 +404,9 @@ fn pattern(p:vec2f)->f32 {
 // edge's outer bound), between t0 and t1, or (1, 0). The cone's apex is
 // behind the lamp so its radius there is the aperture's.
 fn cone_span(d:vec3f,axis:vec3f,t0:f32,t1:f32)->vec2f {
-    return cone_span_at(d,axis,t0,t1,BEAM_SPREAD*BEAM_END,APERTURE*BEAM_END);
+    // At no width the beam is a shaft as wide as the aperture; the bound
+    // keeps a little slope so its apex stays at a finite distance.
+    return cone_span_at(d,axis,t0,t1,max(BEAM_SPREAD*BEAM_END*beam_width(),.02),APERTURE*BEAM_END);
 }
 // The same for a cone of this slope (its radius per row along) and radius
 // at the lamp.
@@ -755,7 +765,7 @@ struct AirOut { @location(0) front:vec4f, @location(1) full:vec4f }
     // but outside the beam's.
     // Only in front of the blocks, where the caustics fall; one tap.
     let axis=beam_axis(0.0);
-    let wide=cone_span_at(d,axis,near,(CAMERA_DISTANCE-SLAB)/d.z,MAP_SPREAD,APERTURE);
+    let wide=cone_span_at(d,axis,near,(CAMERA_DISTANCE-SLAB)/d.z,map_spread(),APERTURE);
     if wide.x<wide.y && intensity()>0.0 {
         let step=(wide.y-wide.x)/f32(SPRAY_SAMPLES);
         for(var k=0u;k<SPRAY_SAMPLES;k++) {
