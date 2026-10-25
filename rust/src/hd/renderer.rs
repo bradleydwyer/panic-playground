@@ -3,6 +3,8 @@ use super::dots::{DotsBlock, DotsPreview, PART3_PHASE};
 use super::dots_render::DotsRenderer;
 use super::field::{FRAME_TAKES_PART6_FADE, FieldBlock, FieldPreview, PART5_PHASE};
 use super::field_render::FieldRenderer;
+use super::greetings::{GreetingsBlock, GreetingsPreview, PART7_PHASE};
+use super::greetings_render::GreetingsRenderer;
 use super::modern::Modern;
 use super::plasma::{PART4_PHASE, PlasmaBlock, PlasmaPreview};
 use super::plasma_render::PlasmaRenderer;
@@ -73,6 +75,8 @@ struct Uniforms {
     dots: DotsBlock,
     /// Part 4 (`plasma::PlasmaPreview::controls`); all zero before it.
     plasma: PlasmaBlock,
+    /// Part 7 (`greetings::GreetingsPreview::controls`); all zero before it.
+    greetings: GreetingsBlock,
 }
 
 /// The only WGSL declaration of [`Uniforms`] and its binding. [`wgsl`]
@@ -193,6 +197,22 @@ struct PlasmaBlock {
     sheet_back: vec4f,
     sheet_back_size: vec4f,
 }
+// Part 7's controls (hd/greetings.rs, GreetingsBlock), in u.greetings.
+struct GreetingsBlock {
+    // Shown (1), seconds since its first frame, stage (0 first frame, 1
+    // words, 2 white, 3 monster, 4 part 8's first frame), part-7 frame.
+    part: vec4f,
+    // The frame shown, the next, the fraction toward it, strips moving (1).
+    frame: vec4f,
+    // Star colours' phase and intensity (0 to 1); white fade, monster level.
+    sweep: vec4f,
+    // The strips' sine positions 0 to 3; 4, the first slot's top row.
+    twist: vec4f,
+    twist_late: vec4f,
+    // Part-7 seconds: lit, words, words' end, white; monster, part 8.
+    events: vec4f,
+    events_late: vec4f,
+}
 struct Controls {
     screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode
     state: vec4f,  // reference phase, sequence frame, door, temporal shape interpolation
@@ -260,6 +280,8 @@ struct Controls {
     dots: DotsBlock,
     // Part 4 (Plasma), all zero before it; plasma_common.wgsl reads it.
     plasma: PlasmaBlock,
+    // Part 7 (Greetings), all zero before it; greetings_common.wgsl reads it.
+    greetings: GreetingsBlock,
 }
 @group(0) @binding(0) var<uniform> u: Controls;
 ";
@@ -359,6 +381,9 @@ pub struct Renderer {
     plasma: Option<PlasmaRenderer>,
     part4: bool,
     part4_handover: bool,
+    /// Part 7's, likewise.
+    greetings: Option<GreetingsRenderer>,
+    part7: bool,
 }
 
 impl Renderer {
@@ -632,6 +657,8 @@ impl Renderer {
                 plasma: None,
                 part4: false,
                 part4_handover: false,
+                greetings: None,
+                part7: false,
             },
             format,
         ))
@@ -651,6 +678,22 @@ impl Renderer {
         self.part5 = false;
         self.part3 = false;
         self.part4 = false;
+        self.part7 = false;
+        if let Some(greetings) = &clip.greetings {
+            if self.greetings.as_ref().is_none_or(|r| !r.holds(greetings)) {
+                self.greetings = Some(GreetingsRenderer::new(
+                    &self.device,
+                    &self.queue,
+                    &self.uniform,
+                    self.output_format,
+                    greetings,
+                ));
+            }
+            if greetings.frame_at(time).is_some() {
+                self.prepare_greetings(clip, greetings, view);
+                return;
+            }
+        }
         if let Some(dots) = &clip.dots
             && self.dots.as_ref().is_none_or(|r| !r.holds(dots))
         {
@@ -1198,6 +1241,64 @@ impl Renderer {
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
     }
 
+    /// Part 7: the shared controls for this moment, and the original frame
+    /// when a comparison shows it, rebuilt on demand
+    /// ([`GreetingsPreview::original_rgba`]).
+    fn prepare_greetings(&mut self, clip: &Clip, greetings: &GreetingsPreview, view: View) {
+        let View {
+            time,
+            size,
+            comparison,
+            modern,
+            hud: _,
+        } = view;
+        self.part7 = true;
+        self.glyphs_active = false;
+        self.scroller = false;
+        self.tile_transition = false;
+        let j = greetings.frame_at(time).unwrap_or(0);
+        if modern {
+            self.modern_renderer
+                .resize(&self.device, &self.uniform, &self.reference, size);
+            self.greetings.as_mut().unwrap().resize(&self.device, size);
+        }
+        let index = greetings.start + j;
+        if comparison != 0 {
+            let renderer = self.greetings.as_mut().unwrap();
+            renderer.show_original(&self.queue, greetings, j);
+            if self.reference_index != Some(index) {
+                self.queue.write_texture(
+                    self.reference.as_image_copy(),
+                    &greetings.original_rgba(j),
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(WIDTH as u32 * 4),
+                        rows_per_image: Some(HEIGHT as u32),
+                    },
+                    wgpu::Extent3d {
+                        width: WIDTH as u32,
+                        height: HEIGHT as u32,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                self.reference_index = Some(index);
+            }
+        }
+        let mut u = Uniforms::zeroed();
+        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
+        u.state = [PART7_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
+        u.misc = [
+            4.0 / 3.0,
+            if self.srgb { 1.0 } else { 0.0 },
+            clip.logo_at as f32,
+            if modern { 1.0 } else { 0.0 },
+        ];
+        u.audio = clip.audio_at(time).intro;
+        u.greetings = greetings.controls(time);
+        self.queue
+            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+    }
+
     /// Part 5: the shared controls for this moment, its palette and zoom
     /// buffers, the fluid brought to this moment, and the original frame
     /// when a comparison shows it, replayed on demand
@@ -1342,6 +1443,16 @@ impl Renderer {
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        if let (true, Some(greetings)) = (self.part7, &self.greetings) {
+            if self.modern_view {
+                greetings.draw_style(encoder, self.modern_renderer.hdr_target());
+                self.modern_renderer.post(encoder, view);
+            } else {
+                greetings.draw_faithful(encoder, view);
+            }
+            self.draw_hud(encoder, view);
+            return;
+        }
         if let (true, Some(plasma)) = (self.part4, &self.plasma) {
             if self.modern_view {
                 if let (true, Some(dots)) = (self.part4_handover, &self.dots) {
@@ -1818,6 +1929,14 @@ mod tests {
             "part 4 modern".into(),
             super::super::plasma_render::light_source(),
         ));
+        modules.push((
+            "part 7 faithful HD".into(),
+            super::super::greetings_render::faithful_source(),
+        ));
+        modules.push((
+            "part 7 modern".into(),
+            super::super::greetings_render::light_source(),
+        ));
         modules
     }
 
@@ -1860,6 +1979,9 @@ mod tests {
             "plasma_common.wgsl",
             "plasma_faithful.wgsl",
             "plasma_light.wgsl",
+            "greetings_common.wgsl",
+            "greetings_faithful.wgsl",
+            "greetings_light.wgsl",
         ] {
             assert!(
                 files.iter().any(|f| f.0 == expected),
@@ -2452,6 +2574,119 @@ mod tests {
         }
     }
 
+    #[test]
+    fn part7_block_matches_its_wgsl_declaration() {
+        macro_rules! fields {
+            ($($field:ident),* $(,)?) => {
+                vec![$((stringify!($field).to_owned(), offset_of!(GreetingsBlock, $field))),*]
+            };
+        }
+        let expected = fields![part, frame, sweep, twist, twist_late, events, events_late];
+        assert_eq!(
+            expected.last().unwrap().1 + size_of::<[f32; 4]>(),
+            size_of::<GreetingsBlock>()
+        );
+        for (name, source) in [
+            (
+                "part 7 modern",
+                super::super::greetings_render::light_source(),
+            ),
+            (
+                "part 7 faithful HD",
+                super::super::greetings_render::faithful_source(),
+            ),
+        ] {
+            let (module, _) = validated(name, &source);
+            let (members, span) = wgsl_members(&module, "GreetingsBlock");
+            assert_eq!(members, expected, "{name}");
+            assert_eq!(span, size_of::<GreetingsBlock>(), "{name}");
+        }
+    }
+
+    /// Each part-7 entry point uses only the bindings its pipeline has
+    /// (greetings_render.rs): group 0 everywhere; in group 1, the dust for
+    /// the cubes, the shafts' source for the shafts, and the dust, the
+    /// cubes and the shafts for the picture.
+    #[test]
+    fn part7_entry_points_use_only_their_bindings() {
+        for (name, source) in [
+            (
+                "part 7 faithful HD",
+                super::super::greetings_render::faithful_source(),
+            ),
+            (
+                "part 7 modern",
+                super::super::greetings_render::light_source(),
+            ),
+        ] {
+            let (module, info) = validated(name, &source);
+            for (index, entry) in module.entry_points.iter().enumerate() {
+                let allowed: &[(u32, u32)] = match entry.name.as_str() {
+                    "fullscreen" | "faithful" | "dust_vertex" | "dust_fragment" => &[],
+                    "cubes" => &[(1, 1)],
+                    "shafts" => &[(1, 2)],
+                    "style" => &[(1, 1), (1, 3), (1, 4)],
+                    n => panic!("unexpected entry point {n}"),
+                };
+                let uses = info.get_entry_point(index);
+                for (handle, global) in module.global_variables.iter() {
+                    let (Some(binding), false) = (&global.binding, uses[handle].is_empty()) else {
+                        continue;
+                    };
+                    assert!(
+                        binding.group == 0 || allowed.contains(&(binding.group, binding.binding)),
+                        "{name}: {} uses {:?} (group {}, binding {})",
+                        entry.name,
+                        global.name,
+                        binding.group,
+                        binding.binding
+                    );
+                }
+            }
+        }
+    }
+
+    /// Part 7 is a function of the moment: a frame drawn after others is
+    /// the same, byte for byte, as one drawn by a new renderer, in both
+    /// views.
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
+    fn part7_frames_are_the_same_however_reached() {
+        let data = crate::test_support::data();
+        let clip = Clip::load_greetings(&data, ScrollerLighting::Studio).unwrap();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let view = |time, modern| View {
+            time,
+            size: (480, 270),
+            comparison: 0,
+            modern,
+            hud: None,
+        };
+        let moments = [226.5, 231.0, 233.1, 238.6, 241.25, 241.9, 242.29];
+        for modern in [true, false] {
+            let (mut playing, format) = pollster::block_on(Renderer::new(&instance, None)).unwrap();
+            let mut played = Vec::new();
+            for &t in &moments {
+                for k in (1..4).rev() {
+                    playing
+                        .render_rgba(&clip, view(t - k as f64 / 60.0, modern), format)
+                        .unwrap();
+                }
+                played.push(playing.render_rgba(&clip, view(t, modern), format).unwrap());
+            }
+            for (&t, played) in moments.iter().zip(&played).rev() {
+                let (mut fresh, _) = pollster::block_on(Renderer::new(&instance, None)).unwrap();
+                let pixels = fresh.render_rgba(&clip, view(t, modern), format).unwrap();
+                assert!(
+                    &pixels == played,
+                    "{t} s ({})",
+                    if modern { "modern" } else { "faithful" }
+                );
+                assert!(pixels.iter().any(|&p| p > 8), "{t} s is black");
+            }
+        }
+    }
+
     /// The fluid hook reaches the same state whether the clip plays on,
     /// seeks back to a kept state or starts afresh at a moment, as video
     /// export does: each moment's state matches a new renderer's byte for
@@ -2539,9 +2774,10 @@ mod tests {
             field,
             dots,
             plasma,
+            greetings,
         ];
         // A field missing from this list leaves bytes unaccounted for.
-        let last = size_of::<PlasmaBlock>();
+        let last = size_of::<GreetingsBlock>();
         assert_eq!(fields.last().unwrap().1 + last, size_of::<Uniforms>());
         fields
     }

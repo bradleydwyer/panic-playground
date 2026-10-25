@@ -62,6 +62,12 @@ RESEARCH_FILES = {
     'rust/src/hd/plasma.rs', 'rust/src/hd/plasma_stone.rs',
     'rust/src/hd/plasma_render.rs', 'rust/src/hd/plasma_common.wgsl',
     'rust/src/hd/plasma_faithful.wgsl', 'rust/src/hd/plasma_light.wgsl',
+    # Part 7: its state and tables, the letterforms derived from the user's
+    # data at load (no glyph data), its GPU side, the shared shader code,
+    # faithful HD and the modern lighthouse.
+    'rust/src/hd/greetings.rs', 'rust/src/hd/greetings_type.rs',
+    'rust/src/hd/greetings_render.rs', 'rust/src/hd/greetings_common.wgsl',
+    'rust/src/hd/greetings_faithful.wgsl', 'rust/src/hd/greetings_light.wgsl',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
     'rust/src/scenes/scroller.rs', 'rust/src/scenes/field.rs',
     'rust/src/scenes/rings.rs', 'rust/src/scenes/dots.rs',

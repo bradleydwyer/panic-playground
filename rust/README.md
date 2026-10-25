@@ -69,8 +69,8 @@ the full importer.
 ## Experimental HD intro and scroller
 
 The `panic-hd` preview covers the opening through the PANIC logo, and with
-`--scroller`, `--rings`, `--field`, `--dots` and `--plasma` continues
-through parts 2, 6, 5, 3 and 4.
+`--scroller`, `--rings`, `--field`, `--dots`, `--plasma` and `--greetings`
+continues through parts 2, 6, 5, 3, 4 and 7.
 Build and run it from the repository root after importing your data:
 
 ```sh
@@ -1643,6 +1643,118 @@ on a machine in use), the plasma's seconds take about 5 ms a frame (median
 the handover, which also draws part 3's view, 5 ms. Faithful HD takes 0.3
 to 0.4 ms.
 
+### Part 7: Greetings
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --greetings --seek 224
+cargo run --release --locked --features hires --bin panic-hd -- --greetings --faithful --seek 228
+```
+
+`--greetings` continues past part 4 through part 7 to part 8's first
+frame, with the music unbroken. It implies `--plasma`. **M**, **Tab** and
+**C** work as in the earlier parts. Part 4's preview ends on part 7's first
+frame, which is black, at 225.43 seconds; part 7's preview begins on the
+same frame. The clip ends at 242.30, on part 8's first frame, the monster,
+and holds there.
+
+Read from the port, and checked against the engine on every frame by an
+ignored test, part 7 runs like this:
+
+- It loads the four TRUG maps into the four planes: the first 16,000
+  bytes of each are the 320 by 200 sky, and glyph `g` starts at 0x3e90 +
+  0x700 g, 16 rows of 112 bytes, each row 16 views of the letter, 7 bytes
+  (28 pixels) each. The sky's stars are colours 192 to 255; they never
+  move. Each frame turns those 64 colours one step through a pulse,
+  `max(0, 3 min(j, 63 - j) - 33)` as (v, 8v/9, 7v/9), scaled by an
+  intensity that rises over the first 64 frames (to 226.37).
+- Five strips, 28 pixels wide at x = 8, 72, 136, 200 and 264, rise one row a
+  frame. Each strip has a queue of 201 row descriptors: a glyph row's
+  address, copied with a view chosen per row by a sine (601 entries,
+  `(trunc(40 sin(pi i / 200) + 60) & 15) * 7`, read from position + row,
+  the positions falling one a frame); or 0xf490, which copies the sky 28
+  pixels to the right; or above that, which leaves the row as it was. A
+  letter takes 18 rows, 15 of glyph and 3 of padding. The padding rows use
+  the first strip's text for every strip, so while it shows `[` they are
+  left alone and each letter's bottom row smears down over the gap.
+- The words are GREETINGS, GO TO, RENAISSANCE, TRITON and SONIC, entering
+  one after another from 228.79; the last leaves the top at 236.73.
+- The loop ends at its 1,100-frame limit, at 241.16 (its music cue, 341E,
+  is never reached; a debugger trace of the original shows the same). A
+  feedback fade turns every colour toward white in 15 steps; then
+  MONSTER.U comes out of the white over 65 steps, from 241.37. Part 8 takes
+  over at 242.30 with the monster on screen.
+
+The preview keeps part 7 as compact state per frame
+(`Greetings::hd_state` and `hd_drawn`): every strip row's source in video
+memory, the palette each frame shows, the star colours' phase and
+intensity, the stage and the fade's levels, with the TRUG planes and
+MONSTER.U. Each original frame is rebuilt on demand from that; the
+ignored test checks every frame's pixels and palette, that the phase and
+intensity rebuild the star colours, and the PCM.
+
+Some of this is interpretation:
+
+- The 16 views read as a square column of side about 18 pixels turning 90
+  degrees, the same letter on every face: the faces' widths across the
+  views follow an orthographic turn. So each letter is a cube, and the
+  sine's view index is its turn, 5.625 degrees a step, here continuous.
+- The stars' colour indices run once round (160, 85), less 64 / 2 pi
+  times their angle plus 17.8, scattered by about 12 (a fit). Under the
+  real palette their brightness centroid turns 5.65 degrees a frame round
+  that centre, so the cycle reads as a light turning once every 64 frames.
+- The feedback fade reads as the picture overexposing.
+
+Faithful HD shows the original's look at display resolution, in the 4:3
+frame: every pixel's colour index is the original's (the smear and the
+copied sky included), the stars drawn as round dots, the letters' colours
+interpolated, the palette turning between frames; the monster is
+upscaled smoothly. With **Tab** or **C** the original is shown.
+
+The modern view is a lighthouse in the dust. All of it is authored, on the
+port's timing, positions and motion, with the letters derived from the
+user's data:
+
+- The stars are dust: each stored star becomes five motes scattered within
+  its pixel and in depth about 220 units behind the strips, placed so they
+  project where the original shows it, each lit as the original lights it
+  (its colour index through the pulse), so the original's broad band
+  still sweeps the dust. For the wider frame the outer 60 columns' stars
+  are mirrored past the edges, thinning away from them.
+- The cycle is also one hard beam from a lamp at the sweep's centre,
+  behind the strips: the top of the pulse, full within about 8 degrees of
+  its peak, turning once every 64 frames (about 1.1 turns a second), in the
+  stars' cream. The dust in it glows, and its light streams past the cubes
+  in shafts (scattering gathered toward the lamp in screen space at half
+  size, the cubes standing in its way). The beam and the dust are taken
+  over a shutter of one 70 Hz frame, six instants along the turn, so the
+  beam sweeps rather than steps.
+- Each letter is a polished black cube with the letter on its four faces
+  as a panel of frosted light in the original's letter colours (white
+  crowns, teal edges), always readable; the beam behind a cube brightens
+  its panels, and as the cubes turn their faces catch it in glints and
+  mirror the dust. Each row of a cube is turned by the original's sine, so
+  the letters twist as the original's do. The gaps between the cubes stay
+  open; faithful HD keeps the smear.
+- The letterforms are derived when the preview loads from the TRUG maps:
+  each letter's front view (columns 5 to 22 of view 0, rows 0 to 14),
+  colours 1 to 4 with enclosed specks of up to three pixels filled (so
+  the counters stay open), upsampled, softened, cut at half and measured
+  as a signed distance, with a bevel tilted by the original's shading. No
+  glyph data is stored in the repository.
+- The end: the beam swings into the lens, its cone opening round the lamp
+  ahead of the original's feedback fade, which then blends every colour
+  toward white; the monster, upscaled, develops out of the white at the
+  original's levels.
+
+Nothing follows the music, as in the original. Everything is a function of
+the clip's time; an ignored test checks frames drawn after others against
+a new renderer's, byte for byte. The look's constants are at the top of
+`greetings_light.wgsl`, the letterforms' in `greetings_type.rs`.
+
+At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (120 frames,
+on a machine in use), modern part 7 takes about 2 ms a frame, the shutter
+included; faithful HD under 1 ms.
+
 ### Options and tests
 
 `--fps` starts with the frame-rate counter in the top-left corner, showing
@@ -1679,11 +1791,12 @@ projection heights, the transition's complete reference frames, audio and
 tile schedule, the scroller's letters and positions against every part-2
 frame, part 6's state, replayed frames and PCM against every part-6 frame,
 part 5's against every part-5 frame, part 3's against every part-3
-frame and part 4's against every part-4 frame; one bakes the frame's shape from PSTART and checks what it measures.
+frame, part 4's against every part-4 frame and part 7's against every
+part-7 frame; one bakes the frame's shape from PSTART and checks what it measures.
 Two more need a GPU: one checks that part 5's smoke reaches the same state
 however a moment is reached (it re-simulates from the start at each of
-nine moments, a minute and a half), the others that part 3's and part 4's
-frames are the same however they are reached:
+nine moments, a minute and a half), the others that part 3's, part 4's and
+part 7's frames are the same however they are reached:
 
 ```sh
 cargo test --release --locked --features hires
@@ -1702,6 +1815,10 @@ PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --featu
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires the_clip_ends_on_part7s_first_frame -- --ignored
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part4s_sections_start_where_its_labels_change -- --ignored --nocapture
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part4_frames_are_the_same_however_reached -- --ignored
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part7_state_matches_every_engine_frame -- --ignored --nocapture
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part7s_letters_are_the_texts_in_order -- --ignored
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part7s_sections_start_where_its_labels_change -- --ignored --nocapture
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part7_frames_are_the_same_however_reached -- --ignored
 ```
 
 `--bench N` draws N frames from `--seek`, a sixtieth of a second apart,

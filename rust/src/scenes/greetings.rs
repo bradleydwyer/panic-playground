@@ -5,6 +5,93 @@ use crate::{
     vga::Vga,
 };
 
+/// Part 7's counters, for the HD preview (hd/greetings.rs). Reading them
+/// changes nothing.
+#[cfg(feature = "hires")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HdGreetings {
+    /// 0 the greetings, 1 the feedback fade to white, 2 the monster from
+    /// white, 3 done.
+    pub stage: u8,
+    /// Greetings frames drawn so far (the loop ends at 1100).
+    pub frame: usize,
+    /// The star colours' intensity (0 to 64) and phase (0 to 63).
+    pub intensity: u16,
+    pub phase: usize,
+    /// The fade's level: 60 down to 4 in steps of 4 while fading to white,
+    /// then 0 to 64 while the monster comes out of it.
+    pub fade_level: usize,
+    /// Each strip's index into its text.
+    pub indices: [usize; 5],
+}
+
+/// What a greetings step drew: each strip's 200 row descriptors and the
+/// sine positions it drew them with (read from the code: a descriptor below
+/// 0xf490 is a glyph row's address, 0xf490 copies the neighbouring sky,
+/// above it leaves the row alone).
+#[cfg(feature = "hires")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HdDrawn {
+    pub rows: [[u16; 200]; 5],
+    pub positions: [usize; 5],
+}
+
+/// Part 7's tables, for the HD preview: all fixed from the start.
+#[cfg(feature = "hires")]
+pub struct HdGreetingsTables {
+    /// The 601 sine offsets (variant * 7).
+    pub sine: [u8; 601],
+    /// The five texts as the scene reads them (256 bytes each).
+    pub texts: [Vec<u8>; 5],
+    /// MONSTER.U (320 x 200 indices) and MONSTER.PAL.
+    pub monster: Vec<u8>,
+    pub monster_palette: Vec<u8>,
+}
+
+#[cfg(feature = "hires")]
+impl Greetings {
+    /// Read-only counters for the HD preview.
+    pub fn hd_state(&self) -> HdGreetings {
+        HdGreetings {
+            stage: self.stage,
+            frame: self.frame,
+            intensity: self.intensity,
+            phase: self.phase,
+            fade_level: self.fade_level,
+            indices: self.indices,
+        }
+    }
+
+    /// What the last step drew, when it drew the strips (a greetings frame):
+    /// the queues after their shift (on the first frame, before they are
+    /// reset to 0xf491: all 0xf490) and the positions before their
+    /// decrement.
+    pub fn hd_drawn(&self) -> Option<HdDrawn> {
+        if self.stage != 0 || self.frame == 0 {
+            return None;
+        }
+        let rows = std::array::from_fn(|s| {
+            if self.frame == 1 {
+                [0xf490; 200]
+            } else {
+                std::array::from_fn(|y| self.rows[s][y])
+            }
+        });
+        let positions = self.positions.map(|p| if p == 400 { 0 } else { p + 1 });
+        Some(HdDrawn { rows, positions })
+    }
+
+    /// The scene's tables.
+    pub fn hd_tables(&self) -> HdGreetingsTables {
+        HdGreetingsTables {
+            sine: self.sine,
+            texts: self.texts.clone(),
+            monster: self.monster.clone(),
+            monster_palette: self.monster_palette.clone(),
+        }
+    }
+}
+
 pub struct Greetings {
     texts: [Vec<u8>; 5],
     indices: [usize; 5],

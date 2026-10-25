@@ -10,8 +10,8 @@ So far this covers the opening through the PANIC logo, the square transition,
 experiments with the following double scroller, part 6's interference
 rings as a pool of liquid chrome under neon, part 5's deep Mandelbrot
 zoom and molten Mandelbrot mountain, part 3's shade bobs and morphing
-dots as light painting, and part 4's plasma as the light on a carved stone
-slab. The idea is to keep the
+dots as light painting, part 4's plasma as the light on a carved stone
+slab, and part 7's greetings as a lighthouse in the dust. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
 letters that refract the stars behind them, a mirrored plate that reflects the
 warp, motion blur, a starfield that ramps into warp, a heated metal logo with
@@ -19,7 +19,7 @@ slowly moving surface reflections, and lighting that pulses and breathes with
 the music.
 
 This builds on the [Rust port of Panic](https://github.com/bradleydwyer/panic).
-It's a work in progress, with modern treatments for the intro, scroller, part 6, part 5, part 3 and part 4. The original
+It's a work in progress, with modern treatments for the intro, scroller, part 6, part 5, part 3, part 4 and part 7. The original
 player is included as a reference. The new letterforms and block motion are
 authored approximations, not recovered original 3D models.
 
@@ -345,6 +345,46 @@ are authored; the positions, motion and timing are the port's. Faithful HD
 (**M**) shows the original's rasters at display resolution, the field
 smooth along each raster. The [renderer notes](rust/README.md#part-4-plasma)
 say what is read, what is interpreted and what is authored.
+
+### Part 7: Greetings
+
+`--greetings` carries on through part 7 to part 8's first frame, with the
+music unbroken:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --greetings --seek 224
+```
+
+Part 7 starts on black at 225.43 seconds. Its sky of stars never moves:
+turning 64 colours sweeps a broad band of light round it once every 64
+frames. From 228.79 five strips of chunky letters rise through it,
+GREETINGS, GO TO, RENAISSANCE, TRITON and SONIC, each letter row one of 16
+stored views of the letter, chosen by a sine, so the letters twist. At its
+1,100-frame limit, 241.16, every colour fades to white and a monster's head
+comes out of the white; part 8 takes over at 242.30. All of that is read
+from the port and checked against it frame by frame.
+
+The modern look is a lighthouse in the dust:
+
+- The stars become dust lit as the original lights it, and the turning
+  colours become one hard cream beam from a lamp at the sweep's centre,
+  turning as fast as the original's band, its light streaming past the
+  letters in shafts. It is taken over a shutter so it sweeps smoothly.
+- The 16 views read as a square column turning, so each letter is a cube
+  of polished black with the letter on its four faces as a panel of light
+  in the original's white-to-teal, turned row by row by the original's
+  sine; the beam glints off the faces as they turn and lights the panels
+  from behind. The letterforms are derived from your data when the
+  preview loads; none are stored here.
+- At the end the beam swings into the lens over the original's fade to
+  white, and the monster develops out of the white at the original's
+  levels.
+
+The dust's depth, the beam, the cubes and their material, and the swing
+into the lens are authored; the positions, motion, letters and timing are
+the port's. Faithful HD (**M**) shows the original's pixels at display
+resolution. The [renderer notes](rust/README.md#part-7-greetings) say what
+is read, what is interpreted and what is authored.
 
 ### Keys
 

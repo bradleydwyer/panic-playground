@@ -156,6 +156,23 @@ SHOTS = (
     _shot('faithful-plasma', 'faithful', 197.0, '--plasma', '--faithful'),
     _shot('faithful-plasma', 'faithful', 224.8, '--plasma', '--faithful'),
     _shot('original-plasma', 'original', 197.0, '--plasma', '--original'),
+    # Part 7 (--greetings): the stars from black, the beam in the dust,
+    # GREETINGS rising, all five words, the last of them, the stars alone,
+    # the beam swinging into the lens, the monster from white and part 8's
+    # first frame.
+    _shot('greetings', 'greetings', 225.6, '--greetings'),
+    _shot('greetings', 'greetings', 226.5, '--greetings'),
+    _shot('greetings', 'greetings', 230.0, '--greetings'),
+    _shot('greetings', 'greetings', 233.1, '--greetings'),
+    _shot('greetings', 'greetings', 235.0, '--greetings'),
+    _shot('greetings', 'greetings', 238.6, '--greetings'),
+    _shot('greetings', 'greetings', 241.17, '--greetings'),
+    _shot('greetings', 'greetings', 241.7, '--greetings'),
+    _shot('greetings', 'greetings', 242.3, '--greetings'),
+    _shot('faithful-greetings', 'faithful', 233.1, '--greetings', '--faithful'),
+    _shot('faithful-greetings', 'faithful', 241.25, '--greetings', '--faithful'),
+    _shot('faithful-greetings', 'faithful', 241.7, '--greetings', '--faithful'),
+    _shot('original-greetings', 'original', 233.1, '--greetings', '--original'),
 )
 CAPTURE_FLAGS = ('--seek', '--headless', '--size', '--data', '--out')
 
