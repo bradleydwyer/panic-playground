@@ -9,7 +9,7 @@ use panic_demo::{
 use sdl2::{
     audio::{AudioQueue, AudioSpecDesired},
     event::{Event, WindowEvent},
-    keyboard::{Keycode, Scancode},
+    keyboard::{Keycode, Mod, Scancode},
     video::FullscreenType,
 };
 use std::{
@@ -262,7 +262,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings), as a liquid-chrome pool, to part 5's first frame\n  --field          Continue through part 5 (Field), the zoom and the mountain, to part 3's first frame\n  --dots           Continue through part 3 (Dots), as light painting, and part 4's wait to its first frame\n  --original-symbols  Part 6 with the original symbols throughout, not the new sets in its middle\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --bench N        Headless: draw N frames from --seek at 60 a second and print the time each takes\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: step 1s, hold to scrub · Home/R: replay · End: logo\nTab: original/HD · C: split comparison · M: faithful/modern · F: fullscreen · S: save PNG\nL: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light · N: part 6's new or original symbols\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6, --field through part 5, --dots through part 3."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings), as a liquid-chrome pool, to part 5's first frame\n  --field          Continue through part 5 (Field), the zoom and the mountain, to part 3's first frame\n  --dots           Continue through part 3 (Dots), as light painting, and part 4's wait to its first frame\n  --original-symbols  Part 6 with the original symbols throughout, not the new sets in its middle\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --bench N        Headless: draw N frames from --seek at 60 a second and print the time each takes\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: step 1s, hold to scrub · Cmd+Left/Right: previous/next section\nHome/R: replay · End: logo · Tab: original/HD · C: split comparison · M: faithful/modern\nF: fullscreen · S: save PNG · L: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light · N: part 6's new or original symbols\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6, --field through part 5, --dots through part 3."
                     );
                     std::process::exit(0);
                 }
@@ -291,6 +291,12 @@ const SCRUB_DELAY: f64 = 0.25;
 /// The scrub's speed in seconds of the show per second held: its start, how
 /// fast it gains, and its most.
 const SCRUB_SPEED: (f64, f64, f64) = (4.0, 8.0, 20.0);
+/// The modifiers that make Left and Right step by section (Cmd, or Ctrl
+/// where there is no Cmd key).
+const SECTION_KEYS: Mod = Mod::LGUIMOD
+    .union(Mod::RGUIMOD)
+    .union(Mod::LCTRLMOD)
+    .union(Mod::RCTRLMOD);
 
 fn set_audio(
     device: &AudioQueue<i16>,
@@ -480,7 +486,7 @@ fn run() -> Result<(), String> {
     let (mut renderer, format) = pollster::block_on(Renderer::new(&instance, Some(&surface)))?;
     println!("GPU: {}", renderer.adapter_name);
     println!(
-        "Space pause · arrows step, hold to scrub · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength · W wall waves · ,/. wave depth · ;/' wave light · N part 6 symbols"
+        "Space pause · arrows step, hold to scrub · Cmd+arrows section · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength · W wall waves · ,/. wave depth · ;/' wave light · N part 6 symbols"
     );
     let (width, height) = window.drawable_size();
     let mut config = wgpu::SurfaceConfiguration {
@@ -506,6 +512,9 @@ fn run() -> Result<(), String> {
     if device.spec().freq != SAMPLE_RATE as i32 || device.spec().channels != 2 {
         return Err("Audio device did not accept the reference 16 kHz stereo stream".into());
     }
+    // Where Cmd+Left and Cmd+Right go: each change of the window title's
+    // section label.
+    let sections = clip.sections();
     let mut paused = o.paused;
     let mut anchor = o.seek;
     let mut queued = set_audio(&device, &clip, anchor, o.mute, true)?;
@@ -568,9 +577,20 @@ fn run() -> Result<(), String> {
                 } => break 'preview,
                 Event::KeyDown {
                     keycode: Some(key),
+                    keymod,
                     repeat: false,
                     ..
                 } => match key {
+                    // Back to this section's start, or to the one before when
+                    // within a second of it; on to the next.
+                    Keycode::Left if keymod.intersects(SECTION_KEYS) => {
+                        let i = sections.partition_point(|&s| s <= time - 1.0);
+                        seek = Some(sections[i.saturating_sub(1)]);
+                    }
+                    Keycode::Right if keymod.intersects(SECTION_KEYS) => {
+                        let i = sections.partition_point(|&s| s <= time);
+                        seek = sections.get(i).copied().or(seek);
+                    }
                     Keycode::Space => {
                         paused = !paused;
                         if paused {

@@ -841,6 +841,30 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
+    fn sections_start_where_the_labels_change() {
+        let data = crate::test_support::data();
+        let clip = Clip::load_dots(&data, ScrollerLighting::Studio).unwrap();
+        let sections = clip.sections();
+        let frame = 1.0 / crate::engine::FRAME_RATE as f64;
+        assert_eq!(sections[0], 0.0);
+        assert!(sections.windows(2).all(|w| w[0] < w[1]));
+        for &s in &sections[1..] {
+            assert_ne!(clip.label(s), clip.label(s - frame));
+            println!("{s:8.3} {}", clip.label(s));
+        }
+        // Part 3's phases and its first and last objects each start one.
+        for label in [
+            "Zoom into the window",
+            "Shade bobs",
+            "Dots: sphere lattice",
+            "Box",
+        ] {
+            assert!(sections.iter().any(|&s| clip.label(s) == label), "{label}");
+        }
+    }
+
+    #[test]
     fn modern_zoom_follows_the_original_law_and_flies_through() {
         // At each zoom frame the modern magnification is the scale the
         // original drew: 65535 less 256 a frame.

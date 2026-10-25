@@ -608,6 +608,24 @@ impl Clip {
     pub fn dots_frame(&self, time: f64) -> Option<usize> {
         self.dots.as_ref()?.frame_at(time)
     }
+    /// The times at which [`Clip::label`] changes, found at each engine
+    /// frame, with 0 first: the starts of the sections the preview steps
+    /// through.
+    pub fn sections(&self) -> Vec<f64> {
+        let mut starts = vec![0.0];
+        let mut last = self.label(0.0);
+        let frames = (self.duration() * FRAME_RATE as f64) as usize;
+        for k in 1..=frames {
+            let time = k as f64 / FRAME_RATE as f64;
+            let label = self.label(time);
+            if label != last {
+                starts.push(time);
+                last = label;
+            }
+        }
+        starts
+    }
+
     pub fn label(&self, time: f64) -> &'static str {
         if let (Some(dots), Some(j)) = (&self.dots, self.dots_frame(time)) {
             return dots.label(j);

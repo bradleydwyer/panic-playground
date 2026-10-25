@@ -389,6 +389,7 @@ optical simulation. All fields are generated locally in memory.
 | --- | --- |
 | Space | Pause or resume |
 | Left / Right | Step one second; hold to scrub through time, faster the longer held |
+| Cmd+Left / Cmd+Right | Back to the start of the section (or the one before, within a second of its start); on to the next. The sections are the window title's labels: each part, and each phase within one, such as part 3's zoom, shade bobs and each dot object. Ctrl works where there is no Cmd key |
 | Home / R | Replay from the start |
 | End | Pause on the finished logo |
 | M | Switch modern 3D / faithful HD |
