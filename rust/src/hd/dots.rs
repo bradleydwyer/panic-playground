@@ -474,10 +474,13 @@ impl DotsEvents {
 
 impl DotsPreview {
     /// Part-3 frame position at a clip time: continuous, negative before
-    /// part 3.
+    /// part 3. A time within one audio sample of a frame's is that frame's:
+    /// the clip's duration, a whole number of samples, falls a fraction of
+    /// a sample short of part 4's slab, its last frame, which seeking to
+    /// the end must show.
     pub fn position(&self, time: f64) -> f64 {
         let position = time * FRAME_RATE as f64 - self.start as f64;
-        if (position - position.round()).abs() < 1e-6 {
+        if (position - position.round()).abs() <= FRAME_RATE as f64 / SAMPLE_RATE as f64 {
             position.round()
         } else {
             position
@@ -822,6 +825,19 @@ mod tests {
         let half = spline(&tables, 320.5);
         let next = spline(&tables, 321.0);
         assert!((half[0] - (at[0] + next[0]) / 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA; run with --ignored"]
+    fn the_clip_ends_on_part4s_slab() {
+        let data = crate::test_support::data();
+        let clip = Clip::load_dots(&data, ScrollerLighting::Studio).unwrap();
+        let dots = clip.dots.as_ref().unwrap();
+        let last = dots.frames.len() - 1;
+        assert_eq!(dots.frames[last].phase, Phase::Slab);
+        // Seeking to the end, as --seek and End clamp to the duration.
+        assert_eq!(dots.frame_at(clip.duration()), Some(last));
+        assert_eq!(dots.frame_at(dots.seconds(last) - 0.001), Some(last - 1));
     }
 
     #[test]

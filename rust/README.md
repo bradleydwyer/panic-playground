@@ -1540,6 +1540,7 @@ PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --featu
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires frame_is_measured_from_pstart -- --ignored --nocapture
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part5_fluid_is_the_same_however_it_is_reached -- --ignored
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part3_state_matches_every_engine_frame -- --ignored --nocapture
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires the_clip_ends_on_part4s_slab -- --ignored
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part3_frames_are_the_same_however_reached -- --ignored
 ```
 
