@@ -42,12 +42,13 @@ const EDGE_MARGIN: f64 = 4.0;
 /// Texels of the relief across the block's width (authored; the logo
 /// spans about 300 of its pixels).
 pub const RELIEF_TEXELS: usize = 1024;
-/// The plasma's sheet of light (authored): how far behind the slab's far
-/// edge it stands, the source row its bottom edge projects to (the
-/// plasma's last raster, 225, read from the code: its bottom is row 113),
-/// how far above the screen's top it reaches, and the widest drawable it
-/// spans (aspect).
+/// The plasma's two sheets of light (authored): how far behind the slab's
+/// far edge the front one stands and the back one behind it, the source
+/// row their bottom edges project to (the plasma's last raster, 225, read
+/// from the code: its bottom is row 113), how far above the screen's top
+/// they reach, and the widest drawable they span (aspect).
 const SHEET_BEHIND: f64 = 30.0;
+const SHEET_GAP: f64 = 70.0;
 /// How far the sheet leans toward the camera from upright (radians), so
 /// it stands over the slab a little.
 const SHEET_LEAN: f64 = 0.4;
@@ -75,6 +76,15 @@ pub struct Relief {
     pub texels: Vec<f16>,
 }
 
+/// One of the plasma's sheets of light: its bottom edge's centre in camera
+/// space, its height (up the sheet) and its half width.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Sheet {
+    pub base: [f64; 3],
+    pub height: f64,
+    pub half_width: f64,
+}
+
 /// The modern view's slab and the camera it is seen through.
 pub struct Stone {
     /// The camera: vertical focal length in source rows, square display
@@ -92,12 +102,10 @@ pub struct Stone {
     pub size: [f64; 3],
     /// The stone's colour, linear.
     pub colour: [f32; 3],
-    /// The plasma's sheet: its bottom edge's centre in camera space, its
-    /// height (up the block's vertical) and half width.
-    pub sheet: [f64; 3],
+    /// The plasma's two sheets, the front one first, and the direction up
+    /// them (camera space).
+    pub sheets: [Sheet; 2],
     pub sheet_up: [f64; 3],
-    pub sheet_height: f64,
-    pub sheet_half_width: f64,
     /// The top face, across (x) and from the near edge to the far (y), and
     /// the front face, across and from the top edge down.
     pub top: Relief,
@@ -289,10 +297,8 @@ impl Stone {
             corner,
             size,
             colour: [0.0; 3],
-            sheet: [0.0; 3],
+            sheets: [Sheet::default(); 2],
             sheet_up: [0.0; 3],
-            sheet_height: 0.0,
-            sheet_half_width: 0.0,
             top: Relief {
                 size: (0, 0),
                 texels: Vec::new(),
@@ -303,7 +309,7 @@ impl Stone {
             },
             residual,
         };
-        stone.place_sheet();
+        stone.place_sheets();
         stone.carve(logo, palette, row_y);
         Ok(stone)
     }
@@ -339,28 +345,35 @@ impl Stone {
         1.0 + ARRIVAL_EXPOSURE * (1.0 - progress.clamp(0.0, 1.0)).powf(ARRIVAL_CURVE)
     }
 
-    /// Stand the sheet of light behind the slab, leaning toward the camera
-    /// from upright, its bottom edge on the plasma's last raster.
-    fn place_sheet(&mut self) {
+    /// Stand the two sheets of light behind the slab, one behind the other,
+    /// leaning toward the camera from upright, their bottom edges on the
+    /// plasma's last raster.
+    fn place_sheets(&mut self) {
         let (back, down) = self.axes();
         let (s, c) = SHEET_LEAN.sin_cos();
         let up: [f64; 3] = std::array::from_fn(|k| -c * down[k] - s * back[k]);
         self.sheet_up = up;
-        let behind = self.size[1] + SHEET_BEHIND;
-        let base: [f64; 3] = std::array::from_fn(|k| self.corner[k] + behind * back[k]);
-        // The height along `up` at which a point of the sheet projects to
-        // source row `row`.
-        let at_row = |row: f64| {
-            let r = row - 100.0;
-            (r * base[2] - self.focal * base[1]) / (self.focal * up[1] - r * up[2])
-        };
-        let bottom = at_row(SHEET_BOTTOM_ROW);
-        let top = at_row(-SHEET_ABOVE_ROWS);
-        self.sheet = std::array::from_fn(|k| base[k] + bottom * up[k]);
-        self.sheet_height = top - bottom;
-        let columns = 160.0 * SHEET_ASPECT / (4.0 / 3.0) + 40.0;
-        let far = self.sheet[2] + self.sheet_height * up[2].max(0.0);
-        self.sheet_half_width = columns * far.max(self.sheet[2]) / (1.2 * self.focal);
+        for (k, sheet) in self.sheets.iter_mut().enumerate() {
+            let behind = self.size[1] + SHEET_BEHIND + k as f64 * SHEET_GAP;
+            let base: [f64; 3] = std::array::from_fn(|i| self.corner[i] + behind * back[i]);
+            // The height along `up` at which a point of the sheet projects
+            // to source row `row`.
+            let at_row = |row: f64| {
+                let r = row - 100.0;
+                (r * base[2] - self.focal * base[1]) / (self.focal * up[1] - r * up[2])
+            };
+            let bottom = at_row(SHEET_BOTTOM_ROW);
+            let top = at_row(-SHEET_ABOVE_ROWS);
+            let base: [f64; 3] = std::array::from_fn(|i| base[i] + bottom * up[i]);
+            let height = top - bottom;
+            let columns = 160.0 * SHEET_ASPECT / (4.0 / 3.0) + 40.0;
+            let far = base[2] + height * up[2].max(0.0);
+            *sheet = Sheet {
+                base,
+                height,
+                half_width: columns * far.max(base[2]) / (1.2 * self.focal),
+            };
+        }
     }
 
     /// Unwarp both faces from the logo and carve them.

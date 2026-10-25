@@ -94,12 +94,13 @@ fn raster_at(r:u32)->f32 {
     let b=raster_start(frame_next(),r);
     return select(a,mix(a,b,frame_mix()),abs(b-a)<48.0);
 }
-// The scene's sine at a continuous index, linear between its entries.
+// The scene's sine at a continuous index (any sign), linear between its
+// entries.
 fn sine_at(i:f32)->f32 {
-    let k=floor(i);
-    let a=sine[u32(k)&1023u];
-    let b=sine[u32(k+1.0)&1023u];
-    return mix(a,b,i-k);
+    let k=i32(floor(i));
+    let a=sine[bitcast<u32>(k)&1023u];
+    let b=sine[bitcast<u32>(k+1)&1023u];
+    return mix(a,b,i-floor(i));
 }
 // The palette phase (0 to 224, colour 32 on) the field holds at a
 // continuous address, or -1 outside it. The scene writes column x of every

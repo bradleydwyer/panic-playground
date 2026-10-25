@@ -1583,27 +1583,43 @@ and motion, and on the block fitted to the logo.
   1.4 deep; and the stone's colour and mottling are the logo's, flattened
   of its painted light. The faces are polished and the cut and the cracks
   rough, with a fine grain.
-- The plasma is a sheet of light standing behind the slab, its bottom edge
-  on the plasma's last raster, leaning a little over the slab, wide enough
-  for a 21:9 drawable. On it, at each point, the colour the original shows
-  there: each layer's offset is interpolated between its rasters (the
-  address is not: half way along a row is half way across the field), the
-  palette's sine is taken without the bank's truncation, the two layers
-  are mixed as the eye mixes the original's alternate rasters, over a
-  shutter of about 1/120 s along the palette's turn, and the result is
-  taken back through the shared tonemap by its luminance, so the sheet
-  shows about the original's colours and has the radiance that would.
-- The sheet lights the stone. Its light is drawn each frame at 512 by 256
-  over the sheet and averaged down to 4 by 2; each pixel of stone takes
-  the exact form factor of each of 32 cells of the sheet times the cell's
-  mean radiance, shadowed by the carving toward where the light mostly
-  comes from, and the polished faces mirror the sheet, sharply where
-  polished and blurred in the cut, at the level of the sheet's light that
-  matches the reflection's spread. A dim, warm key light from the upper
+- The plasma is two sheets of light standing behind the slab, 70 units
+  apart, their bottom edges on the plasma's last raster, leaning a little
+  over the slab, wide enough for a 21:9 drawable: the original's two
+  interlaced copies of the field, the even rasters' and the odd ones', a
+  sheet each, sliding past each other as the strides move them. On each,
+  at each point, the colour the original's copy shows there, made
+  continuous. Each copy's displacement along the field's rows (a raster's
+  start address less 200 bytes a raster) is smoothed down the screen, a
+  Gaussian 3 of the copy's rasters wide, and over a frame either side, and
+  taken between its samples by Catmull-Rom, so it is a smooth function of
+  height with no line structure (the address itself is not interpolated:
+  half way along a row is half way across the field). The field is taken
+  as a seamless helix, its sine a whole turn over the 200-byte row (the
+  code's 5.1 a column falls 4 of 1024 short) and its rise of one a row
+  spread along the row, so running on into the next row leaves no seam.
+  The palette's sine is taken without the bank's truncation, its rotation
+  and level smoothed over time (1.5 and 3 frames), over a shutter of about
+  1/120 s along its turn, and everything is interpolated between the
+  original's frames, so the sheets glide at any display rate. Each sheet's
+  colour is taken back through the shared tonemap by its luminance, at
+  half power, so the two together give the light the original's two copies
+  do and their brightest bands bloom. The front sheet is sharp; the back
+  one, through it, is drawn from its light's texture over a circle of
+  confusion 4 source rows across; both glow softly over themselves and a
+  little past their bottom edges. A faint dither keeps the output from
+  banding.
+- The sheets light the stone. Their light is drawn each frame at 512 by
+  256 over each sheet and averaged down to 4 by 2; each pixel of stone
+  takes the exact form factor of each of 32 cells of the front sheet and 8
+  of the back one times the cell's mean radiance, shadowed by the carving
+  toward where the light mostly comes from, and the polished faces mirror
+  both sheets, sharply where polished and blurred in the cut, at the level
+  of each sheet's light that matches the reflection's spread. A dim, warm key light from the upper
   left, where the logo's painted light comes from, keeps the stone lit
   while the plasma is dark and dims to a fifth as the plasma rises.
-- A mist hanging at the sheet scatters a little of its light, so it spills
-  softly below the sheet's edge.
+- A mist hanging at the sheets scatters a little of their light, so it
+  spills softly below their edges.
 - The arrival: on the slab frame part 3's own modern view, its box flared,
   is still drawn, and gives way to this one over 0.35 s. The stone comes in
   overexposed, white rather than its colour, and the exposure settles over
@@ -1622,9 +1638,9 @@ byte for byte. The look's constants are at the top of `plasma_light.wgsl`
 and `plasma_stone.rs`.
 
 At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (150 frames,
-on a machine in use), the plasma's seconds take about 5 ms a frame (median
-5.0, slowest 9), the slab alone 1.5 ms, the slide 0.9 ms and the handover,
-which also draws part 3's view, 4.8 ms. Faithful HD takes 0.3 to 0.4 ms.
+on a machine in use), the plasma's seconds take about 6 ms a frame (median
+5.9, slowest 10), the slab alone 1.6 ms, the slide 0.9 ms and the handover,
+which also draws part 3's view, 4.9 ms. Faithful HD takes 0.3 to 0.4 ms.
 
 ### Options and tests
 

@@ -325,10 +325,13 @@ stone is seen by:
   lands is this block, made solid. Its faces are carved as the logo shades
   them, FUTURE in the top, CREW in the front and the cracks, the faces
   polished and the cut rough, as a mason finishes a slab.
-- The plasma becomes a sheet of light standing behind the slab, showing
-  the original's field and palette at every point, its two interlaced
-  copies mixed as the eye mixes them, and its fades as the light's.
-- The sheet lights the stone: its moving colours rake across the carving
+- The plasma becomes two sheets of light standing behind the slab, the
+  original's two interlaced copies of its field, one a sheet each, sliding
+  past each other as its strides move them. Each is the original's field
+  and palette made continuous, with no line structure, gliding between the
+  original's frames, the front sheet sharp and the back one softer, their
+  brightest bands glowing; their fades are the light's.
+- The sheets light the stone: their moving colours rake across the carving
   from behind and above and slide across the polished top as reflections,
   shadowed by the cut. A dim key light from where the logo's painted light
   comes from keeps the stone lit while the plasma is dark, and gives way

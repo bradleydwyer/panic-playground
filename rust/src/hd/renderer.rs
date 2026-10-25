@@ -178,15 +178,20 @@ struct PlasmaBlock {
     slab_axes: vec4f,
     slab_size: vec4f,
     stone: vec4f,
-    // The sheet of light: bottom edge's centre, height; half width, up.
+    // The front sheet of light: bottom edge's centre, height; half width,
+    // up.
     sheet: vec4f,
     sheet_size: vec4f,
     // Seconds since the last four orders' first rows (newest first, -100
     // none) and their strengths.
     hits: vec4f,
     hit_strength: vec4f,
-    // The palette's rotation per frame, toward the next.
+    // The modern view's palette, smoothed over time: rotation per frame,
+    // rotation, level.
     motion: vec4f,
+    // The back sheet: bottom edge's centre, height; half width.
+    sheet_back: vec4f,
+    sheet_back_size: vec4f,
 }
 struct Controls {
     screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode
@@ -2296,6 +2301,8 @@ mod tests {
             hits,
             hit_strength,
             motion,
+            sheet_back,
+            sheet_back_size,
         ];
         assert_eq!(
             expected.last().unwrap().1 + size_of::<[f32; 4]>(),
@@ -2339,6 +2346,10 @@ mod tests {
             );
         }
         let light = include_str!("plasma_light.wgsl");
+        assert!(light.contains(&format!(
+            "const LAYER_SAMPLES={}u;",
+            super::super::plasma::LAYER_SAMPLES
+        )));
         let (w, h) = SHEET_SIZE;
         assert!(light.contains(&format!("const SHEET_SIZE=vec2f({w}.0,{h}.0);")));
         // The light's cells and the haze's are one texel of their levels.

@@ -5,7 +5,7 @@
 //! into the modern renderer's HDR target, which then takes the shared bloom
 //! and tonemap. In its first moments it mixes in part 3's modern view,
 //! which renderer.rs draws into a target of this renderer's.
-use super::plasma::{PlasmaPreview, RASTERS};
+use super::plasma::{LAYER_SAMPLES, PlasmaPreview, RASTERS};
 use super::plasma_stone::Relief;
 use super::renderer::wgsl_parts;
 use wgpu::util::DeviceExt;
@@ -15,8 +15,10 @@ const COMMON: &str = include_str!("plasma_common.wgsl");
 const FAITHFUL: &str = include_str!("plasma_faithful.wgsl");
 const LIGHT: &str = include_str!("plasma_light.wgsl");
 
-/// The sheet's light: its texture's size and levels, as plasma_light.wgsl
-/// has them (SHEET_SIZE; its cells read levels 6 and 7).
+/// The sheets' light: each sheet's size in their texture and the levels,
+/// as plasma_light.wgsl has them (SHEET_SIZE; its cells read levels 6 and
+/// 7). The front sheet fills the texture's upper half, the back sheet its
+/// lower, so every level keeps them apart.
 pub const SHEET_SIZE: (u32, u32) = (512, 256);
 pub const SHEET_LEVELS: u32 = 8;
 
@@ -177,6 +179,11 @@ impl PlasmaRenderer {
         let rasters = buffer("Part 4 rasters", bytemuck::cast_slice(&rasters));
         let sine: Vec<f32> = preview.tables.sine.iter().map(|&s| s as f32).collect();
         let sine = buffer("Part 4 sine", bytemuck::cast_slice(&sine));
+        let layers: Vec<f32> = (0..frames)
+            .flat_map(|j| preview.layers(j).into_iter().flatten())
+            .collect();
+        debug_assert_eq!(layers.len(), frames * 2 * LAYER_SAMPLES);
+        let layers = buffer("Part 4 layers", bytemuck::cast_slice(&layers));
         let indices: Vec<u8> = (0..=255).collect();
         let palettes: Vec<u8> = (0..frames)
             .flat_map(|j| super::field::rgba(&indices, preview.palette(j)))
@@ -263,6 +270,7 @@ impl PlasmaRenderer {
                 entry(8, all, BindingType::Sampler(SamplerBindingType::Filtering)),
                 entry(9, all, sampled(FLOAT)),
                 entry(10, all, sampled(FLOAT)),
+                entry(11, all, storage),
             ],
         });
         let original_view = original.create_view(&Default::default());
@@ -299,13 +307,17 @@ impl PlasmaRenderer {
                 },
                 view(9, &top),
                 view(10, &front),
+                BindGroupEntry {
+                    binding: 11,
+                    resource: layers.as_entire_binding(),
+                },
             ],
         });
         let hdr = TextureFormat::Rgba16Float;
         let sheet = texture(
             device,
-            "Part 4 sheet of light",
-            SHEET_SIZE,
+            "Part 4 sheets of light",
+            (SHEET_SIZE.0, 2 * SHEET_SIZE.1),
             hdr,
             TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
             SHEET_LEVELS,

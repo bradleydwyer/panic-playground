@@ -11,30 +11,38 @@
 //   CREW in the front, the cracks) with rounded edges, polished where it is
 //   flat and rough in the cut. It is ray-marched as a distance field: the
 //   block, less the carving.
-// - The plasma is a sheet of light standing behind the slab and leaning a
-//   little over it: on it, at each point, the colour the original shows
-//   there. Its rasters' two layers (the even ones and the odd, which the
-//   strides move apart) are mixed as the eye mixes them; the field and the
-//   palette's sine are evaluated at continuous positions, over a short
-//   shutter along the palette's turn, and the palette's level is the
-//   light's. Its radiance is the original's colour taken back through the
-//   shared tonemap, so it shows about the original's colours.
-// - The sheet lights the stone: from behind and above, raking across the
+// - The plasma is two sheets of light standing behind the slab, one behind
+//   the other, leaning a little over it: the original's two interlaced
+//   copies of its field (the even rasters and the odd, which the strides
+//   move apart), one a sheet each, sliding past each other as the strides
+//   move them. On each, at each point, the colour the original's copy shows
+//   there, but continuous: each copy's displacement is a smooth function of
+//   height (its rasters' offsets smoothed down the screen and over a few
+//   frames, then taken between samples by Catmull-Rom), the field a seamless
+//   helix, and the palette's sine, its rotation and its level continuous
+//   and smoothed over time, so the sheets glide at any display rate. Each
+//   sheet's radiance is its colour taken back through the shared tonemap,
+//   at half power, so together they give the light the original's two
+//   copies do and its brightest bands read as light. The front sheet is
+//   sharp; the back one, through it, is a little out of focus; both glow
+//   softly over themselves and past their bottom edge.
+// - The sheets light the stone: from behind and above, raking across the
 //   top face, so the carving catches it at its rims, and the polished faces
-//   mirror it, in the plasma's moving colours. Its light is gathered over
-//   the sheet in cells (each a rectangle whose exact form factor is taken,
+//   mirror them, in the plasma's moving colours. Their light is gathered
+//   over each sheet in cells (each a rectangle whose exact form factor is taken,
 //   its radiance the mean of its part of the sheet), shadowed by the
-//   carving toward where it comes from; the reflection reads the sheet's
+//   carving toward where it comes from; the reflection reads each sheet's
 //   light at the level its spread matches. A dim warm key light from the
 //   upper left, where the logo's painted light comes from, keeps the stone
 //   visible while the plasma is dark and gives way as it rises.
-// - A mist hanging at the sheet scatters a little of its light, so it
-//   spills softly below the sheet's edge.
+// - A mist hanging at the sheets scatters a little of their light, so it
+//   spills softly below their edge.
 // - The arrival: part 3's flare overexposes the camera, and the exposure
 //   settles over the 64 frames of the original's fade from white, so the
 //   carving (the darkest) comes out of the white first; part 3's view hands
 //   over to this one in its first moments.
-// - The music: each order's first row swells the sheet's light a little.
+// - The music: each order's first row swells the sheets' light a little.
+// - A faint dither keeps the 8-bit output from banding.
 // - The slide: the slab sinks with the original's line compare.
 // Module: the shared controls, plasma_common.wgsl and this file.
 
@@ -42,13 +50,26 @@
 // The sheet's power (its radiance is the original's colour, linear, times
 // this), and the swell of light on each order's first row (and its decay,
 // seconds).
-const SHEET_POWER=1.0;
+const SHEET_POWER=.75;
 // The brightest the sheet shows through the tonemap (its luminance then is
 // about 3).
 const SHEET_WHITE=.95;
 const HIT_SWELL=.18;
 // The shutter, as a fraction of a 70 Hz frame: about 1/120 s.
 const SHUTTER=.6;
+// The back sheet's softness: the radius of its circle of confusion, in
+// source rows.
+const BACK_DEFOCUS=4.0;
+// The sheets' own glow: how much of their light, spread over about a
+// fiftieth of their width, lies over them and spills past their bottom
+// edge, and how far it spills (in the sheets' height).
+const GLOW=.22;
+const GLOW_LEVEL=3.5;
+const GLOW_SPILL=.06;
+// Dither against banding in the 8-bit output: the light's relative jitter.
+const DITHER=.008;
+// plasma::LAYER_SAMPLES.
+const LAYER_SAMPLES=113u;
 const HIT_DECAY=.45;
 // The key light: toward it (camera space), its colour and strength; a cool
 // fill from the camera's side, and the ambient light.
@@ -82,8 +103,8 @@ const ARRIVAL_WASH=8.0;
 // carving's slopes are steeper than one).
 const MARCH_STEPS=96u;
 const LIPSCHITZ=.6;
-// The sheet's cells for the light (its 512 x 256 texture's level 6 is 8 x
-// 4 texels, one a cell) and for the haze (level 7, 4 x 2).
+// Each sheet's cells for the light (its 512 x 256 half of the texture's
+// level 6 is 8 x 4 texels, one a cell) and for the haze (level 7, 4 x 2).
 const SHEET_SIZE=vec2f(512.0,256.0);
 const CELLS=vec2u(8u,4u);
 const CELL_LEVEL=6.0;
@@ -97,8 +118,13 @@ const HAZE_LEVEL=7.0;
 // crack.
 @group(0) @binding(9) var relief_top:texture_2d<f32>;
 @group(0) @binding(10) var relief_front:texture_2d<f32>;
-// The sheet's light, 512 x 256 with its mips (written by plasma_sheet and
-// plasma_downsample), across and from its top edge down; and part 3's
+// Each layer's displacement, smoothed down the screen (plasma.rs,
+// PlasmaPreview::layers): frame j's layer L, sample k, at (2 j + L) *
+// LAYER_SAMPLES + k.
+@group(0) @binding(11) var<storage,read> layers:array<f32>;
+// The sheets' light, 512 x 512 with its mips (written by plasma_sheet and
+// plasma_downsample): the front sheet in the upper half and the back sheet
+// in the lower, each across and from its top edge down; and part 3's
 // modern view for the handover (HDR).
 @group(1) @binding(1) var sheet_light:texture_2d<f32>;
 @group(1) @binding(2) var part3_view:texture_2d<f32>;
@@ -199,9 +225,12 @@ fn occlusion(p:vec3f,n:vec3f)->f32 {
 // The palette's colour at phase p, its sine without the bank's truncation
 // (an interpretation), 6-bit DAC values: 31 + 31 sin(2 pi i / 224), at the
 // level.
+// The modern view takes the palette's rotation and level smoothed over
+// time (plasma.rs, PALETTE_SMOOTH), so they glide.
 fn sine_colour(p:f32)->vec3f {
-    let i=rotations()+p;
-    return (31.0+31.0*sin(2.0*PI*i/PALETTE_PERIOD))*clamp(pc.palette.y,0.0,63.0)/63.0;
+    let r=pc.motion.y;
+    let i=vec3f(r,r+pc.palette.z,r+pc.palette.w)+p;
+    return (31.0+31.0*sin(2.0*PI*i/PALETTE_PERIOD))*clamp(pc.motion.z,0.0,63.0)/63.0;
 }
 // The same over the shutter, which stays open SHUTTER of a 70 Hz frame up to
 // the moment: three instants along the palette's turn, in linear light.
@@ -212,24 +241,38 @@ fn shutter_colour(p:f32)->vec3f {
     }
     return c/3.0;
 }
+// Layer L's smoothed displacement at continuous sample k (its raster 2 k +
+// L), between samples by Catmull-Rom and between frames linearly; held
+// past its first and last rasters.
+fn layer_sample(j:u32,layer:u32,k:i32)->f32 {
+    let at=u32(clamp(k,0,i32(LAYER_SAMPLES)-1));
+    return layers[(2u*j+layer)*LAYER_SAMPLES+at];
+}
+fn layer_offset(layer:u32,k:f32)->f32 {
+    let i=i32(floor(k));
+    let f=k-floor(k);
+    let w=vec4f(((-f+2.0)*f-1.0)*f,(3.0*f-5.0)*f*f+2.0,((-3.0*f+4.0)*f+1.0)*f,(f-1.0)*f*f)*.5;
+    var d=vec2f(0);
+    for(var t=0u;t<2u;t++) {
+        let j=select(frame_now(),frame_next(),t==1u);
+        d[t]=dot(w,vec4f(layer_sample(j,layer,i-1),layer_sample(j,layer,i),
+            layer_sample(j,layer,i+1),layer_sample(j,layer,i+2)));
+    }
+    return mix(d.x,d.y,frame_mix());
+}
 // Layer L's palette phase at a continuous raster position (raster r's
-// centre at r) and source column x. Its rasters are 2 k + L, 0 to 225;
-// raster r starts at row r of the field (200 bytes a row) displaced by
-// D(r) bytes along it, so at column D(r) + x / 4, running on into the next
-// row (and its phase one higher) past column 200. Between the layer's
-// rasters the row is continuous and D is interpolated (not the address:
-// half way along a row is half way across the field); past them D holds.
+// centre at r) and source column x. Raster r starts at row r of the field
+// (200 bytes a row) displaced by D(r) bytes along it, so at column D(r) +
+// x / 4, running on into the next row past column 200. The row is
+// continuous and D is the layer's smoothed displacement, so the layer is
+// one continuous field. The field is taken as a seamless helix: its sine
+// a whole turn over the row (the code's 5.1 a column falls 4 of 1024
+// short) and its rise of one a row spread along the row, so running on
+// into the next row leaves no seam (an interpretation; faithful HD keeps
+// the code's).
 fn layer_phase(layer:u32,raster:f32,x:f32)->f32 {
-    let last=f32((PLASMA_RASTERS-1u-layer)/2u);
-    let k=clamp((raster-f32(layer))*.5,0.0,last);
-    let k0=min(floor(k),last-1.0);
-    let r0=2u*u32(k0)+layer;
-    let r1=r0+2u;
-    let d0=raster_at(r0)-FIELD_START-FIELD_ROW*f32(r0);
-    let d1=raster_at(r1)-FIELD_START-FIELD_ROW*f32(r1);
-    let m=mix(d0,d1,clamp(k-k0,0.0,1.0))+x/4.0;
-    let wraps=floor(m/FIELD_ROW);
-    let phase=sine_at((m-wraps*FIELD_ROW)*5.1)/10.0+200.0+raster+wraps;
+    let m=layer_offset(layer,(raster-f32(layer))*.5)+x/4.0;
+    let phase=sine_at(m*1024.0/FIELD_ROW)/10.0+200.0+raster+m/FIELD_ROW;
     return phase-PALETTE_PERIOD*floor(phase/PALETTE_PERIOD);
 }
 // The swell on the orders' first rows.
@@ -241,46 +284,89 @@ fn swell()->f32 {
     }
     return 1.0+HIT_SWELL*s;
 }
-// The sheet's radiance at source point s: the two layers' colours mixed
-// as the eye mixes the original's alternate rasters, and taken through the
-// shared tonemap backwards, so the sheet shows about the original's
-// colours (but for the bloom) and gives the light that would.
-fn plasma_light(s:vec2f)->vec3f {
-    if !field_written() || pc.palette.y<=0.0 {return vec3f(0);}
-    var c=vec3f(0);
-    for(var layer=0u;layer<2u;layer++) {
-        c+=shutter_colour(layer_phase(layer,s.y*2.0-.5,s.x));
-    }
-    // Inverted by luminance, so the light keeps the colour's hue (and its
-    // bloom does too).
-    let shown=c*.5;
-    let y=dot(shown,vec3f(.2126,.7152,.0722));
+// Sheet L's radiance at source point s: its layer's colour taken through
+// the shared tonemap backwards by its luminance, so that alone it would
+// show the original's colour (and its bloom keeps the hue), at half power:
+// the two sheets together give the light the original's two layers do.
+fn layer_light(layer:u32,s:vec2f)->vec3f {
+    if !field_written() || pc.palette.y<=0.0 || s.y>f32(PLASMA_RASTERS)*.5 {return vec3f(0);}
+    let c=shutter_colour(layer_phase(layer,s.y*2.0-.5,s.x));
+    let y=dot(c,vec3f(.2126,.7152,.0722));
     if y<=0.0 {return vec3f(0);}
     let k=tonemap_inverse(vec3f(min(y,SHEET_WHITE))).x/y;
-    return shown*k*SHEET_POWER*swell();
+    return c*k*.5*SHEET_POWER*swell();
 }
-// The sheet: its bottom edge's centre, across, up, its size.
+// The back sheet as the lens sees it, a little out of focus: its light
+// over a circle of confusion BACK_DEFOCUS rows across, from its texture
+// at the level that matches (a centre and six round it).
+fn back_light(d:vec3f)->vec3f {
+    let hit=sheet_hit(1u,vec3f(0),d);
+    if hit.z<=0.0 && hit.y>=0.0 {return vec3f(0);}
+    // The circle's radius in the sheet's texels, across and up.
+    let rows=BACK_DEFOCUS*hit.z/(focal()*sheet_base(1u).w);
+    let radius=vec2f(rows*sheet_base(1u).w/(2.0*sheet_half(1u)*COLUMN),rows);
+    let level=clamp(log2(max(rows*SHEET_SIZE.y,1.0)),0.0,6.0);
+    var c=vec3f(0);
+    var weight=0.0;
+    for(var k=0;k<7;k++) {
+        let a=f32(k)*PI/3.0+.5;
+        let o=select(vec2f(cos(a),sin(a)),vec2f(0),k==6)*radius*.8;
+        let st=hit.xy+o;
+        // Past its bottom edge the sheet gives nothing: a soft edge.
+        let inside=select(0.0,1.0,st.y>=0.0);
+        c+=sheet_sample(1u,clamp(st,vec2f(0),vec2f(1)),level)*inside;
+        weight+=1.0;
+    }
+    return c/weight;
+}
+// The sheets: the front one's (0) and the back one's (1) bottom edge's
+// centre and height, half width, a point at (across, up) in 0..1, and
+// their direction up and normal (they are parallel, facing the camera and
+// the slab).
+fn sheet_base(i:u32)->vec4f {return select(pc.sheet,pc.sheet_back,i==1u);}
+fn sheet_half(i:u32)->f32 {return select(pc.sheet_size.x,pc.sheet_back_size.x,i==1u);}
 fn sheet_up()->vec3f {return pc.sheet_size.yzw;}
-fn sheet_point(st:vec2f)->vec3f {
-    return pc.sheet.xyz+vec3f((st.x*2.0-1.0)*pc.sheet_size.x,0,0)+sheet_up()*st.y*pc.sheet.w;
+fn sheet_point(i:u32,st:vec2f)->vec3f {
+    let b=sheet_base(i);
+    return b.xyz+vec3f((st.x*2.0-1.0)*sheet_half(i),0,0)+sheet_up()*st.y*b.w;
 }
-// The sheet faces the camera and the slab.
 fn sheet_normal()->vec3f {return normalize(cross(vec3f(1,0,0),sheet_up()));}
-// Where a ray from o along d meets the sheet: (across, up) in 0..1 and the
+// Where a ray from o along d meets sheet i: (across, up) in 0..1 and the
 // distance, or a distance of -1.
-fn sheet_hit(o:vec3f,d:vec3f)->vec3f {
+fn sheet_hit(i:u32,o:vec3f,d:vec3f)->vec3f {
     let n=sheet_normal();
     let denom=dot(d,n);
     if denom>=0.0 {return vec3f(0,0,-1);}
-    let t=dot(pc.sheet.xyz-o,n)/denom;
+    let b=sheet_base(i);
+    let t=dot(b.xyz-o,n)/denom;
     if t<=0.0 {return vec3f(0,0,-1);}
-    let q=o+d*t-pc.sheet.xyz;
-    let st=vec2f(q.x/pc.sheet_size.x*.5+.5,dot(q,sheet_up())/pc.sheet.w);
+    let q=o+d*t-b.xyz;
+    let st=vec2f(q.x/sheet_half(i)*.5+.5,dot(q,sheet_up())/b.w);
     if any(st<vec2f(0)) || any(st>vec2f(1)) {return vec3f(st,-1);}
     return vec3f(st,t);
 }
-fn sheet_sample(st:vec2f,level:f32)->vec3f {
-    return textureSampleLevel(sheet_light,linear,vec2f(st.x,1.0-st.y),level).rgb;
+// The sheets' soft glow along the camera's ray d, over them and spilling
+// a little past their bottom edges.
+fn glow(d:vec3f)->vec3f {
+    if !field_written() || pc.palette.y<=0.0 {return vec3f(0);}
+    var c=vec3f(0);
+    for(var i=0u;i<2u;i++) {
+        let n=sheet_normal();
+        let denom=dot(d,n);
+        if denom>=0.0 {continue;}
+        let b=sheet_base(i);
+        let q=d*(dot(b.xyz,n)/denom)-b.xyz;
+        let st=vec2f(q.x/sheet_half(i)*.5+.5,dot(q,sheet_up())/b.w);
+        let fade=exp(-max(-st.y,0.0)/GLOW_SPILL);
+        c+=sheet_sample(i,clamp(st,vec2f(0),vec2f(1)),GLOW_LEVEL)*fade;
+    }
+    return c*GLOW;
+}
+// Sheet i's light at level `level`, kept inside its half of the texture.
+fn sheet_sample(i:u32,st:vec2f,level:f32)->vec3f {
+    let half=.5/f32(512u>>u32(clamp(level,0.0,7.0)));
+    let v=clamp((f32(i)+1.0-st.y)*.5,f32(i)*.5+half,f32(i)*.5+.5-half);
+    return textureSampleLevel(sheet_light,linear,vec2f(st.x,v),level).rgb;
 }
 // The exact form factor of a quad (the projected solid angle over pi, as
 // seen from p with normal n), Lambert's formula over its edges.
@@ -302,19 +388,24 @@ struct Gathered { light:vec3f, toward:vec3f }
 fn gather(p:vec3f,n:vec3f)->Gathered {
     var light=vec3f(0);
     var toward=vec3f(0);
-    let cell=1.0/vec2f(CELLS);
-    for(var j=0u;j<CELLS.y;j++) {
-        for(var i=0u;i<CELLS.x;i++) {
-            let st=vec2f(f32(i),f32(j))*cell;
-            let a=sheet_point(st);
-            let b=sheet_point(st+vec2f(cell.x,0));
-            let c=sheet_point(st+cell);
-            let d=sheet_point(st+vec2f(0,cell.y));
-            // Counter-clockwise as the lit side sees it.
-            let f=quad_factor(p,n,a,d,c,b);
-            let l=sheet_sample(st+cell*.5,CELL_LEVEL);
-            light+=f*l;
-            toward+=f*dot(l,vec3f(.3,.5,.2))*normalize((a+c)*.5-p);
+    for(var s=0u;s<2u;s++) {
+        // The back sheet, further off, in coarser cells.
+        let cells=select(CELLS,HAZE_CELLS,s==1u);
+        let level=select(CELL_LEVEL,HAZE_LEVEL,s==1u);
+        let cell=1.0/vec2f(cells);
+        for(var j=0u;j<cells.y;j++) {
+            for(var i=0u;i<cells.x;i++) {
+                let st=vec2f(f32(i),f32(j))*cell;
+                let a=sheet_point(s,st);
+                let b=sheet_point(s,st+vec2f(cell.x,0));
+                let c=sheet_point(s,st+cell);
+                let d=sheet_point(s,st+vec2f(0,cell.y));
+                // Counter-clockwise as the lit side sees it.
+                let f=quad_factor(p,n,a,d,c,b);
+                let l=sheet_sample(s,st+cell*.5,level);
+                light+=f*l;
+                toward+=f*dot(l,vec3f(.3,.5,.2))*normalize((a+c)*.5-p);
+            }
         }
     }
     return Gathered(light,normalize(toward+n*1e-4));
@@ -345,16 +436,19 @@ fn haze(d:vec3f,reach:f32)->vec3f {
         let t=begin+(f32(k)+.5)*span;
         let q=d*t;
         let density=exp(-abs(t-plane)*abs(denom)/HAZE_DEPTH);
+        // The two sheets stand close: both lights, at the front one's
+        // place.
         var light=vec3f(0);
         for(var j=0u;j<HAZE_CELLS.y;j++) {
             for(var i=0u;i<HAZE_CELLS.x;i++) {
                 let st=vec2f(f32(i),f32(j))*cell;
-                let a=sheet_point(st)-q;
-                let b=sheet_point(st+vec2f(cell.x,0))-q;
-                let cc=sheet_point(st+cell)-q;
-                let e=sheet_point(st+vec2f(0,cell.y))-q;
+                let a=sheet_point(0u,st)-q;
+                let b=sheet_point(0u,st+vec2f(cell.x,0))-q;
+                let cc=sheet_point(0u,st+cell)-q;
+                let e=sheet_point(0u,st+vec2f(0,cell.y))-q;
                 let omega=solid_angle(a,b,cc)+solid_angle(a,cc,e);
-                light+=omega*sheet_sample(st+cell*.5,HAZE_LEVEL);
+                light+=omega*(sheet_sample(0u,st+cell*.5,HAZE_LEVEL)
+                    +sheet_sample(1u,st+cell*.5,HAZE_LEVEL));
             }
         }
         c+=light*density;
@@ -426,25 +520,32 @@ fn shade_stone(p:vec3f,d:vec3f)->vec3f {
         // The polished faces mirror the sheet, the cut blurs it; shadowed
         // where the carving stands in the way.
         let rd=reflect(d,n);
-        let hit=sheet_hit(p+n*.3,rd);
-        if hit.z>0.0 {
-            // The lobe's footprint on the sheet, in its texels.
-            let texel=2.0*pc.sheet_size.x/SHEET_SIZE.x;
-            let lod=clamp(log2(max(2.0*roughness*hit.z/texel,1.0)),0.0,7.0);
-            let edge=smoothstep(0.0,.04,min(min(hit.x,1.0-hit.x),min(hit.y,1.0-hit.y)));
-            let clear=soft_shadow(p+n*.3,rd,80.0);
-            c+=sheet_sample(hit.xy,lod)*fresnel(dot(n,v))*clear*edge;
+        let texel=2.0*pc.sheet_size.x/SHEET_SIZE.x;
+        var mirrored=vec3f(0);
+        for(var i=0u;i<2u;i++) {
+            let hit=sheet_hit(i,p+n*.3,rd);
+            if hit.z>0.0 {
+                // The lobe's footprint on the sheet, in its texels.
+                let lod=clamp(log2(max(2.0*roughness*hit.z/texel,1.0)),0.0,7.0);
+                let edge=smoothstep(0.0,.04,min(min(hit.x,1.0-hit.x),min(hit.y,1.0-hit.y)));
+                mirrored+=sheet_sample(i,hit.xy,lod)*edge;
+            }
+        }
+        if any(mirrored>vec3f(0)) {
+            c+=mirrored*fresnel(dot(n,v))*soft_shadow(p+n*.3,rd,80.0);
         }
     }
     return c;
 }
 
 // ---- Entry points ------------------------------------------------------------------------
-// The sheet's light, over the sheet (across, and from its top edge down).
+// The sheets' light, over each sheet (across, and from its top edge
+// down): the front sheet in the upper half, the back one in the lower.
 @fragment fn plasma_sheet(v:Vertex)->@location(0) vec4f {
     plasma_begin();
-    let p=sheet_point(vec2f(v.uv.x,1.0-v.uv.y));
-    return vec4f(plasma_light(project(p)),1);
+    let i=select(0u,1u,v.uv.y>=.5);
+    let p=sheet_point(i,vec2f(v.uv.x,1.0-(v.uv.y*2.0-f32(i))));
+    return vec4f(layer_light(i,project(p)),1);
 }
 // One mip level of the sheet's light from the one above it.
 @fragment fn plasma_downsample(v:Vertex)->@location(0) vec4f {
@@ -470,11 +571,14 @@ fn shade_stone(p:vec3f,d:vec3f)->vec3f {
             c=shade_stone(d*t,d);
             reach=t;
         } else {
-            let hit=sheet_hit(vec3f(0),d);
+            // The two sheets of light, the front one sharp and the back one
+            // through it, softer.
+            let hit=sheet_hit(0u,vec3f(0),d);
             if hit.z>0.0 {
-                c=plasma_light(s);
+                c=layer_light(0u,s)+back_light(d);
                 reach=hit.z;
             }
+            c+=glow(d);
         }
         if field_written() && pc.palette.y>0.0 {c+=haze(d,reach);}
         // Overexposed, the stone goes white as the film does, not orange:
@@ -483,5 +587,6 @@ fn shade_stone(p:vec3f,d:vec3f)->vec3f {
         c=mix(c,vec3f(dot(c,vec3f(.2126,.7152,.0722))),over)*pc.camera.w;
     }
     if pc.camera.z>0.0 {c=mix(c,textureLoad(part3_view,pixel,0).rgb,pc.camera.z);}
+    c*=1.0+DITHER*(hash3(vec3f(vec2f(pixel),7.0))-.5);
     return vec4f(max(c,vec3f(0)),1);
 }

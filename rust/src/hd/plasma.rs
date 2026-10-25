@@ -57,6 +57,19 @@ pub const REST_LINE_COMPARE: usize = 236;
 /// Seconds over which modern part 4 takes over from part 3's view at the
 /// slab (authored); part 3's renderer still draws until then.
 pub const HANDOVER: f64 = 0.35;
+/// The modern view's samples of each layer's displacement: one per raster
+/// of the layer (the even rasters 0 to 224, the odd 1 to 225).
+pub const LAYER_SAMPLES: usize = PLASMA_RASTERS / 2;
+/// How far the modern view smooths each layer's displacement down the
+/// screen: a Gaussian's deviation, in the layer's rasters (authored).
+pub const LAYER_SMOOTH: f64 = 3.0;
+/// How far the modern view smooths the palette's rotation and level over
+/// time, a Gaussian's deviation in frames (authored): the scene steps the
+/// rotation by whole entries (8, 8, 9 …) and the level every fourth frame,
+/// which the view would otherwise show as an uneven glide.
+pub const PALETTE_SMOOTH: (f64, f64) = (1.5, 3.0);
+/// The same for the layers' displacements, in frames (authored).
+pub const LAYER_GLIDE: f64 = 1.0;
 
 /// What a part-4 frame shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -141,8 +154,8 @@ pub struct PlasmaBlock {
     pub slab_size: [f32; 4],
     /// The stone's blue, unused.
     pub stone: [f32; 4],
-    /// The plasma's sheet of light: its bottom edge's centre in camera
-    /// space and its height.
+    /// The plasma's front sheet of light: its bottom edge's centre in
+    /// camera space and its height.
     pub sheet: [f32; 4],
     /// Its half width, and the direction up it (camera space).
     pub sheet_size: [f32; 4],
@@ -151,9 +164,14 @@ pub struct PlasmaBlock {
     /// first; -100 none), and their strengths (filled in by the renderer).
     pub hits: [f32; 4],
     pub hit_strength: [f32; 4],
-    /// The palette's rotation per frame (palette entries, toward the next
-    /// frame), for the modern view's shutter; unused.
+    /// The modern view's palette, smoothed over time
+    /// ([`PlasmaPreview::glide`]): its rotation per frame toward the next
+    /// (for the shutter), its rotation and its level; unused.
     pub motion: [f32; 4],
+    /// The back sheet: its bottom edge's centre and height; its half width,
+    /// unused.
+    pub sheet_back: [f32; 4],
+    pub sheet_back_size: [f32; 4],
 }
 
 /// Part 4 of the HD clip: from its first drawn frame to part 7's first.
@@ -178,6 +196,9 @@ pub struct PlasmaPreview {
     pub events: PlasmaEvents,
     /// The modern view's slab: its pose fitted to the logo, and its relief.
     pub stone: Stone,
+    /// The palette's rotation and level as the modern view takes them,
+    /// smoothed over time within each phase (see [`PALETTE_SMOOTH`]).
+    pub glide: Vec<[f64; 2]>,
     /// Clip times of the orders' first rows during part 4.
     order_starts: Vec<f64>,
 }
@@ -283,6 +304,7 @@ impl PlasmaPreview {
         palettes.extend_from_slice(&part7.1);
         *vga = video;
         let events = PlasmaEvents::observe(&frames);
+        let glide = glide(&frames);
         let order_starts = (1..positions.len())
             .filter(|&j| positions[j] >> 8 != positions[j - 1] >> 8)
             .map(|j| (start + j) as f64 / FRAME_RATE as f64)
@@ -299,9 +321,38 @@ impl PlasmaPreview {
             part7,
             events,
             stone,
+            glide,
             order_starts,
         })
     }
+}
+
+/// The palette's rotation and level smoothed over time, each frame's a
+/// Gaussian mean over the frames of its phase.
+fn glide(frames: &[PlasmaFrame]) -> Vec<[f64; 2]> {
+    let sigma = [PALETTE_SMOOTH.0, PALETTE_SMOOTH.1];
+    (0..frames.len())
+        .map(|j| {
+            std::array::from_fn(|c| {
+                let reach = (3.0 * sigma[c]).ceil() as isize;
+                let (mut sum, mut weight) = (0.0, 0.0);
+                for d in -reach..=reach {
+                    let k = j as isize + d;
+                    if k < 0 || k as usize >= frames.len() {
+                        continue;
+                    }
+                    let f = &frames[k as usize];
+                    if f.phase != frames[j].phase {
+                        continue;
+                    }
+                    let w = (-(d * d) as f64 / (2.0 * sigma[c] * sigma[c])).exp();
+                    sum += w * if c == 0 { f.rotation } else { f.level };
+                    weight += w;
+                }
+                sum / weight
+            })
+        })
+        .collect()
 }
 
 /// The size of part 3's box (its object P3D7), read from its points'
@@ -391,6 +442,68 @@ impl PlasmaPreview {
             s.line_compare,
             frame.phase == Phase::Plasma,
         )
+    }
+
+    /// Each layer's displacement in frame `j` (the even rasters', then the
+    /// odd ones'), as the modern view takes it: raster r's start address
+    /// less the field's start and 200 bytes a raster, smoothed down the
+    /// layer's rasters, so it is a smooth function of height, and over the
+    /// neighbouring frames of the plasma, so it glides. Zero outside the
+    /// plasma's frames.
+    pub fn layers(&self, j: usize) -> [[f32; LAYER_SAMPLES]; 2] {
+        let mut out = [[0.0; LAYER_SAMPLES]; 2];
+        if self.frames[j].phase != Phase::Plasma {
+            return out;
+        }
+        let reach = (3.0 * LAYER_GLIDE).ceil() as isize;
+        let mut weight = 0.0;
+        for d in -reach..=reach {
+            let k = j as isize + d;
+            if k < 0
+                || k as usize >= self.frames.len()
+                || self.frames[k as usize].phase != Phase::Plasma
+            {
+                continue;
+            }
+            let w = (-(d * d) as f64 / (2.0 * LAYER_GLIDE * LAYER_GLIDE)).exp();
+            let layers = self.layers_down(k as usize);
+            for (o, l) in out.iter_mut().zip(layers) {
+                for (v, x) in o.iter_mut().zip(l) {
+                    *v += (w * x) as f32;
+                }
+            }
+            weight += w;
+        }
+        for v in out.iter_mut().flatten() {
+            *v /= weight as f32;
+        }
+        out
+    }
+
+    /// Frame `j`'s layers' displacements smoothed down the screen only.
+    fn layers_down(&self, j: usize) -> [[f64; LAYER_SAMPLES]; 2] {
+        let starts = self.rasters(j);
+        let reach = (3.0 * LAYER_SMOOTH).ceil() as isize;
+        let mut out = [[0.0; LAYER_SAMPLES]; 2];
+        for (layer, smooth) in out.iter_mut().enumerate() {
+            let offset = |k: usize| {
+                let r = 2 * k + layer;
+                starts[r] as f64 - FIELD_START as f64 - (FIELD_ROW * r) as f64
+            };
+            for (k, value) in smooth.iter_mut().enumerate() {
+                let (mut sum, mut weight) = (0.0, 0.0);
+                for d in -reach..=reach {
+                    let i = k as isize + d;
+                    if (0..LAYER_SAMPLES as isize).contains(&i) {
+                        let w = (-(d * d) as f64 / (2.0 * LAYER_SMOOTH * LAYER_SMOOTH)).exp();
+                        sum += w * offset(i as usize);
+                        weight += w;
+                    }
+                }
+                *value = sum / weight;
+            }
+        }
+        out
     }
 
     /// The byte video memory holds at `address` in `plane` while frame `j`
@@ -522,6 +635,7 @@ impl PlasmaPreview {
         let slide_rows = (line_compare - REST_LINE_COMPARE as f64) / 2.0;
         let pose = stone.pose(slide_rows);
         let handover = (1.0 - seconds.max(0.0) / HANDOVER).clamp(0.0, 1.0);
+        let [front, rear] = stone.sheets;
         PlasmaBlock {
             part: [
                 1.0,
@@ -574,13 +688,13 @@ impl PlasmaPreview {
             ],
             stone: [stone.colour[2], 0.0, 0.0, 0.0],
             sheet: [
-                stone.sheet[0] as f32,
-                stone.sheet[1] as f32,
-                stone.sheet[2] as f32,
-                stone.sheet_height as f32,
+                front.base[0] as f32,
+                front.base[1] as f32,
+                front.base[2] as f32,
+                front.height as f32,
             ],
             sheet_size: [
-                stone.sheet_half_width as f32,
+                front.half_width as f32,
                 stone.sheet_up[0] as f32,
                 stone.sheet_up[1] as f32,
                 stone.sheet_up[2] as f32,
@@ -589,14 +703,21 @@ impl PlasmaPreview {
             hit_strength: [0.0; 4],
             motion: [
                 if blend {
-                    (next.rotation - frame.rotation) as f32
+                    (self.glide[k][0] - self.glide[j][0]) as f32
                 } else {
                     0.0
                 },
-                0.0,
-                0.0,
+                lerp(self.glide[j][0], self.glide[k][0]) as f32,
+                lerp(self.glide[j][1], self.glide[k][1]) as f32,
                 0.0,
             ],
+            sheet_back: [
+                rear.base[0] as f32,
+                rear.base[1] as f32,
+                rear.base[2] as f32,
+                rear.height as f32,
+            ],
+            sheet_back_size: [rear.half_width as f32, 0.0, 0.0, 0.0],
         }
     }
 }
