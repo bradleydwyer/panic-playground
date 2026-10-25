@@ -150,7 +150,8 @@ pub struct GreetingsBlock {
     /// fade (0 to 1), the monster's level (0 to 1).
     pub sweep: [f32; 4],
     /// The strips' sine positions (continuous), strips 0 to 3; strip 4's,
-    /// and the first slot's top row (continuous), unused, unused.
+    /// the first slot's top row (continuous), the star colours' phase at
+    /// the fade to white, unused.
     pub twist: [f32; 4],
     pub twist_late: [f32; 4],
     /// Part-7 seconds of [`GreetingsEvents`]: lit, words, words' end,
@@ -191,6 +192,9 @@ pub struct GreetingsPreview {
     pub letterforms: Letterforms,
     /// The modern view's dust; see [`motes`].
     pub motes: Vec<[f32; 4]>,
+    /// The star colours' phase (unwrapped) on the first frame of the fade
+    /// to white, which the modern view's slowed beam is anchored to.
+    pub white_phase: f64,
 }
 
 impl GreetingsPreview {
@@ -328,7 +332,12 @@ impl GreetingsPreview {
         *vga = video;
         let slots = slots(&frames, &drawn_rows);
         let events = GreetingsEvents::observe(&frames, &slots);
+        let white_phase = frames
+            .iter()
+            .find(|f| f.stage == Stage::White)
+            .map_or(0.0, |f| f.phase);
         Ok(Self {
+            white_phase,
             start,
             letterforms: letterforms(LetterSource::Outlines(LETTERS))?,
             motes: motes(&planes),
@@ -667,7 +676,12 @@ impl GreetingsPreview {
                 positions[2] as f32,
                 positions[3] as f32,
             ],
-            twist_late: [positions[4] as f32, base as f32, 0.0, 0.0],
+            twist_late: [
+                positions[4] as f32,
+                base as f32,
+                self.white_phase as f32,
+                0.0,
+            ],
             events: [e.lit, e.words, e.words_end, e.white].map(|v| v as f32),
             events_late: [e.monster, e.part8, 0.0, 0.0].map(|v| v as f32),
         }

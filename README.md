@@ -366,15 +366,15 @@ from the port and checked against it frame by frame.
 
 The modern look is a lighthouse in dusty air:
 
-- The turning colours become one hard cream spotlight from a lamp at the
-  sweep's centre, turning as fast as the original's band, in air marched in
-  3D: the light falls off with distance, softens at the cone's edge, glows
-  more as it turns toward the camera, and the cubes cast real shafts and
-  shadows through it. The air thickens and thins slowly as an authored
-  wind carries it.
-- The original's stars become dust in the air at all depths, drifting on
-  that wind, lit only where the beam passes: near motes are soft discs out
-  of focus, far ones fine points.
+- The turning colours become one broad, soft cream lighthouse beam from
+  a lamp at the sweep's centre, turning once every 3.7 seconds (a quarter
+  of the original's speed), in air marched in 3D: the light falls off with
+  distance, glows more as it turns toward the camera, and the letters cast
+  real shadows and caustics into it. The lamp's glow lights the dusty air
+  faintly everywhere.
+- The original's stars become dust in the air at all depths, each mote
+  carried along its own path by slow, swirling currents; near motes are
+  soft discs out of focus, far ones fine points.
 - The 16 views read as a square column turning, so each letter is a
   block of clear crystal, like a lighthouse's lens, the letter cut into its
   four faces as in an engraved crystal award, turned by the original's
@@ -389,9 +389,10 @@ The modern look is a lighthouse in dusty air:
 
 The air, the dust's depth and drift, the beam, the crystal, the
 letters' outlines and the swing into the lens are authored; the
-positions, motion, words and timing are the port's. Faithful HD (**M**) shows the original's pixels at display
-resolution. The [renderer notes](rust/README.md#part-7-greetings) say what
-is read, what is interpreted and what is authored.
+positions, motion, words and timing are the port's. Faithful HD (**M**)
+shows the original's pixels at display resolution. The
+[renderer notes](rust/README.md#part-7-greetings) say what is read, what
+is interpreted and what is authored.
 
 ### Keys
 

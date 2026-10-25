@@ -36,7 +36,7 @@ pub const TRANSMISSION_SIZE: (u32, u32) = (1024, 1024);
 pub const NOISE_SIZE: u32 = 64;
 /// The photons: one lamp ray for each cell of this grid over the map, at
 /// each of three wavelengths (greetings_light.wgsl's PHOTON_GRID).
-pub const PHOTON_GRID: (u32, u32) = (560, 560);
+pub const PHOTON_GRID: (u32, u32) = (600, 600);
 const PHOTONS: u32 = PHOTON_GRID.0 * PHOTON_GRID.1 * 3;
 
 /// The images the modern view's passes hand on, for one drawable size.

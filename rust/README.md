@@ -1713,32 +1713,43 @@ upscaled smoothly. With **Tab** or **C** the original is shown.
 The modern view is crystal letters in a lighthouse's beam, in dusty air.
 All of it is authored, on the port's timing, positions and motion:
 
-- The sweep is one hard cream spotlight, turning once every 64 frames
-  (about 1.1 turns a second): its direction on the screen is the peak of
-  the original's band round the sweep's centre, tilted 23 degrees toward the
-  camera so it passes through the outer strips. The lamp stands a little
-  behind the strips, where it projects on the sweep's centre: a bright core
-  with a halo, the beam leaving an aperture of finite size.
+- The sweep is one broad cream lighthouse beam. Its direction on the
+  screen is the peak of the original's band round the sweep's centre, but
+  it turns four times slower than the original's colours (authored: one
+  turn every 256 frames, about 3.66 s, near one order of the music, 258
+  frames), about the moment the fade to white begins, so there its
+  direction is the original's. It is tilted 23 degrees toward the camera
+  so it passes through the outer strips. The lamp stands a little behind
+  the strips, where it projects on the sweep's centre: a bright core with a
+  halo, the beam leaving an aperture of finite size. The original lights
+  40 of its 64 colours at once, a very broad band, so the beam is broad
+  and soft: across it its light falls as exp(-2 q^2), q its distance across
+  over the aperture plus 0.55 rows a row along, about 32 degrees wide at
+  half its light and fading out by some 60.
 - The air is a participating medium, marched in 3D at half resolution
-  within the cone (36 samples a pixel), lit only by the
-  beam: its light falls off with the square of the distance, its profile
-  is brighter on the axis and soft at the edge (a penumbra that grows with
-  distance, as from an aperture), and it scatters toward the camera by a
-  Henyey-Greenstein phase function (g = 0.62), so the beam brightens as it
-  turns toward the lens. The air is a thin haze with slow, large thicker
-  and thinner regions (a smooth, tiling noise) carried on an authored wind
-  of a few rows a second; nothing changes quickly. Each sample is at its own
-  instant over a shutter of one 70 Hz frame, so the beam sweeps rather than
-  steps.
+  within the cone (28 samples a pixel), lit by the beam: its light falls
+  off with the square of the distance, and it scatters toward the camera by
+  a Henyey-Greenstein phase function (g = 0.62), so the beam brightens as
+  it turns toward the lens. Each sample is at its own instant over a
+  shutter of one 70 Hz frame, so the beam sweeps rather than steps. The
+  lamp's own glow also lights the haze everywhere, faintly (the light of a
+  point lamp in uniform air along each ray, in closed form), so the room
+  reads as dusty air with a beam turning in it, not a void.
+- The air moves (authored; the original's stars never move): a slow drift
+  of about a row and a half a second, and lazy swirls, the curl of a sum of
+  four waves 260 rows long reaching 26 rows, with periods of 23 to 37
+  seconds, and over the places they have carried the air, the same 90
+  rows long reaching 7, quicker; being curls, they neither gather nor thin
+  the air. The air's thicker and thinner regions (a smooth, tiling noise)
+  are carried by the same flow.
 - The dust is motes in the air, seeded from the original's stars: each
   star's screen position, six motes at depths along its ray from in front
   of the strips to behind them, filling the air evenly, so at rest they
-  would project where the original shows its stars. They drift on the same
-  authored wind and swirl slowly round it (the original's stars never
-  move). Each is lit by the beam, forward scattering strongly (g = 0.75),
-  and all but invisible outside it (a trace of the original's band is
-  left); the camera is focused on the strips, so near motes are soft discs
-  and far ones fine points, of varied sizes.
+  would project where the original shows its stars. The air's flow
+  carries each along its own path. Each is lit by the beam, forward
+  scattering strongly (g = 0.75), and faintly by the lamp's glow
+  everywhere; the camera is focused on the strips, so near motes are soft
+  discs and far ones fine points, of varied sizes.
 - Each letter is a block of clear cut crystal, like a lighthouse's lens,
   the letter cut into its four faces as a V-groove (walls sloping two rows
   deep a row in, down to 2.4), frosted, as in an engraved crystal award:
@@ -1759,7 +1770,7 @@ All of it is authored, on the port's timing, positions and motion:
   when the beam passes through. The original's white-to-teal tints the
   glass and the cut faintly. The gaps between the blocks stay open;
   faithful HD keeps the smear.
-- The beam is traced through the blocks: a photon for each of 560 by 560
+- The beam is traced through the blocks: a photon for each of 600 by 600
   directions round its axis, at each of three wavelengths, refracted at
   each face and at the cut's facets (from the letter's distance field),
   internally reflected where it must be, the frosted cut scattering most of
@@ -1789,10 +1800,10 @@ the clip's time; an ignored test checks frames drawn after others against
 a new renderer's, byte for byte. The look's constants are at the top of
 `greetings_light.wgsl`, the letterforms' in `greetings_type.rs`.
 
-At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (150 frames,
-on a machine in use), modern part 7 takes about 2 to 3 ms a frame, the
-air's march, the shadow map and the shutter included; faithful HD under
-1 ms.
+At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (on a
+machine in use), modern part 7 takes about 6 to 8 ms a frame, the
+photons, the air's marches, the crystal and the shutter included;
+faithful HD under 1 ms.
 
 ### Options and tests
 

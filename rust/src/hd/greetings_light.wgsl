@@ -5,26 +5,27 @@
 // The original turns 64 colours over a field of stars that never move, so
 // a broad band of light sweeps round (160, 85) once every 64 frames; five
 // strips of letters rise through it, each letter row one of 16 stored views
-// of a turning column. Here the sweep is one hard cream spotlight in a room
-// of dusty air, turning once every 64 frames, its direction the original's
-// band's peak:
+// of a turning column. Here the sweep is one broad cream lighthouse beam in
+// a room of dusty air, its direction the original's band's peak, turning
+// four times slower (authored):
 // - The lamp stands a little behind the strips, where it projects on the
 //   sweep's centre, a bright core with a halo, and the beam leaves its
 //   aperture, of finite size, tilted a little toward the camera, so it
-//   passes through the outer strips.
-// - The air is a participating medium marched in 3D at half resolution: a
-//   thin haze with slow, low-frequency thicker and thinner regions drifting
-//   on an authored wind, lit only inside the cone, the cone's light falling
-//   off with the square of the distance, softer toward its edge (a
-//   penumbra that grows with distance, as from an aperture), and scattered
-//   toward the camera by a Henyey-Greenstein phase function, so the beam
-//   brightens as it turns toward the lens. The beam's motion is integrated
-//   over the shutter along each march.
+//   passes through the outer strips; broad and soft across, as the
+//   original's band is broad.
+// - The air is a participating medium marched in 3D at half resolution:
+//   lit by the beam, the light falling off with the square of the
+//   distance, and scattered toward the camera by a Henyey-Greenstein phase
+//   function, so the beam brightens as it turns toward the lens. The lamp's
+//   glow lights the haze everywhere, faintly. The air moves in slow,
+//   swirling currents (the curl of sums of waves, authored), its thicker and
+//   thinner regions carried with it. The beam's motion is integrated over
+//   the shutter along each march.
 // - The dust is motes in the air, seeded from the original's stars (each
 //   star's screen position, a few motes at depths along it, around and in
-//   front of the strips) and drifting slowly on the same authored wind (the
-//   original's stars never move): lit by the beam, forward scattering
-//   strongly, and all but invisible outside it; the near ones soft discs out
+//   front of the strips), each carried along its own path by the currents
+//   (the original's stars never move): lit by the beam, forward scattering
+//   strongly, and faintly by the lamp's glow; the near ones soft discs out
 //   of focus, the far ones fine points.
 // - Each letter is a block of clear cut crystal, like a lighthouse's lens,
 //   the letter cut deep into its four faces as a V-groove, frosted, like an
@@ -61,31 +62,49 @@
 const CAMERA_DISTANCE=580.0;
 const LAMP_DEPTH=22.0;
 const BEAM_TILT=.4;
-const BEAM_HALF=.15;
 const APERTURE=2.6;
-const PENUMBRA=1.2;
-const PENUMBRA_GROWTH=.08;
-// The beam's power, the distance within which its inverse-square falloff
-// levels off, and how much brighter its axis is than its edge.
+// The beam's breadth: across it, at a distance along, its light is
+// exp(-BEAM_SOFTNESS q^2) where q is the distance across over APERTURE +
+// along * BEAM_SPREAD (the tangent of about 29 degrees), ending smoothly by
+// q = BEAM_END. The original lights 40 of its 64 colours at once, a very
+// broad band, so the beam is broad and soft: about 32 degrees across at
+// half its light, faintly out to some 60.
+const BEAM_SPREAD=.55;
+const BEAM_SOFTNESS=2.0;
+const BEAM_END=1.7;
+// The beam turns this many times slower than the original's colour cycle
+// (authored: one turn every 256 frames, about 3.66 s, near one order of
+// the music), its direction the original's band's at the fade to white.
+const BEAM_SLOWING=4.0;
+// The beam's power, and the distance within which its inverse-square
+// falloff levels off.
 const BEAM_POWER=1.0;
 const FALLOFF=70.0;
-const CORE_BIAS=.45;
 // The air: its scattering, the phase function's asymmetry, its thinnest
-// and thickest (relative), the noise levels between which it thickens, its
-// scale (rows a tile of the noise) and the wind (rows a second; the same
-// carries the dust).
-const SCATTER=.07;
+// and thickest (relative), the noise levels between which it thickens, and
+// its scale (rows a tile of the noise). The lamp's own glow scatters in it
+// everywhere, this much (so the room reads as dusty air, not a void).
+const SCATTER=.045;
 const PHASE_G=.62;
 const THINNEST=.4;
 const THICKEST=1.8;
 const THICKENS=vec2f(.15,.85);
 const DENSITY_SCALE=170.0;
-const WIND=vec3f(3.2,1.1,-2.4);
+const AMBIENT_AIR=.00035;
+// The air's flow (authored; the original's stars never move): a slow mean
+// drift (rows a second), and lazy swirls, the curl of two sums of waves
+// (so the flow neither gathers nor thins the air), large and slow, then
+// smaller and quicker over the places the large ones have moved: each
+// wave's direction and its period (seconds) and phase, and each sum's
+// wavelength and reach (rows).
+const DRIFT=vec3f(1.2,.5,-.8);
+const SWIRL_LARGE=vec2f(260.0,26.0);
+const SWIRL_SMALL=vec2f(90.0,7.0);
 // The march: samples within the cone, the near and far depths it covers
 // (scene z), and the shutter (70 Hz frames) its samples spread over.
-const MARCH_SAMPLES=36u;
+const MARCH_SAMPLES=28u;
 // The samples for the light the blocks throw out of the beam.
-const SPRAY_SAMPLES=20u;
+const SPRAY_SAMPLES=12u;
 const AIR_NEAR=-420.0;
 const AIR_FAR=240.0;
 const SHUTTER=1.0;
@@ -95,9 +114,9 @@ const SHUTTER=1.0;
 // the blocks' depth either side of the strips' plane; the photons' grid
 // (greetings_render::PHOTON_GRID); how far along the beam each photon's
 // landing is taken (rows); and the brightest a caustic is let be.
-const MAP_SPREAD=.5;
+const MAP_SPREAD=1.2;
 const SLAB=11.5;
-const PHOTON_GRID=vec2u(560u,560u);
+const PHOTON_GRID=vec2u(600u,600u);
 // Each photon's splat: a tent SPLAT cells of the grid either way, weighted
 // so a grid of them sums to one.
 const SPLAT=3.0;
@@ -125,9 +144,9 @@ const BOKEH_MAX=20.0;
 const MOTE_GAIN=30.0;
 const MOTE_G=.75;
 const MOTE_BAND=.008;
-// The air's swirl round the wind (rows), and its period (seconds).
-const SWIRL=4.0;
-const SWIRL_PERIOD=9.0;
+// The motes' light from the lamp's glow alone, everywhere (in the beam's
+// units times MOTE_GAIN).
+const MOTE_AMBIENT=.1;
 // The blocks: half a side (greetings_type::FACE / 2), the edges' rounding,
 // the slots (greetings::SLOT_ROWS, SLOTS), and the turn per step of the
 // sine's view index (90 degrees over 16, read as a turn of the column).
@@ -237,10 +256,12 @@ fn swing()->f32 {
 // The beam's direction `back` frames before the moment: on the screen, the
 // direction of the original's band's peak round the sweep's centre (the
 // pulse peaks where colour index plus phase is 31.5; the index follows the
-// fitted turn), tilted toward the camera, and all the way to it as it
-// swings to the lens.
+// fitted turn), turning BEAM_SLOWING times slower about the moment the fade
+// to white begins (so there its direction is the original's), tilted
+// toward the camera, and all the way to it as it swings to the lens.
 fn beam_axis(back:f32)->vec3f {
-    let phase=gc.sweep.x-back;
+    let anchor=gc.twist_late.z;
+    let phase=anchor+(gc.sweep.x-back-anchor)/BEAM_SLOWING;
     let angle=(LAW_OFFSET-31.5+phase)*PI/32.0;
     let tilt=mix(BEAM_TILT,PI*.5,swing());
     // Source y runs down, the scene's up.
@@ -252,11 +273,8 @@ fn beam_profile(x:vec3f,axis:vec3f)->f32 {
     let v=x-lamp();
     let along=dot(v,axis);
     if along<=0.0 {return 0.0;}
-    let across=length(v-axis*along);
-    let radius=APERTURE+along*tan(BEAM_HALF);
-    let soft=PENUMBRA+along*PENUMBRA_GROWTH;
-    let edge=1.0-smoothstep(radius-soft,radius+soft,across);
-    return edge*(1.0-CORE_BIAS+CORE_BIAS*exp(-2.0*(across/radius)*(across/radius)));
+    let q=length(v-axis*along)/(APERTURE+along*BEAM_SPREAD);
+    return exp(-BEAM_SOFTNESS*q*q)*(1.0-smoothstep(BEAM_END*.6,BEAM_END,q));
 }
 fn beam_falloff(x:vec3f)->f32 {
     let r2=dot(x-lamp(),x-lamp());
@@ -298,8 +316,8 @@ fn map_direction(uv:vec2f)->vec3f {
 // The light the blocks move, toward x, by wavelength, in the beam's units
 // at its axis (0 where they move none; less in their shadows, more in their
 // caustics); only beyond the blocks. Softened over the aperture's penumbra
-// (the aperture's radius over the blocks' distance, less over x's), four
-// taps turned by `blur`.
+// (the aperture's radius over the blocks' distance, less over x's), two
+// taps turned by `blur` (which the callers vary from sample to sample).
 fn moved(x:vec3f,blur:f32)->vec3f {
     let l=lamp();
     if x.z>-SLAB || l.z-x.z<1.0 {return vec3f(0);}
@@ -309,12 +327,8 @@ fn moved(x:vec3f,blur:f32)->vec3f {
     let blocks=length(w)*l.z/(l.z-x.z);
     let spread=APERTURE*max(1.0/max(blocks,1.0)-1.0/length(w),0.0)/(2.0*MAP_SPREAD);
     let o=vec2f(cos(blur),sin(blur))*spread;
-    let taps=array<vec2f,4>(o,-o,vec2f(-o.y,o.x),vec2f(o.y,-o.x));
-    var t=vec3f(0);
-    for(var i=0;i<4;i++) {
-        t+=textureSampleLevel(transmission,linear,uv+taps[i],0.0).rgb;
-    }
-    return t*.25;
+    return (textureSampleLevel(transmission,linear,uv+o,0.0).rgb
+        +textureSampleLevel(transmission,linear,uv-o,0.0).rgb)*.5;
 }
 // The beam's light at x through the blocks, by wavelength: its profile
 // (along `axis`, the shutter's instant) and what the blocks move, never
@@ -328,9 +342,39 @@ fn light_at(x:vec3f,axis:vec3f,blur:f32)->vec3f {
 // ---- The air ----------------------------------------------------------------------------
 // The wind's displacement at a moment (authored), and the air's density at
 // x: thin haze, thicker and thinner in slow, large regions carried by it.
-fn wind_offset()->vec3f {return WIND*greetings_seconds();}
+// The swirls: the curl of a sum of four waves (each a direction k and an
+// axis a: the field a sin(k.x + w t + p)'s curl is (k x a) cos(...)), of
+// this wavelength and reach, `slow` scaling their periods.
+fn swirl(x:vec3f,t:f32,wavelength:f32,reach:f32,slow:f32)->vec3f {
+    let ks=array<vec3f,4>(vec3f(.62,.55,-.56),vec3f(-.71,.31,.63),vec3f(.18,-.88,.44),vec3f(-.35,-.42,-.84));
+    // k x a, normalised, for the axes (.3,-.8,.5), (.6,.6,.5), (-.9,-.1,.4)
+    // and (.2,.7,-.7).
+    let curls=array<vec3f,4>(vec3f(-0.207,-0.573,-0.793),vec3f(-0.227,0.748,-0.624),vec3f(-0.313,-0.475,-0.822),vec3f(0.894,-0.418,-0.163));
+    let periods=vec4f(31.0,23.0,37.0,27.0)*slow;
+    let phases=vec4f(.3,2.1,4.4,5.6);
+    var v=vec3f(0);
+    for(var i=0;i<4;i++) {
+        let k=ks[i]*(2.0*PI/wavelength);
+        let w=2.0*PI/periods[i];
+        v+=curls[i]*cos(dot(k,x)+w*t+phases[i]);
+    }
+    return v*reach*.5;
+}
+// Where the air that was at x when part 7 began has been carried by the
+// moment: the drift, the large swirls, and the small over them.
+fn flow(x:vec3f)->vec3f {
+    let t=greetings_seconds();
+    let y=x+DRIFT*t+swirl(x,t,SWIRL_LARGE.x,SWIRL_LARGE.y,1.0);
+    return y+swirl(y,t,SWIRL_SMALL.x,SWIRL_SMALL.y,.4);
+}
+// Where the air at x came from, near enough: the drift and the large
+// swirls undone once (the small ones are finer than the air's thickening).
+fn unflow(x:vec3f)->vec3f {
+    let t=greetings_seconds();
+    return x-DRIFT*t-swirl(x,t,SWIRL_LARGE.x,SWIRL_LARGE.y,1.0);
+}
 fn density(x:vec3f)->f32 {
-    let q=(x-wind_offset())/DENSITY_SCALE;
+    let q=unflow(x)/DENSITY_SCALE;
     let n=textureSampleLevel(density_noise,repeat,q,0.0).r;
     return mix(THINNEST,THICKEST,smoothstep(THICKENS.x,THICKENS.y,n));
 }
@@ -341,7 +385,7 @@ fn pattern(p:vec2f)->f32 {return fract(52.9829189*fract(dot(p,vec2f(.06711056,.0
 // edge's outer bound), between t0 and t1, or (1, 0). The cone's apex is
 // behind the lamp so its radius there is the aperture's.
 fn cone_span(d:vec3f,axis:vec3f,t0:f32,t1:f32)->vec2f {
-    return cone_span_at(d,axis,t0,t1,tan(BEAM_HALF)+PENUMBRA_GROWTH*1.2,APERTURE+PENUMBRA*1.2);
+    return cone_span_at(d,axis,t0,t1,BEAM_SPREAD*BEAM_END,APERTURE*BEAM_END);
 }
 // The same for a cone of this slope (its radius per row along) and radius
 // at the lamp.
@@ -703,20 +747,25 @@ struct AirOut { @location(0) front:vec4f, @location(1) full:vec4f }
             if t<depth {front+=lit;}
         }
     }
+    // The lamp's glow in the air everywhere: from a point lamp falling off
+    // as the beam does, along the ray, in closed form, thickened or
+    // thinned as the air is where the ray passes nearest the lamp.
+    let to=lamp()-CAMERA;
+    let s0=dot(to,d);
+    let h=length(to-d*s0);
+    let w=sqrt(FALLOFF*FALLOFF+h*h);
+    let glow=FALLOFF*FALLOFF/w*AMBIENT_AIR*BEAM_POWER*mix(1.0,density(CAMERA+d*max(s0,near)),.5);
+    let glow_front=glow*(atan((min(depth,far)-s0)/w)-atan((near-s0)/w));
+    let glow_all=glow*(atan((far-s0)/w)-atan((near-s0)/w));
     let k=star_colour()*SCATTER*intensity();
-    return AirOut(vec4f(front*k,depth),vec4f(all*k,1));
+    let g=star_colour()*intensity();
+    return AirOut(vec4f(front*k+g*max(glow_front,0.0),depth),vec4f(all*k+g*glow_all,1));
 }
 
 // ---- The dust ------------------------------------------------------------------------
-// A mote's place at the moment: carried by the wind, and swirled a little
-// round it (authored; slow, and the same for neighbouring motes).
-fn mote_place(m:vec4f)->vec3f {
-    let x=m.xyz;
-    let t=greetings_seconds();
-    let w=2.0*PI/SWIRL_PERIOD;
-    let swirl=vec3f(sin(w*t+x.y*.011+x.z*.007),sin(w*.83*t+x.x*.009+2.1),sin(w*.71*t+x.x*.006+x.y*.008+4.2));
-    return x+wind_offset()+swirl*SWIRL;
-}
+// A mote's place at the moment: carried by the air's flow from where it
+// was when part 7 began (authored), each along its own path.
+fn mote_place(m:vec4f)->vec3f {return flow(m.xyz);}
 struct DustVertex {
     @builtin(position) position:vec4f,
     @location(0) offset:vec2f,
@@ -743,7 +792,8 @@ struct DustVertex {
         lit+=light_at(x,beam_axis(SHUTTER*f32(k)*.5),f32(n)+f32(k)*2.1);
     }
     let beam=lit*phase(normalize(x-lamp()),to_camera/distance,MOTE_G)/3.0*MOTE_GAIN;
-    var colour=star_colour()*(beam+MOTE_BAND*star_light(index,gc.sweep.x));
+    let glow=MOTE_AMBIENT*beam_falloff(x);
+    var colour=star_colour()*(beam+glow+MOTE_BAND*star_light(index,gc.sweep.x));
     colour*=(.3+2.2*size*size)*intensity();
     // In focus at the strips' plane; the near ones soft discs, the far ones
     // points; a disc's light spread over its area.
