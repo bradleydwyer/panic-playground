@@ -4,6 +4,32 @@ use crate::{data::Data, vga::Vga};
 
 const SCALES: [usize; 13] = [7, 8, 9, 10, 12, 14, 16, 19, 22, 26, 31, 37, 44];
 
+/// For the HD preview (hd/ending.rs), read from this scene's steps: the
+/// vertical compression step `frame` shows, 1 for the whole picture through
+/// the white frame, then 2 to 5 (line compare) and 7 to 44 (copied rows);
+/// `None` from the single line on.
+#[cfg(feature = "hires")]
+pub fn hd_compression(frame: usize) -> Option<usize> {
+    match frame {
+        0..=3 => Some(1),
+        4..=7 => Some(frame - 2),
+        8..=20 => Some(SCALES[frame - 8]),
+        _ => None,
+    }
+}
+
+/// For the HD preview: the first and last columns of row 100 that step
+/// `frame` has not yet erased (each step from 22 erases four more pixels at
+/// each end); from 68 none, and the dot is set at column 160.
+#[cfg(feature = "hires")]
+pub fn hd_line_ends(frame: usize) -> (i32, i32) {
+    if frame < 22 {
+        return (0, 319);
+    }
+    let x = 20 + 3 * (frame as i32 - 22);
+    (x + 4, 316 - x)
+}
+
 pub struct Ending {
     original: Vec<u8>,
     frame: usize,
@@ -21,6 +47,13 @@ impl Ending {
             frame: 0,
             latches: [0; 4],
         })
+    }
+
+    /// For the HD preview: the steps taken since the music reached 35:00
+    /// (0 while it waits, 198 when done). Reading it changes nothing.
+    #[cfg(feature = "hires")]
+    pub fn hd_frame(&self) -> usize {
+        self.frame
     }
 
     pub fn step(&mut self, vga: &mut Vga, music: u16) -> bool {
@@ -165,6 +198,60 @@ mod tests {
             }
         }
     }
+    /// The HD preview's reading of the steps against the scene itself, on an
+    /// invented picture lit in rows 25 to 175: the rows each squeeze shows,
+    /// row 100's columns as they are erased, and the dot. (Each copied
+    /// squeeze leaves the step before's outermost rows; dark as here, and as
+    /// in MONSTER.U, they show nothing.)
+    #[cfg(feature = "hires")]
+    #[test]
+    fn hd_geometry_follows_the_steps() {
+        let root = std::env::temp_dir().join(format!("panic-ending-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("files")).unwrap();
+        std::fs::write(root.join("files/P.P"), b"invented test marker").unwrap();
+        let data = Data::new(&root).unwrap();
+        let mut vga = Vga::new();
+        for i in 0..64000 {
+            let (x, y) = (i % 320, i / 320);
+            let index = if (25..=175).contains(&y) {
+                1 + (x + y) % 250
+            } else {
+                0
+            } as u8;
+            vga.planes[x & 3][y * 80 + x / 4] = index;
+        }
+        vga.palette.fill(40);
+        let mut scene = Ending::new(&data, &mut vga).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(!scene.step(&mut vga, 0x34ff));
+        assert_eq!(scene.hd_frame(), 0);
+        for step in 1..=198 {
+            scene.step(&mut vga, 0x3500);
+            assert_eq!(scene.hd_frame(), step);
+            let lit = |x: usize, y: usize| vga.indices[y * 320 + x] != 0;
+            let rows: Vec<usize> = (0..200).filter(|&y| (0..320).any(|x| lit(x, y))).collect();
+            match hd_compression(step) {
+                Some(1) => {}
+                Some(c) => {
+                    let half = 100.0 / c as f64 + 1.0;
+                    assert!(!rows.is_empty(), "step {step}");
+                    for &y in &rows {
+                        assert!((y as f64 - 100.5).abs() <= half, "row {y} at step {step}");
+                    }
+                }
+                None => {
+                    assert_eq!(rows, [100], "step {step}");
+                    let (left, right) = hd_line_ends(step);
+                    for x in 20..=300 {
+                        let line = left <= x as i32 && x as i32 <= right;
+                        let dot = step >= 68 && x == 160;
+                        assert_eq!(lit(x, 100), line || dot, "column {x} at step {step}");
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     #[ignore = "requires locally supplied PANIC_FIXTURES; run with --ignored"]
     fn dot_matches_native_and_borland_software_fp_vectors() {

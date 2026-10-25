@@ -41,6 +41,8 @@ struct Options {
     plasma: bool,
     /// Continue through part 7 (Greetings) to part 8's first frame.
     greetings: bool,
+    /// Continue through part 8 (the ending) to the demo's last frame.
+    ending: bool,
     /// Part 6's original symbols throughout, instead of the authored sets
     /// in its middle (N).
     original_symbols: bool,
@@ -82,6 +84,7 @@ impl Options {
             dots: false,
             plasma: false,
             greetings: false,
+            ending: false,
             original_symbols: false,
             scroller_lighting: ScrollerLighting::Studio,
             scroller_backdrop: ScrollerBackdrop::Chrome,
@@ -174,6 +177,17 @@ impl Options {
                 }
                 // Part 4 follows part 3.
                 "--plasma" => {
+                    o.plasma = true;
+                    o.dots = true;
+                    o.field = true;
+                    o.rings = true;
+                    o.scroller = true;
+                    o.modern = true;
+                }
+                // Part 8 follows part 7, the last.
+                "--ending" => {
+                    o.ending = true;
+                    o.greetings = true;
                     o.plasma = true;
                     o.dots = true;
                     o.field = true;
@@ -287,7 +301,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings), as a liquid-chrome pool, to part 5's first frame\n  --field          Continue through part 5 (Field), the zoom and the mountain, to part 3's first frame\n  --dots           Continue through part 3 (Dots), as light painting, and part 4's wait to its first frame\n  --plasma         Continue through part 4 (Plasma), as light on stone, to part 7's first frame\n  --greetings      Continue through part 7 (Greetings), as a lighthouse in the dust, to part 8's first frame\n  --original-symbols  Part 6 with the original symbols throughout, not the new sets in its middle\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --bench N        Headless: draw N frames from --seek at 60 a second and print the time each takes\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: step 1s, hold to scrub · Cmd+Left/Right: previous/next section\nHome/R: replay · End: logo · Tab: original/HD · C: split comparison · M: faithful/modern\nF: fullscreen · S: save PNG · L: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light · N: part 6's new or original symbols · D: part 4's water or polished floor\n1/2: part 4's water mirror weaker/stronger · 3/4: its swell lower/higher · 5/6: slower/faster · 7/8: shorter/longer · 9/0: fewer/more drops\nJ/K: part 7's beam faster/slower · U/I: its tilt toward the camera less/more · G/H: its brightness down/up · Z/X: its width narrower/wider\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6, --field through part 5, --dots through part 3, --plasma through part 4, --greetings through part 7."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings), as a liquid-chrome pool, to part 5's first frame\n  --field          Continue through part 5 (Field), the zoom and the mountain, to part 3's first frame\n  --dots           Continue through part 3 (Dots), as light painting, and part 4's wait to its first frame\n  --plasma         Continue through part 4 (Plasma), as light on stone, to part 7's first frame\n  --greetings      Continue through part 7 (Greetings), as a lighthouse in the dust, to part 8's first frame\n  --ending         Continue through part 8 (the ending), an old television switched off, to the demo's end\n  --original-symbols  Part 6 with the original symbols throughout, not the new sets in its middle\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --bench N        Headless: draw N frames from --seek at 60 a second and print the time each takes\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: step 1s, hold to scrub · Cmd+Left/Right: previous/next section\nHome/R: replay · End: logo · Tab: original/HD · C: split comparison · M: faithful/modern\nF: fullscreen · S: save PNG · L: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light · N: part 6's new or original symbols · D: part 4's water or polished floor\n1/2: part 4's water mirror weaker/stronger · 3/4: its swell lower/higher · 5/6: slower/faster · 7/8: shorter/longer · 9/0: fewer/more drops\nJ/K: part 7's beam faster/slower · U/I: its tilt toward the camera less/more · G/H: its brightness down/up · Z/X: its width narrower/wider\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6, --field through part 5, --dots through part 3, --plasma through part 4, --greetings through part 7, --ending through part 8."
                     );
                     std::process::exit(0);
                 }
@@ -366,7 +380,9 @@ fn run() -> Result<(), String> {
     let started = Instant::now();
     let data = Data::new(&o.data)?;
     let mut clip = if o.scroller {
-        let mut clip = if o.greetings {
+        let mut clip = if o.ending {
+            Clip::load_ending(&data, o.scroller_lighting)?
+        } else if o.greetings {
             Clip::load_greetings(&data, o.scroller_lighting)?
         } else if o.plasma {
             Clip::load_plasma(&data, o.scroller_lighting)?
@@ -911,9 +927,11 @@ fn run() -> Result<(), String> {
                     }
                 }
             };
-            // Parts 7, 4, 3, 5 and 6 show their own; the scroller's settings
+            // Parts 8, 7, 4, 3, 5 and 6 show their own; the scroller's settings
             // before them.
-            let part5 = if let (Some(g), Some(_)) = (&clip.greetings, clip.greetings_frame(time)) {
+            let part5 = if clip.ending_frame(time).is_some() {
+                Some(" · part 8 (the ending)".to_owned())
+            } else if let (Some(g), Some(_)) = (&clip.greetings, clip.greetings_frame(time)) {
                 // The turn and brightness as they are now.
                 let beam = g.controls(time).beam;
                 Some(format!(

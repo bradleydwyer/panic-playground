@@ -11,7 +11,8 @@ experiments with the following double scroller, part 6's interference
 rings as a pool of liquid chrome under neon, part 5's deep Mandelbrot
 zoom and molten Mandelbrot mountain, part 3's shade bobs and morphing
 dots as light painting, part 4's plasma as the light on a carved stone
-slab, and part 7's greetings as crystal letters in a lighthouse's beam. The idea is to keep the
+slab, part 7's greetings as crystal letters in a lighthouse's beam, and part 8's
+ending as an old television switched off. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
 letters that refract the stars behind them, a mirrored plate that reflects the
 warp, motion blur, a starfield that ramps into warp, a heated metal logo with
@@ -19,7 +20,7 @@ slowly moving surface reflections, and lighting that pulses and breathes with
 the music.
 
 This builds on the [Rust port of Panic](https://github.com/bradleydwyer/panic).
-It's a work in progress, with modern treatments for the intro, scroller, part 6, part 5, part 3, part 4 and part 7. The original
+It's a work in progress, with modern treatments for the intro, scroller, part 6, part 5, part 3, part 4, part 7 and part 8. The original
 player is included as a reference. The new letterforms and block motion are
 authored approximations, not recovered original 3D models.
 
@@ -397,6 +398,44 @@ positions, motion, words and timing are the port's. Faithful HD (**M**)
 shows the original's pixels at display resolution. The
 [renderer notes](rust/README.md#part-7-greetings) say what is read, what
 is interpreted and what is authored.
+
+### Part 8: the ending
+
+`--ending` carries on through part 8 to the end of the demo, with the
+music unbroken:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --ending --seek 241
+```
+
+Part 8 keeps part 7's monster on screen from 242.30 and waits for the music
+to reach order 35, at 246.36. Then it turns the black behind the monster
+white, shows a white frame, squeezes the picture toward the middle row over
+17 frames while lifting every colour toward white, keeps that row alone as
+a line, erases the line from both ends to one pixel, pulses that pixel
+twice and, a second later, the demo ends at 249.17. It reads as a monitor
+switching off. All of that is read from the port and checked against it
+frame by frame.
+
+The modern look makes it an old television:
+
+- Over the hold the monster, upscaled as part 7 leaves it, becomes slightly
+  an old TV's picture: the tube drawn back a little, its face gently curved
+  with rounded corners, the picture on the original's 200 lines as
+  scanlines, with a little halation, convergence error toward the sides and
+  a gentle vignette.
+- Then it is switched off on the original's stages and timing: the white
+  flashes the face, the picture squeezes and brightens as the beam's lines
+  crowd together, the line blooms and brightens as it shortens, and the dot
+  is a glowing point of phosphor following the original's pulse, its
+  afterglow decaying to black. What the beam lit a few frames before still
+  glows, fading. Nothing flickers.
+
+The tube, its curvature and scanlines, the phosphor's glow and persistence
+and the gains are authored; the pictures, palettes, stages and timing are
+the port's. Faithful HD (**M**) shows the original's pixels at display
+resolution. The [renderer notes](rust/README.md#part-8-the-ending) say what
+is read, what is interpreted and what is authored.
 
 ### Keys
 

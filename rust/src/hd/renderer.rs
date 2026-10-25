@@ -1,6 +1,8 @@
 use super::clip::{Clip, HEIGHT, ScrollerLighting, ScrollerPreview, WIDTH, plate_transform};
 use super::dots::{DotsBlock, DotsPreview, PART3_PHASE};
 use super::dots_render::DotsRenderer;
+use super::ending::{EndingBlock, EndingPreview, PART8_PHASE};
+use super::ending_render::EndingRenderer;
 use super::field::{FRAME_TAKES_PART6_FADE, FieldBlock, FieldPreview, PART5_PHASE};
 use super::field_render::FieldRenderer;
 use super::greetings::{GreetingsBlock, GreetingsPreview, PART7_PHASE};
@@ -77,6 +79,8 @@ struct Uniforms {
     plasma: PlasmaBlock,
     /// Part 7 (`greetings::GreetingsPreview::controls`); all zero before it.
     greetings: GreetingsBlock,
+    /// Part 8 (`ending::EndingPreview::controls`); all zero before it.
+    ending: EndingBlock,
 }
 
 /// The only WGSL declaration of [`Uniforms`] and its binding. [`wgsl`]
@@ -223,6 +227,31 @@ struct GreetingsBlock {
     // The beam's width (times the shader's spread).
     beam_late: vec4f,
 }
+// Part 8's controls (hd/ending.rs, EndingBlock), in u.ending.
+struct EndingBlock {
+    // Shown (1), seconds since its first frame, stage, part-8 frame.
+    part: vec4f,
+    // The frame shown, the next, the fraction toward it, its picture.
+    frame: vec4f,
+    // The CRT's presence, colour 0's level, the white frame, unused.
+    tube: vec4f,
+    // Compression, picture shown, line shown, fade to black.
+    beam: vec4f,
+    // The line's lit columns; its row's first and last with colour.
+    ends: vec4f,
+    // The dot's glow and afterglow, the white's afterglow; line colour.
+    glow: vec4f,
+    colour: vec4f,
+    // The trail's taps: band rows, band light, line light, line ends.
+    trail_rows: vec4f,
+    trail_band: vec4f,
+    trail_line: vec4f,
+    trail_left: vec4f,
+    trail_right: vec4f,
+    // Part-8 seconds: white, collapse, line, dot; end, last.
+    events: vec4f,
+    events_late: vec4f,
+}
 struct Controls {
     screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode
     state: vec4f,  // reference phase, sequence frame, door, temporal shape interpolation
@@ -292,6 +321,8 @@ struct Controls {
     plasma: PlasmaBlock,
     // Part 7 (Greetings), all zero before it; greetings_common.wgsl reads it.
     greetings: GreetingsBlock,
+    // Part 8 (the ending), all zero before it; ending_common.wgsl reads it.
+    ending: EndingBlock,
 }
 @group(0) @binding(0) var<uniform> u: Controls;
 ";
@@ -394,6 +425,9 @@ pub struct Renderer {
     /// Part 7's, likewise.
     greetings: Option<GreetingsRenderer>,
     part7: bool,
+    /// Part 8's, likewise.
+    ending: Option<EndingRenderer>,
+    part8: bool,
 }
 
 impl Renderer {
@@ -669,6 +703,8 @@ impl Renderer {
                 part4_handover: false,
                 greetings: None,
                 part7: false,
+                ending: None,
+                part8: false,
             },
             format,
         ))
@@ -689,6 +725,24 @@ impl Renderer {
         self.part3 = false;
         self.part4 = false;
         self.part7 = false;
+        self.part8 = false;
+        if let Some(ending) = &clip.ending {
+            if self.ending.as_ref().is_none_or(|r| !r.holds(ending)) {
+                self.ending = Some(EndingRenderer::new(
+                    &self.device,
+                    &self.queue,
+                    &self.uniform,
+                    self.output_format,
+                    ending,
+                ));
+            }
+            // Its first frame is part 7's last, which part 7 draws, so the
+            // hand-over is exact.
+            if ending.position(time) > 0.0 {
+                self.prepare_ending(clip, ending, view);
+                return;
+            }
+        }
         if let Some(greetings) = &clip.greetings {
             if self.greetings.as_ref().is_none_or(|r| !r.holds(greetings)) {
                 self.greetings = Some(GreetingsRenderer::new(
@@ -1311,6 +1365,58 @@ impl Renderer {
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
     }
 
+    /// Part 8: the shared controls for this moment, and the original frame
+    /// when a comparison shows it ([`EndingPreview::original_rgba`]).
+    fn prepare_ending(&mut self, clip: &Clip, ending: &EndingPreview, view: View) {
+        let (time, size, comparison) = (view.time, view.size, view.comparison);
+        self.part8 = true;
+        self.glyphs_active = false;
+        self.scroller = false;
+        self.tile_transition = false;
+        let j = ending.frame_at(time).unwrap_or(0);
+        if view.modern {
+            self.modern_renderer
+                .resize(&self.device, &self.uniform, &self.reference, size);
+        }
+        let index = ending.start + j;
+        if comparison != 0 {
+            self.ending
+                .as_mut()
+                .unwrap()
+                .show_original(&self.queue, ending, j);
+            if self.reference_index != Some(index) {
+                let extent = wgpu::Extent3d {
+                    width: WIDTH as u32,
+                    height: HEIGHT as u32,
+                    depth_or_array_layers: 1,
+                };
+                let layout = wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(WIDTH as u32 * 4),
+                    rows_per_image: Some(HEIGHT as u32),
+                };
+                let pixels = ending.original_rgba(j);
+                let target = self.reference.as_image_copy();
+                self.queue.write_texture(target, &pixels, layout, extent);
+                self.reference_index = Some(index);
+            }
+        }
+        let mut u = Uniforms::zeroed();
+        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
+        u.state = [PART8_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
+        let modern = if view.modern { 1.0 } else { 0.0 };
+        u.misc = [
+            4.0 / 3.0,
+            self.srgb as u8 as f32,
+            clip.logo_at as f32,
+            modern,
+        ];
+        u.audio = clip.audio_at(time).intro;
+        u.ending = ending.controls(time);
+        self.queue
+            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+    }
+
     /// Part 5: the shared controls for this moment, its palette and zoom
     /// buffers, the fluid brought to this moment, and the original frame
     /// when a comparison shows it, replayed on demand
@@ -1455,6 +1561,16 @@ impl Renderer {
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        if let (true, Some(ending)) = (self.part8, &self.ending) {
+            if self.modern_view {
+                ending.draw_crt(encoder, self.modern_renderer.hdr_target());
+                self.modern_renderer.post(encoder, view);
+            } else {
+                ending.draw_faithful(encoder, view);
+            }
+            self.draw_hud(encoder, view);
+            return;
+        }
         if let (true, Some(greetings)) = (self.part7, &self.greetings) {
             if self.modern_view {
                 greetings.draw_style(encoder, self.modern_renderer.hdr_target());
@@ -1953,6 +2069,14 @@ mod tests {
             "part 7 modern monster".into(),
             super::super::greetings_render::monster_source(),
         ));
+        modules.push((
+            "part 8 faithful HD".into(),
+            super::super::ending_render::faithful_source(),
+        ));
+        modules.push((
+            "part 8 modern".into(),
+            super::super::ending_render::crt_source(),
+        ));
         modules
     }
 
@@ -1999,6 +2123,9 @@ mod tests {
             "greetings_faithful.wgsl",
             "greetings_light.wgsl",
             "greetings_monster.wgsl",
+            "ending_common.wgsl",
+            "ending_faithful.wgsl",
+            "ending_crt.wgsl",
         ] {
             assert!(
                 files.iter().any(|f| f.0 == expected),
@@ -2806,9 +2933,10 @@ mod tests {
             dots,
             plasma,
             greetings,
+            ending,
         ];
         // A field missing from this list leaves bytes unaccounted for.
-        let last = size_of::<GreetingsBlock>();
+        let last = size_of::<EndingBlock>();
         assert_eq!(fields.last().unwrap().1 + last, size_of::<Uniforms>());
         fields
     }

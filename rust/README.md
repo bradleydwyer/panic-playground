@@ -69,8 +69,8 @@ the full importer.
 ## Experimental HD intro and scroller
 
 The `panic-hd` preview covers the opening through the PANIC logo, and with
-`--scroller`, `--rings`, `--field`, `--dots`, `--plasma` and `--greetings`
-continues through parts 2, 6, 5, 3, 4 and 7.
+`--scroller`, `--rings`, `--field`, `--dots`, `--plasma`, `--greetings` and
+`--ending` continues through parts 2, 6, 5, 3, 4, 7 and 8, to the demo's end.
 Build and run it from the repository root after importing your data:
 
 ```sh
@@ -1828,6 +1828,111 @@ machine in use), modern part 7 takes about 6 to 8 ms a frame, the
 photons, the air's marches, the crystal and the shutter included;
 faithful HD under 1 ms.
 
+### Part 8: the ending
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --ending --seek 241
+cargo run --release --locked --features hires --bin panic-hd -- --ending --faithful --seek 246
+```
+
+`--ending` continues past part 7 through part 8 to the demo's last frame,
+with the music unbroken. It implies `--greetings`. **M**, **Tab** and **C**
+work as in the earlier parts. Part 7's preview ends on part 8's first
+frame, the monster, at 242.30 seconds; part 8's preview begins on the same
+frame, and part 7's renderer draws it, so the hand-over is exact in both
+views. The clip ends at 249.17, on the demo's last frame, and holds there.
+
+Read from the port, and checked against the engine on every frame by an
+ignored test, part 8 runs like this (steps count from the first that reads
+the music at 35:00):
+
+- It keeps the first 16,000 bytes of each plane, MONSTER.U as part 7 left
+  it, and its palette, and clears the rest of video memory. It holds the
+  picture until the music reaches 35:00: the first step that reads it
+  comes at 246.36 and shows the monster again.
+- Step 2 turns colour 0 white, so the black behind the monster (and its
+  eye and mouth) turn white; step 3 shows the cleared memory, all white.
+- Steps 4 to 7 squeeze the picture with the CRTC: start 16000, stride 2 to
+  5 rows, and a line compare that starts the picture again from the top
+  memory below the middle, so every second to fifth row shows, centred.
+  Steps 8 to 20 copy every 7th, 8th, ... 44th row round row 100 instead
+  (the compressions 7, 8, 9, 10, 12, 14, 16, 19, 22, 26, 31, 37 and 44).
+  Each step also lifts every colour but 0 toward white,
+  `c' = s + c (63 - s) / 63`, by the step before's compression.
+- Step 21 copies the top row over rows 98, 99, 101 and 102, leaving source
+  row 100 as a line. Steps 22 to 67 write the top row's last four pixels
+  (held in the latches) over four columns at each end of the line, 3
+  columns further in each step, from columns 20 and 300; the monster's row
+  100 holds colour only in columns 44 to 268, so the line starts to
+  shorten at step 29.
+- Step 68 sets one pixel, (160, 100), to colour 1, white. Steps 69 to 128
+  set colour 1 to `31 cos(pi i / 20) + 32`, i = 0 to 59: white, dark, white,
+  dark, a pulse 40 steps long. Then the scene waits 70 more steps (the
+  original's one-second sleep) and the demo ends.
+
+The preview keeps each frame's step, its palette and the distinct pictures
+the frames show (`Ending::hd_frame`), and reads the compression each step
+shows and the line's ends as each step erases them from the scene
+(`ending::hd_compression`, `hd_line_ends`); a default test checks those
+against the scene stepped on an invented picture.
+
+Observed in a DOSBox capture of the original: the white behind the
+monster shows for two or three frames, no whole white frame appears, and
+the first squeeze shown keeps every third row. Why is not established; a
+guess is the timing of the CRTC and palette writes against the retrace,
+which the port groups at each retrace wait. The rest of the stages and
+their timing match the port's: the dot is set 66 frames after the white in
+both, and the exit to DOS comes 194 frames after it, where the port's demo
+ends 196 frames after it.
+
+Interpretation: the stages read as a monitor switching off. Nothing in
+the code names them.
+
+Faithful HD shows the original's look at display resolution, in the 4:3
+frame: every pixel's colour index is the original's on every frame, upscaled
+smoothly as part 7's monster is, the palette moving between frames as the
+original's changes (the lift toward white, the dot's pulse).
+
+The modern view is an old television, switched off. All of it is authored,
+on the port's pictures, palettes, stages and timing:
+
+- The hold. From part 7's last frame the picture becomes, slightly, an old
+  television's over the first 2.6 seconds of the 4.1-second hold: the tube
+  drawn back to 92% of the height, its face gently curved, each axis
+  pulled in by the square of the other, with rounded corners; the picture
+  on the original's 200 lines as scanlines, each line's spot spread more
+  as the line is brighter; a little halation of a blurred copy, convergence
+  error of up to 0.4 columns toward the sides, a gentle vignette, and the
+  face a shade above black so it shows against the room.
+- The white. The white behind the monster and the white frame flash the
+  face, and their light lingers on the phosphor for a frame or two.
+- The squeeze. The picture squeezes toward row 100 with the original's
+  compression, eased between its steps; its colours are the original's
+  palettes, so they lift toward white as the original's do, and its light
+  rises with the compression to the power 0.35 as the beam's lines crowd
+  together, so the band brightens and blooms. A screen row gathers the
+  source rows the beam's spot spans.
+- The line keeps the original's row and its ends as they are erased,
+  brightening as it shortens, with a warm halo.
+- The dot is a glowing point of phosphor: its glow follows the original's
+  colour 1, so it pulses as the original does, and a slower afterglow,
+  a little greener, gathers while it pulses and decays through the last
+  second; everything fades to black over the last third of a second.
+- The phosphor's persistence: what the beam lit a few frames before still
+  glows, fading, so the squeeze and the line leave short trails.
+
+Nothing flickers: every value moves smoothly between the original's
+frames. Everything is a function of the clip's time; an ignored test checks
+that part 8's first frame is part 7's last, byte for byte, that its own
+drawing a moment later is within two steps of a channel of it, that frames
+drawn after others match a new renderer's and that the end is black. The
+look's constants are at the top of `ending_crt.wgsl`, its timing in
+`hd/ending.rs`.
+
+At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (150 frames,
+on a machine in use), modern part 8 takes about 1.5 ms a frame over the
+hold and under 1 ms once the picture is gone; faithful HD under 1 ms.
+
 ### Options and tests
 
 `--fps` starts with the frame-rate counter in the top-left corner, showing
@@ -1864,12 +1969,14 @@ projection heights, the transition's complete reference frames, audio and
 tile schedule, the scroller's letters and positions against every part-2
 frame, part 6's state, replayed frames and PCM against every part-6 frame,
 part 5's against every part-5 frame, part 3's against every part-3
-frame, part 4's against every part-4 frame and part 7's against every
-part-7 frame; one bakes the frame's shape from PSTART and checks what it measures.
+frame, part 4's against every part-4 frame, part 7's against every
+part-7 frame and part 8's against every part-8 frame; one bakes the frame's
+shape from PSTART and checks what it measures.
 Two more need a GPU: one checks that part 5's smoke reaches the same state
 however a moment is reached (it re-simulates from the start at each of
-nine moments, a minute and a half), the others that part 3's, part 4's and
-part 7's frames are the same however they are reached:
+nine moments, a minute and a half), the others that part 3's, part 4's,
+part 7's and part 8's frames are the same however they are reached (and
+that part 8 starts on part 7's last frame):
 
 ```sh
 cargo test --release --locked --features hires
@@ -1892,6 +1999,9 @@ PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --featu
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part7s_letters_are_the_texts_in_order -- --ignored
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part7s_sections_start_where_its_labels_change -- --ignored --nocapture
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part7_frames_are_the_same_however_reached -- --ignored
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part8_state_matches_every_engine_frame -- --ignored --nocapture
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part8s_sections_start_where_its_labels_change -- --ignored --nocapture
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part8_continues_part7_and_its_frames_are_the_same_however_reached -- --ignored
 ```
 
 `--bench N` draws N frames from `--seek`, a sixtieth of a second apart,

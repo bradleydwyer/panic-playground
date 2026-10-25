@@ -71,6 +71,11 @@ RESEARCH_FILES = {
     'rust/src/hd/greetings_faithful.wgsl', 'rust/src/hd/greetings_light.wgsl',
     'rust/src/hd/greetings_monster.wgsl',
     'rust/src/hd/greetings_letters.txt',
+    # Part 8: its state and the switch-off's timeline, its GPU side, the
+    # shared shader code, faithful HD and the modern television.
+    'rust/src/hd/ending.rs', 'rust/src/hd/ending_render.rs',
+    'rust/src/hd/ending_common.wgsl', 'rust/src/hd/ending_faithful.wgsl',
+    'rust/src/hd/ending_crt.wgsl',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
     'rust/src/scenes/scroller.rs', 'rust/src/scenes/field.rs',
     'rust/src/scenes/rings.rs', 'rust/src/scenes/dots.rs',
