@@ -25,6 +25,10 @@ pub const SHADE_SAMPLES: u32 = 64;
 /// Iterations the faithful shade marks cover: the shown frame's 16 and the
 /// next frame's newest.
 const SHADE_SLOTS: u32 = 17;
+/// The fog's light grid and noise, as dots_light.wgsl has them
+/// (FOG_COLUMNS, FOG_ROWS, FOG_SLICES and NOISE_SIZE).
+pub const FOG_GRID: [u32; 3] = [96, 54, 48];
+pub const NOISE_SIZE: u32 = 128;
 
 /// Faithful HD's module: the shared controls, dots_common.wgsl and
 /// dots_faithful.wgsl.
@@ -78,6 +82,8 @@ pub(super) struct DotsRenderer {
     output: TextureFormat,
     targets: Option<Targets>,
     samples: ComputePipeline,
+    fog_bind: BindGroup,
+    fog_light: ComputePipeline,
     trails: RenderPipeline,
     shades: RenderPipeline,
     haze: RenderPipeline,
@@ -156,6 +162,41 @@ fn sampled() -> BindingType {
         view_dimension: TextureViewDimension::D2,
         multisampled: false,
     }
+}
+
+fn volume() -> BindingType {
+    BindingType::Texture {
+        sample_type: TextureSampleType::Float { filterable: true },
+        view_dimension: TextureViewDimension::D3,
+        multisampled: false,
+    }
+}
+
+fn written_volume() -> BindingType {
+    BindingType::StorageTexture {
+        access: StorageTextureAccess::WriteOnly,
+        format: TextureFormat::Rgba16Float,
+        view_dimension: TextureViewDimension::D3,
+    }
+}
+
+fn volume_texture(device: &Device, label: &str, [w, h, d]: [u32; 3]) -> TextureView {
+    device
+        .create_texture(&TextureDescriptor {
+            label: Some(label),
+            size: Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: d,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D3,
+            format: TextureFormat::Rgba16Float,
+            usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+        .create_view(&Default::default())
 }
 
 fn storage(read_only: bool) -> BindingType {
@@ -336,12 +377,43 @@ impl DotsRenderer {
             entries: &[entry(1, ShaderStages::COMPUTE, storage(false))],
         });
         let read_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("Part 3 samples, read"),
-            entries: &[entry(
-                2,
-                ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                storage(true),
-            )],
+            label: Some("Part 3 samples and fog, read"),
+            entries: &[
+                entry(
+                    2,
+                    ShaderStages::VERTEX | ShaderStages::FRAGMENT,
+                    storage(true),
+                ),
+                entry(3, ShaderStages::FRAGMENT, volume()),
+                entry(4, ShaderStages::FRAGMENT, volume()),
+                entry(
+                    5,
+                    ShaderStages::FRAGMENT,
+                    BindingType::Sampler(SamplerBindingType::Filtering),
+                ),
+            ],
+        });
+        let fog_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("Part 3 fog light, written"),
+            entries: &[
+                entry(2, ShaderStages::COMPUTE, storage(true)),
+                entry(6, ShaderStages::COMPUTE, written_volume()),
+            ],
+        });
+        let noise_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("Part 3 fog noise, written"),
+            entries: &[entry(7, ShaderStages::COMPUTE, written_volume())],
+        });
+        let fog_light = volume_texture(device, "Part 3 fog light", FOG_GRID);
+        let fog_noise = volume_texture(device, "Part 3 fog noise", [NOISE_SIZE; 3]);
+        let repeat = device.create_sampler(&SamplerDescriptor {
+            label: Some("Part 3 fog noise"),
+            address_mode_u: AddressMode::Repeat,
+            address_mode_v: AddressMode::Repeat,
+            address_mode_w: AddressMode::Repeat,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            ..Default::default()
         });
         let samples_write = device.create_bind_group(&BindGroupDescriptor {
             label: Some("Part 3 samples, written"),
@@ -352,11 +424,47 @@ impl DotsRenderer {
             }],
         });
         let samples_read = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("Part 3 samples, read"),
+            label: Some("Part 3 samples and fog, read"),
             layout: &read_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 2,
+                    resource: samples.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::TextureView(&fog_light),
+                },
+                BindGroupEntry {
+                    binding: 4,
+                    resource: BindingResource::TextureView(&fog_noise),
+                },
+                BindGroupEntry {
+                    binding: 5,
+                    resource: BindingResource::Sampler(&repeat),
+                },
+            ],
+        });
+        let fog_bind = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Part 3 fog light, written"),
+            layout: &fog_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 2,
+                    resource: samples.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: BindingResource::TextureView(&fog_light),
+                },
+            ],
+        });
+        let noise_bind = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Part 3 fog noise, written"),
+            layout: &noise_layout,
             entries: &[BindGroupEntry {
-                binding: 2,
-                resource: samples.as_entire_binding(),
+                binding: 7,
+                resource: BindingResource::TextureView(&fog_noise),
             }],
         });
         let images_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -449,14 +557,41 @@ impl DotsRenderer {
             "dots_style",
             &[target(hdr, None)],
         );
-        let samples_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("Part 3 samples"),
-            layout: Some(&layout(&[&data_layout, &write_layout])),
-            module: &light_module,
-            entry_point: Some("dots_samples"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let compute = |label, groups: &[&BindGroupLayout], entry_point| {
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout(groups)),
+                module: &light_module,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let samples_pipeline = compute(
+            "Part 3 samples",
+            &[&data_layout, &write_layout],
+            "dots_samples",
+        );
+        let fog_light_pipeline = compute(
+            "Part 3 fog light",
+            &[&data_layout, &fog_layout],
+            "dots_fog_light",
+        );
+        // The fog's noise, made once.
+        let noise_pipeline = compute(
+            "Part 3 fog noise",
+            &[&data_layout, &noise_layout],
+            "dots_fog_noise",
+        );
+        let mut encoder = device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&noise_pipeline);
+            pass.set_bind_group(0, &data, &[]);
+            pass.set_bind_group(1, &noise_bind, &[]);
+            pass.dispatch_workgroups(NOISE_SIZE / 4, NOISE_SIZE / 4, NOISE_SIZE / 4);
+        }
+        queue.submit([encoder.finish()]);
         let marking = layout(&[&data_layout]);
         let marks_shade = pipeline(
             "Part 3 faithful shade discs",
@@ -491,6 +626,8 @@ impl DotsRenderer {
             output,
             targets: None,
             samples: samples_pipeline,
+            fog_bind,
+            fog_light: fog_light_pipeline,
             trails,
             shades,
             haze,
@@ -597,6 +734,10 @@ impl DotsRenderer {
             pass.set_bind_group(0, &self.data, &[]);
             pass.set_bind_group(1, &self.samples_write, &[]);
             pass.dispatch_workgroups(sample_count().div_ceil(64), 1, 1);
+            pass.set_pipeline(&self.fog_light);
+            pass.set_bind_group(1, &self.fog_bind, &[]);
+            let [w, h, d] = FOG_GRID;
+            pass.dispatch_workgroups(w.div_ceil(4), h.div_ceil(4), d.div_ceil(4));
         }
         {
             let mut pass = Self::pass(encoder, "Part 3 light painted", &[&targets.painted]);

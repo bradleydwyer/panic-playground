@@ -281,8 +281,9 @@ The modern look is light painting, a long exposure in a dark, hazy space:
 - The dots become 512 lights exposed continuously along their paths for as
   long as the original's echoes last, then fading in a faint afterglow,
   through a lens focused on the object, so near and far lights open into
-  discs. The haze glows round them, they breathe with the bass, and each
-  order of the tune sends a plane of light sweeping through the object.
+  discs shaped by a seven-bladed diaphragm. A haze and drifting fog glow
+  round them, they breathe with the bass, and each order of the tune sends
+  a plane of light sweeping through the object.
 - The landed box's trails collapse into its lights, which flare up in the
   second before part 4's white slab takes over.
 

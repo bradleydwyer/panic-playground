@@ -58,9 +58,32 @@ const YOUNG=vec3f(.42,.62,1.0);
 const OLD=vec3f(.035,.11,1.0);
 const AGE_COOL=5.0;
 // The lens: its aperture in camera units (the circle of confusion is
-// APERTURE * 256 * |1/z - 1/focus| / 2 rows) and the largest circle.
+// APERTURE * 256 * |1/z - 1/focus| / 2 rows) and the largest circle. Its
+// diaphragm has BLADES straight blades, turned by BLADE_TURN radians,
+// their edges APOTHEM of the circle's radius from its centre and the
+// corners rounded by a circle ROUNDING of it; toward the edges of the
+// picture the barrel clips it to a cat's eye, a disc of the same size
+// shifted CAT_EYE of the radius for each 100 rows from the centre.
+// Discs of light smaller than SHAPED pixels are drawn round, as are the
+// trails older than SHAPED_AGE frames, too faint for the shape to show.
 const APERTURE=36.0;
 const COC_MAX=5.0;
+const BLADES=7u;
+const BLADE_TURN=.3;
+const APOTHEM=.97;
+const ROUNDING=1.05;
+const CAT_EYE=.32;
+const SHAPED=3.0;
+const SHAPED_AGE=2.5;
+// The blades' outward normals, BLADE_TURN + 2 pi k / 7.
+const BLADE_NORMALS=array<vec2f,7>(
+    vec2f(.9553365,.2955202),
+    vec2f(.3645956,.9311660),
+    vec2f(-.5006933,.8656248),
+    vec2f(-.9889498,.1482505),
+    vec2f(-.7325070,-.6807595),
+    vec2f(.0755285,-.9971436),
+    vec2f(.8266896,-.5626583));
 // The music: the breathing (power at no bass and its rise with it) and the
 // waves, planes of light that sweep through the object (where they start
 // and their speed in object units a second, their width, gain and how long
@@ -69,7 +92,7 @@ const BREATH=vec2f(.8,.4);
 const WAVE_START=-330.0;
 const WAVE_SPEED=1300.0;
 const WAVE_WIDTH=38.0;
-const WAVE_GAIN=7.0;
+const WAVE_GAIN=4.5;
 const WAVE_LIFE=.5;
 // The haze: its scattering, the closest a light's glow is resolved, how far
 // light carries in it (camera units) and its tint.
@@ -77,6 +100,29 @@ const HAZE=.0045;
 const HAZE_NEAR=6.0;
 const HAZE_REACH=90.0;
 const HAZE_TINT=vec3f(.45,.65,1.0);
+// The fog in the haze: drifting, slowly changing wisps lit by every light.
+// The light is gathered in a grid of FOG_COLUMNS by FOG_ROWS cells across
+// the drawable and FOG_SLICES deep, from FOG_NEAR to FOG_FAR (camera
+// units, spaced evenly in log depth); each pixel marches FOG_STEPS steps
+// through the fog. The fog's noise repeats every FOG_TILE units; FOG_LEVEL
+// and FOG_SOFT shape its wisps, FOG_WARP how far they are twisted, and the
+// drifts (units a second) move them. FOG_REACH is how far a light carries
+// in it, FOG_SCATTER how much it scatters.
+const FOG_COLUMNS=96u;
+const FOG_ROWS=54u;
+const FOG_SLICES=48u;
+const FOG_NEAR=180.0;
+const FOG_FAR=7200.0;
+const FOG_STEPS=48u;
+const FOG_TILE=1400.0;
+const FOG_LEVEL=.5;
+const FOG_SOFT=.22;
+const FOG_WARP=260.0;
+const FOG_DRIFT=vec3f(18.0,-11.0,9.0);
+const FOG_WARP_DRIFT=vec3f(-8.0,6.0,-13.0);
+const FOG_REACH=260.0;
+const FOG_SCATTER=.035;
+const NOISE_SIZE=128u;
 // The shade bobs: samples along each tip's 16 iterations, the glow's radius
 // in rows (the disc's area), its depth for the haze, how the film takes
 // the exposure past the palette's white (count 25) and the fibres.
@@ -110,6 +156,14 @@ const SLAB_HANDOVER=.16;
 struct Sample { a:vec4f, b:vec4f }
 @group(1) @binding(1) var<storage,read_write> samples_out:array<Sample>;
 @group(1) @binding(2) var<storage,read> samples:array<Sample>;
+// The fog's light grid (rgb) and its noise (four tileable fbm fields), each
+// read through a sampler (the noise repeating) and written by its compute
+// step.
+@group(1) @binding(3) var fog_light:texture_3d<f32>;
+@group(1) @binding(4) var fog_noise:texture_3d<f32>;
+@group(1) @binding(5) var repeat:sampler;
+@group(1) @binding(6) var fog_light_out:texture_storage_3d<rgba16float,write>;
+@group(1) @binding(7) var fog_noise_out:texture_storage_3d<rgba16float,write>;
 // The composite's inputs: part 5's modern view at the zoom's magnification
 // (HDR), the light painted (rgb, and the shade count in a) and the haze
 // (half resolution).
@@ -182,10 +236,12 @@ fn dot_sample(n:u32,i:u32,k:u32) {
     let r0=POINT_RADIUS*(1.0+FLARE_SWELL*fl);
     let radius=max(sqrt(r0*r0+coc*coc),.7*pixel_rows());
     let end=1.0-smoothstep(.7,1.0,age/sample_age(SAMPLES));
-    let power=POWER*(BREATH.x+BREATH.y*low_at(age))*(1.0+waves(obj,age))*(1.0+FLARE_GAIN*fl)*end;
+    // The waves light the lights and their trails, not the air.
+    let steady=POWER*(BREATH.x+BREATH.y*low_at(age))*(1.0+FLARE_GAIN*fl)*end;
+    let power=steady*(1.0+waves(obj,age));
     samples_out[n]=Sample(vec4f(q,radius,c.z),vec4f(power,exposure_to(age),age,select(0.0,1.0,alive)));
     if k==0u {
-        samples_out[LIGHTS_BASE+i]=Sample(vec4f(c,select(0.0,power,alive)),vec4f(0));
+        samples_out[LIGHTS_BASE+i]=Sample(vec4f(c,select(0.0,steady,alive)),vec4f(0));
     }
 }
 fn shade_sample(n:u32,t:u32,k:u32) {
@@ -225,9 +281,23 @@ struct Swept {
     @location(0) local:vec2f,
     @location(1) shape:vec2f,
     @location(2) light:vec4f,
+    // The lens's shape, when it shows (0 for a round disc): the segment's
+    // direction (a unit vector) and the barrel's offset (rows, along the
+    // segment and across it).
+    @location(3) lens:vec4f,
 }
-fn no_sweep()->Swept {return Swept(vec4f(-2,-2,0,1),vec2f(0),vec2f(0,1),vec4f(0));}
-fn swept_quad(vi:u32,a:vec2f,b:vec2f,r:f32,light:vec4f)->Swept {
+fn no_sweep()->Swept {return Swept(vec4f(-2,-2,0,1),vec2f(0),vec2f(0,1),vec4f(0),vec4f(0));}
+// The lens's shape for a disc of light of radius r whose segment runs from
+// a to b: none for a small disc, else the diaphragm turned into the
+// segment's frame and the barrel's offset, toward the picture's centre.
+fn lens_shape(a:vec2f,b:vec2f,r:f32)->vec4f {
+    if r<SHAPED*pixel_rows() {return vec4f(0);}
+    let d=b-a;
+    let axis=select(vec2f(1,0),normalize(d),length(d)>1e-5);
+    let barrel=-.5*(a+b)/100.0*CAT_EYE*r;
+    return vec4f(axis,dot(barrel,axis),dot(barrel,vec2f(-axis.y,axis.x)));
+}
+fn swept_quad(vi:u32,a:vec2f,b:vec2f,r:f32,light:vec4f,lens:vec4f)->Swept {
     let px=pixel_rows();
     let d=b-a;
     let l=length(d);
@@ -237,16 +307,58 @@ fn swept_quad(vi:u32,a:vec2f,b:vec2f,r:f32,light:vec4f)->Swept {
     let corner=array<vec2f,6>(vec2f(0,-1),vec2f(1,-1),vec2f(1,1),vec2f(0,-1),vec2f(1,1),vec2f(0,1))[vi];
     let along=mix(-m,l+m,corner.x);
     let across=corner.y*m;
-    return Swept(clip_of_scene(a+axis*along+perp*across),vec2f(along,across),vec2f(l,r),light);
+    return Swept(clip_of_scene(a+axis*along+perp*across),vec2f(along,across),vec2f(l,r),light,lens);
+}
+// The offsets w along the segment for which (w, v) is within the lens's
+// shape of radius r: the diaphragm, rounded, and the barrel's disc. Empty
+// when x > y.
+fn aperture_span(v:f32,r:f32,lens:vec4f)->vec2f {
+    let round=r*ROUNDING;
+    let k=round*round-v*v;
+    let dv=v-lens.w;
+    let kb=r*r-dv*dv;
+    if k<0.0 || kb<0.0 {return vec2f(1,-1);}
+    var lo=max(-sqrt(k),lens.z-sqrt(kb));
+    var hi=min(sqrt(k),lens.z+sqrt(kb));
+    let h=r*APOTHEM;
+    for(var i=0u;i<BLADES;i++) {
+        // The blade's normal in the segment's frame.
+        let b=BLADE_NORMALS[i];
+        let n=vec2f(b.x*lens.x+b.y*lens.y,b.y*lens.x-b.x*lens.y);
+        let rhs=h-v*n.y;
+        if abs(n.x)<1e-5 {
+            if rhs<0.0 {return vec2f(1,-1);}
+            continue;
+        }
+        if n.x>0.0 {hi=min(hi,rhs/n.x);} else {lo=max(lo,rhs/n.x);}
+    }
+    return vec2f(lo,hi);
+}
+// The share of a segment of length l within the lens's shape of the
+// fragment at (u, v).
+fn shaped_share(u:f32,v:f32,l:f32,r:f32,lens:vec4f)->f32 {
+    let span=aperture_span(v,r,lens);
+    if span.x>span.y {return 0.0;}
+    if l<=1e-4 {return select(0.0,1.0,u>=span.x && u<=span.y);}
+    return max(min(u-span.x,l)-max(u-span.y,0.0),0.0)/l;
 }
 // Light in rows^-2 per unit of the swept light: the share of the segment
-// within r of the fragment (exact for a uniform disc at constant speed),
-// its edge antialiased.
+// within the lens's disc of the fragment (exact for a uniform disc at
+// constant speed), its edge antialiased; for a large disc, the lens's own
+// shape, sampled four times across the pixel.
 @fragment fn swept(s:Swept)->@location(0) vec4f {
     let px=pixel_rows();
     let l=s.shape.x;
-    let ro=s.shape.y+.5*px;
     let u=s.local.x;
+    if dot(s.lens.xy,s.lens.xy)>.5 {
+        var share=0.0;
+        for(var k=0u;k<4u;k++) {
+            let o=(vec2f(f32(k&1u),f32(k>>1u))-.5)*.5*px;
+            share+=shaped_share(u+o.x,s.local.y+o.y,l,s.shape.y,s.lens);
+        }
+        return s.light*share/4.0;
+    }
+    let ro=s.shape.y+.5*px;
     let v=abs(s.local.y);
     let c=sqrt(max(ro*ro-v*v,0.0));
     var share=select(0.0,1.0,abs(u)<c);
@@ -269,7 +381,8 @@ fn swept_quad(vi:u32,a:vec2f,b:vec2f,r:f32,light:vec4f)->Swept {
     let r=.5*(a.a.z+b.a.z);
     let age=.5*(a.b.z+b.b.z);
     let colour=mix(OLD,YOUNG,exp(-age/AGE_COOL));
-    return swept_quad(vi,a.a.xy,b.a.xy,r,vec4f(colour*energy/(PI*r*r),0));
+    let lens=select(vec4f(0),lens_shape(a.a.xy,b.a.xy,r),a.b.z<SHAPED_AGE);
+    return swept_quad(vi,a.a.xy,b.a.xy,r,vec4f(colour*energy/(PI*r*r),0),lens);
 }
 // Segment k of shade tip t: its glow, counted in a (one count for each
 // iteration's worth swept over a point), and from SHADE_DISCS *
@@ -290,9 +403,9 @@ fn swept_quad(vi:u32,a:vec2f,b:vec2f,r:f32,light:vec4f)->Swept {
         let r=max(FIBRE_RADIUS,.7*pixel_rows());
         let age=.5*(a.b.z+b.b.z);
         let light=FIBRE_LIGHT*swept*exp(-age/FIBRE_DECAY)*(1.0+3.0*exp(-age/.6))/(PI*r*r);
-        return swept_quad(vi,a.a.xy,b.a.xy,r,vec4f(light,0));
+        return swept_quad(vi,a.a.xy,b.a.xy,r,vec4f(light,0),vec4f(0));
     }
-    return swept_quad(vi,a.a.xy,b.a.xy,a.a.z,vec4f(0,0,0,swept));
+    return swept_quad(vi,a.a.xy,b.a.xy,a.a.z,vec4f(0,0,0,swept),vec4f(0));
 }
 
 // ---- The haze ----------------------------------------------------------------------------
@@ -306,6 +419,117 @@ fn airlight(p:vec3f,d:vec3f)->f32 {
     let t0=dot(p,d);
     let h=sqrt(max(dot(p,p)-t0*t0,HAZE_NEAR*HAZE_NEAR));
     return (.5*PI+atan(t0/h))/h*exp(-h/HAZE_REACH);
+}
+// ---- The fog ------------------------------------------------------------------------------
+// A cell's depth in the grid (0..1) at camera depth z, and back.
+fn fog_slice(z:f32)->f32 {return log(z/FOG_NEAR)/log(FOG_FAR/FOG_NEAR);}
+fn fog_depth(w:f32)->f32 {return FOG_NEAR*pow(FOG_FAR/FOG_NEAR,w);}
+// Camera-space point at depth z on the ray through drawable point uv.
+fn fog_point(uv:vec2f,z:f32)->vec3f {
+    let s=source_of_scene(scene_of_uv(uv));
+    return vec3f((s-vec2f(160.0,100.0))*z/FOCAL,z);
+}
+// The light every lamp sends to cell id, softened over the cell's size,
+// dimmed over FOG_REACH.
+@compute @workgroup_size(4,4,4) fn dots_fog_light(@builtin(global_invocation_id) id:vec3u) {
+    dots_begin();
+    if any(id>=vec3u(FOG_COLUMNS,FOG_ROWS,FOG_SLICES)) {return;}
+    let uv=(vec2f(id.xy)+.5)/vec2f(f32(FOG_COLUMNS),f32(FOG_ROWS));
+    let z=fog_depth((f32(id.z)+.5)/f32(FOG_SLICES));
+    let p=fog_point(uv,z);
+    let size=z*200.0/(f32(FOG_ROWS)*FOCAL);
+    var sum=vec3f(0);
+    if dots_shown() {
+        for(var i=0u;i<POINTS;i++) {
+            let l=samples[LIGHTS_BASE+i].a;
+            if l.w<=0.0 {continue;}
+            let d=l.xyz-p;
+            let dd=dot(d,d);
+            sum+=YOUNG*l.w*exp(-sqrt(dd)/FOG_REACH)/(dd+size*size);
+        }
+    }
+    if shades_shown() {
+        for(var t=0u;t<SHADE_DISCS;t++) {
+            let l=samples[LIGHTS_BASE+POINTS+t].a;
+            if l.w<=0.0 {continue;}
+            let d=l.xyz-p;
+            let dd=dot(d,d);
+            sum+=vec3f(.3,.45,1.0)*l.w*exp(-sqrt(dd)/FOG_REACH)/(dd+size*size);
+        }
+    }
+    textureStore(fog_light_out,id,vec4f(min(sum,vec3f(6e4)),1));
+}
+// Tileable gradient noise of period `period` cells over the unit cube.
+fn noise_hash(p:vec3u,seed:u32)->u32 {
+    var h=p.x*0x8da6b343u^p.y*0xd8163841u^p.z*0xcb1ab31fu^seed*0x9e3779b9u;
+    h^=h>>16u;h*=0x7feb352du;h^=h>>15u;h*=0x846ca68bu;h^=h>>16u;
+    return h;
+}
+fn noise_gradient(h:u32)->vec3f {
+    let a=f32(h&0xffffu)/65535.0*2.0*PI;
+    let z=f32(h>>16u)/65535.0*2.0-1.0;
+    return vec3f(sqrt(1.0-z*z)*vec2f(cos(a),sin(a)),z);
+}
+fn tile_noise(x:vec3f,period:u32,seed:u32)->f32 {
+    let q=x*f32(period);
+    let i=vec3i(floor(q));
+    let f=q-floor(q);
+    let u=f*f*f*(f*(f*6.0-15.0)+10.0);
+    var n=0.0;
+    for(var c=0u;c<8u;c++) {
+        let o=vec3i(i32(c&1u),i32((c>>1u)&1u),i32((c>>2u)&1u));
+        let cell=vec3u((i+o+vec3i(i32(period)))%vec3i(i32(period)));
+        let g=noise_gradient(noise_hash(cell,seed));
+        let w=select(1.0-u,u,o==vec3i(1));
+        n+=dot(g,f-vec3f(o))*w.x*w.y*w.z;
+    }
+    return n;
+}
+// Four fbm fields, one a channel, of three octaves each, 0..1.
+@compute @workgroup_size(4,4,4) fn dots_fog_noise(@builtin(global_invocation_id) id:vec3u) {
+    if any(id>=vec3u(NOISE_SIZE)) {return;}
+    let x=(vec3f(id)+.5)/f32(NOISE_SIZE);
+    var v=vec4f(0);
+    for(var c=0u;c<4u;c++) {
+        var n=0.0;
+        var a=.6;
+        for(var o=0u;o<3u;o++) {
+            n+=a*tile_noise(x,4u<<o,c*7u+o);
+            a*=.5;
+        }
+        v[c]=.5+.75*n;
+    }
+    textureStore(fog_noise_out,id,v);
+}
+// The fog's density at camera point p, 0..1: wisps of the noise twisted by
+// a second noise, drifting.
+fn fog_density(p:vec3f,t:f32)->f32 {
+    let q=p/FOG_TILE;
+    let warp=textureSampleLevel(fog_noise,repeat,q*1.6+FOG_WARP_DRIFT*t/FOG_TILE,0.0).gba*2.0-1.0;
+    let n=textureSampleLevel(fog_noise,repeat,q+(FOG_DRIFT*t+FOG_WARP*warp)/FOG_TILE,0.0).r;
+    return smoothstep(FOG_LEVEL,FOG_LEVEL+FOG_SOFT,n);
+}
+// Light scattered towards the camera along the ray through uv by the fog,
+// marched in log depth, the steps offset per pixel.
+fn fog_scatter(uv:vec2f,pixel:vec2f)->vec3f {
+    let s=source_of_scene(scene_of_uv(uv));
+    let stretch=length(vec3f((s-vec2f(160.0,100.0))/FOCAL,1.0));
+    // Interleaved gradient noise, which the composite's 3 x 3 filter
+    // evens out.
+    let jitter=fract(52.9829189*fract(dot(floor(pixel),vec2f(.06711056,.00583715))));
+    let t=dots_seconds();
+    var sum=vec3f(0);
+    for(var k=0u;k<FOG_STEPS;k++) {
+        let w0=(f32(k)+jitter)/f32(FOG_STEPS);
+        let z=fog_depth(w0);
+        let dz=z*log(FOG_FAR/FOG_NEAR)/f32(FOG_STEPS);
+        let p=vec3f((s-vec2f(160.0,100.0))*z/FOCAL,z);
+        let density=fog_density(p,t);
+        if density<=0.0 {continue;}
+        let light=textureSampleLevel(fog_light,linear,vec3f(uv,w0),0.0).rgb;
+        sum+=light*density*dz*stretch;
+    }
+    return FOG_SCATTER*sum;
 }
 @fragment fn dots_haze(v:Vertex)->@location(0) vec4f {
     dots_begin();
@@ -323,7 +547,9 @@ fn airlight(p:vec3f,d:vec3f)->f32 {
             if l.w>0.0 {sum+=l.w*airlight(l.xyz,d);}
         }
     }
-    return vec4f(HAZE_TINT*HAZE*sum,1);
+    var fog=vec3f(0);
+    if dots_shown() || shades_shown() {fog=fog_scatter(v.uv,v.position.xy);}
+    return vec4f(HAZE_TINT*HAZE*sum+fog,1);
 }
 
 // ---- The composite --------------------------------------------------------------------------
@@ -366,7 +592,16 @@ fn shade_light(count:f32)->vec3f {
     var c=vec3f(0);
     if dc.zoom.w>.5 && dots_phase()<3.5 {c=zoom_underlay(v.uv,pixel);}
     let p=textureLoad(painted,pixel,0);
-    var light=p.rgb+shade_light(p.a)+textureSampleLevel(haze,linear,v.uv,0.0).rgb;
+    // The haze at half resolution, softened over its steps' offsets.
+    let texel=1.0/vec2f(textureDimensions(haze));
+    var air=vec3f(0);
+    for(var y=-1;y<=1;y++) {
+        for(var x=-1;x<=1;x++) {
+            let w=select(.5,1.0,x==0)*select(.5,1.0,y==0);
+            air+=w*textureSampleLevel(haze,linear,v.uv+vec2f(f32(x),f32(y))*texel,0.0).rgb;
+        }
+    }
+    var light=p.rgb+shade_light(p.a)+air/4.0;
     if slab_shown() {
         let since=max(dc.end.w,0.0);
         light*=exp(-since/SLAB_HANDOVER);

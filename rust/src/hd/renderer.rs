@@ -1939,7 +1939,9 @@ mod tests {
     #[test]
     fn part3_shaders_repeat_the_rust_constants() {
         use super::super::dots::{ECHO_SPACING, ECHOES, POINTS, SHADE_DISCS, SHADE_KEPT};
-        use super::super::dots_render::{AFTER_SAMPLES, SHADE_SAMPLES, TRAIL_SAMPLES};
+        use super::super::dots_render::{
+            AFTER_SAMPLES, FOG_GRID, NOISE_SIZE, SHADE_SAMPLES, TRAIL_SAMPLES,
+        };
         let common = include_str!("dots_common.wgsl");
         let order = crate::scenes::dots::ORDER
             .map(|o| format!("{o}u"))
@@ -1962,6 +1964,10 @@ mod tests {
             format!("const TRAIL_SAMPLES={TRAIL_SAMPLES}u;"),
             format!("const AFTER_SAMPLES={AFTER_SAMPLES}u;"),
             format!("const SHADE_SAMPLES={SHADE_SAMPLES}u;"),
+            format!("const FOG_COLUMNS={}u;", FOG_GRID[0]),
+            format!("const FOG_ROWS={}u;", FOG_GRID[1]),
+            format!("const FOG_SLICES={}u;", FOG_GRID[2]),
+            format!("const NOISE_SIZE={NOISE_SIZE}u;"),
         ] {
             assert!(
                 light.contains(&constant),
@@ -1970,6 +1976,28 @@ mod tests {
         }
         assert_eq!(super::super::clip::PIXEL_ASPECT, 5.0 / 6.0);
         assert!(common.contains("const COLUMN=5.0/6.0;"));
+        // The diaphragm's blade normals follow its turn.
+        let number = |s: &str| s.parse::<f64>().unwrap();
+        let turn = light.split("const BLADE_TURN=").nth(1).unwrap();
+        let turn = number(&turn[..turn.find(';').unwrap()]);
+        let normals = light
+            .split("const BLADE_NORMALS=array<vec2f,7>(")
+            .nth(1)
+            .unwrap();
+        let normals: Vec<f64> = normals[..normals.find(");").unwrap()]
+            .split("vec2f(")
+            .skip(1)
+            .flat_map(|v| {
+                let v = &v[..v.find(')').unwrap()];
+                v.split(',').map(number).collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(normals.len(), 14);
+        for k in 0..7 {
+            let a = turn + k as f64 * std::f64::consts::TAU / 7.0;
+            assert!((normals[2 * k] - a.cos()).abs() < 1e-6, "blade {k}");
+            assert!((normals[2 * k + 1] - a.sin()).abs() < 1e-6, "blade {k}");
+        }
     }
 
     /// Each part-3 entry point uses only the bindings its pipeline has
@@ -1997,7 +2025,10 @@ mod tests {
                     | "faithful_dot_mark" => &[],
                     "faithful" => &[(1, 1), (1, 2), (1, 3)],
                     "dots_samples" => &[(1, 1)],
-                    "dots_trail" | "shade_trail" | "swept" | "dots_haze" => &[(1, 2)],
+                    "dots_fog_light" => &[(1, 2), (1, 6)],
+                    "dots_fog_noise" => &[(1, 7)],
+                    "dots_trail" | "shade_trail" | "swept" => &[(1, 2)],
+                    "dots_haze" => &[(1, 2), (1, 3), (1, 4), (1, 5)],
                     "dots_style" => &[(1, 2), (2, 1), (2, 2), (2, 3)],
                     n => panic!("unexpected entry point {n}"),
                 };
