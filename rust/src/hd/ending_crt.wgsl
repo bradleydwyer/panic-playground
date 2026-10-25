@@ -47,14 +47,14 @@ const CORNER=14.0;
 // The scanlines: the beam's spot (rows) on a dark and a bright line, so
 // dark gaps open between the lines; the least frame pixels between lines,
 // coarser lines taking over below it; how deep the coarse lines' gaps go.
-const SPOT_DARK=.22;
-const SPOT_BRIGHT=.44;
+const SPOT_DARK=.11;
+const SPOT_BRIGHT=.26;
 const LINE_PIXELS=3.2;
 const COARSE_DEPTH=.75;
 // The aperture grille: a triad of stripes to each source column at first,
 // its depth, and the least frame pixels a triad (coarser below it).
 const TRIAD=1.0;
-const GRILLE=.85;
+const GRILLE=.6;
 const TRIAD_PIXELS=4.5;
 // The colour bleeding along the lines: how far back (columns) and how much
 // of the colour comes from there.
@@ -63,7 +63,7 @@ const BLEED_AMOUNT=.5;
 // Halation (of the blurred picture), convergence error at the face's sides
 // (source columns, red outward, blue inward), the vignette and the corners'
 // darkening, and the face's own glow above black (display light, green).
-const HALATION=.14;
+const HALATION=.07;
 const CONVERGENCE=.5;
 const VIGNETTE=.45;
 const CORNERS=.35;
