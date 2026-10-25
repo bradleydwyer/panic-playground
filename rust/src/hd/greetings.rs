@@ -188,8 +188,9 @@ pub struct GreetingsBlock {
     /// (radians), its brightness, and how fast its phase moves against the
     /// original's colours.
     pub beam: [f32; 4],
-    /// The beam's width (times the shader's own spread), unused, unused,
-    /// unused.
+    /// The beam's width (times the shader's own spread), the row the lamp
+    /// shows on (the sweep's centre, or the frame's middle with O in the
+    /// preview), unused, unused.
     pub beam_late: [f32; 4],
 }
 
@@ -238,6 +239,9 @@ pub struct GreetingsPreview {
     pub beam_brightness: f64,
     /// The beam's width (tuned live with Z/X), times the shader's spread.
     pub beam_width: f64,
+    /// Whether the lamp shows on the frame's middle row rather than on the
+    /// sweep's centre, 15 rows above it (toggled live with O; authored).
+    pub lamp_centred: bool,
 }
 
 impl GreetingsPreview {
@@ -385,6 +389,7 @@ impl GreetingsPreview {
             beam_tilt: BEAM_TILT,
             beam_brightness: BEAM_BRIGHTNESS,
             beam_width: BEAM_WIDTH,
+            lamp_centred: true,
             start,
             letterforms: letterforms(LetterSource::Outlines(LETTERS))?,
             motes: motes(&planes),
@@ -790,7 +795,12 @@ impl GreetingsPreview {
                 brightness as f32,
                 beam_rate as f32,
             ],
-            beam_late: [self.beam_width as f32, 0.0, 0.0, 0.0],
+            beam_late: [
+                self.beam_width as f32,
+                if self.lamp_centred { 100.0 } else { SWEEP_CENTRE.1 as f32 },
+                0.0,
+                0.0,
+            ],
         }
     }
 }

@@ -241,9 +241,11 @@ fn star_colour()->vec3f {return srgb_decode(vec3f(1.0,8.0/9.0,7.0/9.0));}
 fn intensity()->f32 {return pow(clamp(gc.sweep.y,0.0,1.0),2.2);}
 const CAMERA=vec3f(0.0,0.0,-CAMERA_DISTANCE);
 fn project(p:vec3f)->vec2f {return p.xy*CAMERA_DISTANCE/(CAMERA_DISTANCE+p.z);}
-// The lamp in camera space, placed so it projects on the sweep's centre.
+// The lamp in camera space, placed so it projects on the row in
+// u.greetings.beam_late.y: the sweep's centre (SWEEP_CENTRE), or the frame's
+// middle when the preview centres it (O).
 fn lamp()->vec3f {
-    return vec3f(0.0,(100.0-SWEEP_CENTRE.y)*(CAMERA_DISTANCE+LAMP_DEPTH)/CAMERA_DISTANCE,LAMP_DEPTH);
+    return vec3f(0.0,(100.0-gc.beam_late.y)*(CAMERA_DISTANCE+LAMP_DEPTH)/CAMERA_DISTANCE,LAMP_DEPTH);
 }
 // How far the beam has swung to the lens (authored motion): it begins
 // SWING_LEAD seconds before the original's fade to white and is done by the

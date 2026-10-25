@@ -403,10 +403,19 @@ optical simulation. All fields are generated locally in memory.
 | , / . | Depth of the waves |
 | ; / ' | Strength of the waves' side light and shadows |
 | N | Part 6: the new symbols in its middle, or the original's throughout |
+| D | Part 4: still water under the slab (default), or polished dark stone |
+| 1 / 2 | Part 4: the water's mirror, ×0.8 or ×1.25 (1, real water, to 8; default 3) |
+| 3 / 4 | Part 4: the swell's height, ×0.8 or ×1.25 (0, a flat mirror, to about 3.8; default 1) |
+| 5 / 6 | Part 4: the swell's speed, ×0.8 or ×1.25 (about 0.26 to 3.8; default 1) |
+| 7 / 8 | Part 4: the swell's size, ×0.8 or ×1.25 (about 0.26 to 3.8; default 1) |
+| 9 / 0 | Part 4: drops ×0.8 or ×1.25 as often (none, or one every 17 s to 1.2 s; default every 4.5 s) |
 | J / K | Part 7: the beam's starting turn 16 frames shorter (faster) or longer (slower); default 128; from 237 s it shortens linearly to 32 by part 8 |
 | U / I | Part 7: the beam's tilt toward the camera, 3° less or more (0 to 90°, straight at the camera; default 51°) |
 | G / H | Part 7: the beam's starting brightness, ×0.8 or ×1.25 (0.05 to 4; default 0.25); from 237 s it rises linearly to 1 by part 8 |
 | Z / X | Part 7: the beam's width (its focus), 0.1 narrower or wider (0, a thin shaft, to 2; default 1) |
+| O | Part 7: the lamp in the frame's middle (default), or on the sweep's centre 15 rows above |
+| T / Y | Part 8: the grille's stripes ×1.1 coarser or finer, its moiré later or earlier (default a triad every 2 rows) |
+| Q / E | Part 8: the pull-back ÷1.1 slower or ×1.1 faster (default about 3 sets across at the switch-off) |
 | F | Toggle fullscreen |
 | S | Save a PNG to `--out`; existing files are preserved |
 | P | Show or hide the frame-rate counter |
@@ -1739,9 +1748,9 @@ All of it is authored, on the port's timing, positions and motion:
   full light by part 8's first frame (both chosen by eye). **J**/**K**,
   **U**/**I**, **G**/**H** and **Z**/**X** change the turn's length, the
   tilt, the beam's starting brightness and its width while the preview
-  plays. The lamp stands a
-  little behind the strips, where it projects on the sweep's centre: a
-  bright core with a halo, the
+  plays. The lamp stands a little behind the strips, where it projects on
+  the frame's middle, 15 rows below the sweep's centre (chosen by eye;
+  **O** puts it on the sweep's centre): a bright core with a halo, the
   beam leaving an aperture of finite size. The original lights 40 of its 64
   colours at once, a very broad band, so the beam is broad and soft: across
   it its light falls as exp(-2 q^2), q its distance across over the

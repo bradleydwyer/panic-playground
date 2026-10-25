@@ -368,7 +368,7 @@ from the port and checked against it frame by frame.
 The modern look is a lighthouse in dusty air:
 
 - The turning colours become one broad, soft cream lighthouse beam from
-  a lamp at the sweep's centre, turning once every 1.8 seconds (half the
+  a lamp in the middle of the frame, turning once every 1.8 seconds (half the
   original's speed), tilted toward us, its faint outer edge brushing the
   camera on each turn but straight at it only at the end, dim at first and
   over the part's last five seconds brightening steadily and speeding up
