@@ -54,7 +54,7 @@ pub const LINE_COMPRESSION: f64 = 200.0;
 /// one for the white (gone, as in the original, by the squeeze's second
 /// frame) and a slow one (the spot's lingering glow); the ages of the
 /// trail's taps; the fade to black over the last END_FADE frames.
-pub const CRT_RAMP: f64 = 182.0;
+pub const CRT_RAMP: f64 = 45.0;
 pub const PERSISTENCE: f64 = 1.6;
 pub const WHITE_PERSISTENCE: f64 = 0.5;
 pub const AFTERGLOW: f64 = 24.0;
@@ -70,44 +70,44 @@ pub const CELLS: (usize, usize) = (4, 3);
 /// the centre set's face at the origin, its front toward +z). Its vertical
 /// field of view (degrees): from 100 / tan(half of it) the face's 200 rows
 /// fill the frame's height, as part 7's picture does, which is where it
-/// starts. It draws back over the first PULL frames of the hold until the
-/// bank (ending_set.wgsl: three sets of 284 rows and two gaps of 5) fills
-/// BANK_FILL of the frame's height, turned a little (TURN, degrees across
-/// and down); from the white it eases in over EASE_IN frames until the bank
-/// fills SWITCH_OFF_FILL, so the centre set's line and dot read.
+/// starts. It draws back from there and never stops. Its speed, in the
+/// logarithm of its distance a 70 Hz frame, is the sum of a bump over the
+/// first BUMP frames (as 30 x^2 (1 - x)^2, covering BUMP_SPAN: slow at
+/// first, so it holds close while the CRT comes on, fastest at mid hold,
+/// fading by the switch-off) and a drift of DRIFT a frame that comes up
+/// over the first DRIFT_RISE frames and carries on to the end. It turns a
+/// little with the bump (TURN, degrees across and down). The wall
+/// (ending_set.wgsl) has a set every SET_PITCH rows up.
 pub const FIELD_OF_VIEW: f64 = 30.0;
-pub const BANK_HEIGHT: f64 = 862.0;
-pub const PULL: f64 = 240.0;
-pub const BANK_FILL: f64 = 0.86;
-pub const SWITCH_OFF_FILL: f64 = 0.96;
-pub const EASE_IN: f64 = 120.0;
+pub const BUMP: f64 = 320.0;
+pub const BUMP_SPAN: f64 = 1.48;
+pub const DRIFT: f64 = 0.00145;
+pub const DRIFT_RISE: f64 = 120.0;
 pub const TURN: (f64, f64) = (2.0, 3.0);
+pub const SET_PITCH: f64 = 300.0;
 
 /// Where the camera is and what it looks at, at part-8 frame position
-/// `tau` (continuous), the white coming at frame `white`: its position,
-/// the point it looks at, and the tangent of half its field of view.
-pub fn camera(tau: f64, white: f64) -> ([f64; 3], [f64; 3], f64) {
+/// `tau` (continuous): its position, the point it looks at, and the
+/// tangent of half its field of view.
+pub fn camera(tau: f64) -> ([f64; 3], [f64; 3], f64) {
     let tan_half = (FIELD_OF_VIEW / 2.0).to_radians().tan();
     let first = 100.0 / tan_half;
-    let revealed = BANK_HEIGHT / 2.0 / (BANK_FILL * tan_half);
-    let closer = BANK_HEIGHT / 2.0 / (SWITCH_OFF_FILL * tan_half);
-    let pull = smootherstep(tau / PULL);
-    let ease = smootherstep((tau - white) / EASE_IN);
-    let distance =
-        (first.ln() + (revealed / first).ln() * pull + (closer / revealed).ln() * ease).exp();
-    let (across, down) = (TURN.0.to_radians() * pull, TURN.1.to_radians() * pull);
+    let x = (tau / BUMP).clamp(0.0, 1.0);
+    let bump = x * x * x * (10.0 - 15.0 * x + 6.0 * x * x);
+    let y = (tau / DRIFT_RISE).max(0.0);
+    let drift = if y < 1.0 {
+        DRIFT_RISE * (y * y * y - y * y * y * y / 2.0)
+    } else {
+        tau - DRIFT_RISE / 2.0
+    };
+    let distance = (first.ln() + BUMP_SPAN * bump + DRIFT * drift).exp();
+    let (across, down) = (TURN.0.to_radians() * bump, TURN.1.to_radians() * bump);
     let direction = [
         across.sin() * down.cos(),
         down.sin(),
         across.cos() * down.cos(),
     ];
     (direction.map(|d| d * distance), [0.0; 3], tan_half)
-}
-
-/// 0 to 1 over 0 to 1, with no speed or acceleration at either end.
-fn smootherstep(x: f64) -> f64 {
-    let t = x.clamp(0.0, 1.0);
-    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 }
 
 /// What a part-8 frame shows, by the scene's step (read from the code).
@@ -561,7 +561,7 @@ impl EndingPreview {
         }
         let e = &self.events;
         let c = self.line_colour;
-        let (eye, aim, tan_half) = camera(tau, e.white * FRAME_RATE as f64);
+        let (eye, aim, tan_half) = camera(tau);
         EndingBlock {
             part: [
                 1.0,
@@ -605,6 +605,61 @@ impl EndingPreview {
             eye: [eye[0] as f32, eye[1] as f32, eye[2] as f32, tan_half as f32],
             aim: [aim[0] as f32, aim[1] as f32, aim[2] as f32, 0.0],
         }
+    }
+}
+
+/// The monster in linear light on a palette, with its mipmaps (each level
+/// half the last, as wgpu sizes them, each texel the mean of the area of
+/// the last it covers), for the modern view's far tubes.
+pub fn picture_levels(monster: &[u8], palette: &[u8]) -> Vec<(u32, u32, Vec<[f16; 4]>)> {
+    let mut level: Vec<[f32; 3]> = monster[..64000]
+        .iter()
+        .map(|&i| {
+            let p = &palette[i as usize * 3..][..3];
+            [vga_linear(p[0]), vga_linear(p[1]), vga_linear(p[2])]
+        })
+        .collect();
+    let (mut w, mut h) = (320usize, 200usize);
+    let mut levels = Vec::new();
+    loop {
+        let texels = level
+            .iter()
+            .map(|c| c.map(f16::from_f32))
+            .map(|c| [c[0], c[1], c[2], f16::ONE])
+            .collect();
+        levels.push((w as u32, h as u32, texels));
+        if w == 1 && h == 1 {
+            return levels;
+        }
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        // How much of each source texel along an axis an output texel covers.
+        let cover = |i: usize, n: usize, from: usize| -> Vec<(usize, f32)> {
+            let (a, b) = (
+                i as f32 * from as f32 / n as f32,
+                (i + 1) as f32 * from as f32 / n as f32,
+            );
+            (a.floor() as usize..(b.ceil() as usize).min(from))
+                .map(|k| (k, (b.min(k as f32 + 1.0) - a.max(k as f32)).max(0.0)))
+                .collect()
+        };
+        let mut next = vec![[0.0f32; 3]; nw * nh];
+        for y in 0..nh {
+            let rows = cover(y, nh, h);
+            for x in 0..nw {
+                let mut sum = [0.0f32; 3];
+                let mut total = 0.0;
+                for &(sy, wy) in &rows {
+                    for (sx, wx) in cover(x, nw, w) {
+                        for (s, v) in sum.iter_mut().zip(level[sy * w + sx]) {
+                            *s += v * wx * wy;
+                        }
+                        total += wx * wy;
+                    }
+                }
+                next[y * nw + x] = sum.map(|s| s / total);
+            }
+        }
+        (level, w, h) = (next, nw, nh);
     }
 }
 
@@ -702,27 +757,29 @@ mod tests {
     }
 
     /// The camera starts where the face's 200 rows fill the frame, straight
-    /// on, and draws back until the bank fills its share of the frame, then
-    /// eases in from the white; it never jumps.
+    /// on and at rest; it holds close while the CRT comes on, then draws
+    /// back, never stopping, smoothly, the centre set about a quarter of the
+    /// frame's height at the switch-off and a fifth at the end.
     #[test]
-    fn camera_starts_on_the_face_and_frames_the_bank() {
-        let white = 285.0;
-        let (eye, aim, tan_half) = camera(0.0, white);
+    fn camera_starts_on_the_face_and_never_stops_drawing_back() {
+        let (eye, aim, tan_half) = camera(0.0);
         assert_eq!(aim, [0.0; 3]);
         assert_eq!(&eye[..2], &[0.0, 0.0]);
         assert!((eye[2] * tan_half - 100.0).abs() < 1e-9);
         let length = |e: [f64; 3]| (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]).sqrt();
-        let fill = |tau: f64| BANK_HEIGHT / 2.0 / (length(camera(tau, white).0) * tan_half);
-        assert!((fill(PULL) - BANK_FILL).abs() < 1e-9);
-        assert!((fill(white + EASE_IN) - SWITCH_OFF_FILL).abs() < 1e-9);
-        // Tenths of a frame: each step small against the distance, and the
-        // speed never changing suddenly.
-        let mut previous = camera(0.0, white).0;
+        let share = |tau: f64| SET_PITCH / (2.0 * length(camera(tau).0) * tan_half);
+        assert!(share(CRT_RAMP) > 0.6, "{}", share(CRT_RAMP));
+        assert!((0.2..0.3).contains(&share(285.0)), "{}", share(285.0));
+        assert!((0.15..0.22).contains(&share(481.0)), "{}", share(481.0));
+        // Tenths of a frame: always moving away once started, each step
+        // small against the distance, the speed never changing suddenly.
+        let mut previous = camera(0.0).0;
         let mut speed = 0.0;
-        for k in 1..=4800 {
+        for k in 1..=4810 {
             let tau = k as f64 / 10.0;
-            let now = camera(tau, white).0;
-            let step = length([0, 1, 2].map(|i| now[i] - previous[i]));
+            let now = camera(tau).0;
+            let step = length(now) - length(previous);
+            assert!(step > 0.0, "the camera stops at frame {tau}");
             assert!(
                 step < 0.002 * length(now),
                 "the camera jumps at frame {tau}"
@@ -732,6 +789,35 @@ mod tests {
                 "its speed jumps at frame {tau}"
             );
             (previous, speed) = (now, step);
+        }
+    }
+
+    #[test]
+    fn picture_levels_halve_to_one_texel_keeping_the_mean() {
+        let mut palette = vec![0u8; 768];
+        palette[3..6].fill(63);
+        let mut monster = vec![0u8; 64000];
+        monster[..32000].fill(1);
+        let levels = picture_levels(&monster, &palette);
+        let sizes: Vec<(u32, u32)> = levels.iter().map(|l| (l.0, l.1)).collect();
+        assert_eq!(
+            sizes,
+            [
+                (320, 200),
+                (160, 100),
+                (80, 50),
+                (40, 25),
+                (20, 12),
+                (10, 6),
+                (5, 3),
+                (2, 1),
+                (1, 1)
+            ]
+        );
+        // Each level keeps the picture's mean (half white, half black).
+        for (w, h, texels) in &levels {
+            let mean = texels.iter().map(|t| t[0].to_f32()).sum::<f32>() / (w * h) as f32;
+            assert!((mean - 0.5).abs() < 0.01, "{w} x {h}: {mean}");
         }
     }
 

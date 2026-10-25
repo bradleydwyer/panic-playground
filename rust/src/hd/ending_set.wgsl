@@ -1,84 +1,102 @@
-// The bank of nine monitors the modern part 8 draws back to reveal, and the
-// light their screens throw on them. Authored throughout: the sets, their
-// shape, material and small differences, the camera's move (hd/ending.rs,
-// `camera`) and the light. The pictures are ending_crt.wgsl's.
+// The wall of monitors the modern part 8 scrolls out from, and the light
+// their screens throw on it. Authored throughout: the sets, their shape,
+// material, small differences and oddities, the camera's move
+// (hd/ending.rs, `camera`) and the light. The pictures are ending_crt.wgsl's.
 //
 // - The camera starts where the centre set's face fills the frame's height
 //   as part 7's picture does, straight on, with the glass flat, the face the
 //   picture's own rectangle and the sets unlit, so part 8 starts on part 7's
-//   last frame. As it draws back the face becomes a tube's: the glass
-//   bulges, and its outline rounds into bowed sides and deep corners, set
-//   back into a thick dark bezel; the bank of nine comes into view, whole
-//   and centred in the dark by the end of the hold. From the white it eases
-//   in a little, so the centre set's line and dot read.
-// - The nine sets stand in three rows of three, their bezels nearly
-//   touching. Each shows the monster with small differences of its own
-//   (brightness, warmth, the picture's place and turn), as real sets do;
-//   the centre set has none. All switch off together on the original's
-//   timing.
-// - There is no room. The sets are lit only by their screens: each by its
-//   own (in twelve patches, from the original picture's mean colours) and
-//   by its neighbours', on the bezels' rounded edges, their rims and the
-//   tunnels down to the glass. As the screens go dark, so does the bank. The
-//   glass shows the lit rim in its curve and a faint sheen of the bank's
-//   own light.
+//   last frame. It holds close while the picture becomes an old green
+//   surveillance monitor's, then draws back: the face becomes a tube's, its
+//   glass bulging into bowed sides and deep corners, set deep into a thick
+//   chamfered bezel, and more and more sets come into view in every
+//   direction; the wall has no edge. It keeps drawing back, more slowly,
+//   through the switch-off, to the end.
+// - Every set shows the monster with small differences of its own, fixed
+//   per set (brightness, a warmer or cooler green, the picture's place, turn
+//   and size); here and there one has an oddity, fixed too: its picture
+//   rolled, with the blanking bar showing, or skewed by its sync, or tinted
+//   in a patch by its purity, or dimmed. The centre set has none. All of
+//   them switch off together on the original's timing.
+// - There is no room. The sets are lit only by the screens: each by its own
+//   (in twelve patches, from the original picture's mean colours), by its
+//   eight neighbours' and their dots, and by the wall's light at large, on
+//   the chamfers, rims, lips, tunnels and buttons, all in the screens'
+//   green. As the screens go dark, so does the wall. The glass shows the lit
+//   rim in its curve, a faint glare and the phosphor's scattered green.
 // Module: the shared controls, ending_common.wgsl, ending_crt.wgsl and this
 // file.
 
-// ---- The bank (authored; scene units, source rows on the 4:3 display) -------
+// ---- The sets (authored; scene units, source rows on the 4:3 display) -------
 // The picture's half size; the glass's half size once rounded, its
 // outline's exponent then and at first (nearly the picture's rectangle);
 // how far the glass bulges; how deep it is set into the bezel; the bezel's
 // opening at its front and that outline's exponent; a set's half size at
-// its front, its depth and its edges' rounding; the gap between sets, and
-// the pitch they stand at (twice the half size and the gap).
+// its front, its depth, its edges' rounding, the chamfer round its front,
+// the lip where the tunnel meets the front; the gap between sets and the
+// pitch they stand at (twice the half size and the gap).
 const PICTURE=vec2f(133.33333,100.0);
-const GLASS_HALF=vec2f(131.0,98.0);
-const GLASS_POWER=4.0;
+const GLASS_HALF=vec2f(129.0,96.0);
+const GLASS_POWER=3.6;
 const FLAT_POWER=40.0;
-const BULGE=16.0;
-const TUNNEL=34.0;
+const BULGE=22.0;
+const TUNNEL=40.0;
 const OPENING=vec2f(152.0,118.0);
-const OPENING_POWER=5.0;
-const SET=vec2f(182.0,142.0);
-const SET_DEPTH=260.0;
-const SET_ROUND=24.0;
-const LIP=7.0;
-const GAP=5.0;
-const PITCH=vec2f(369.0,289.0);
-// The materials: the bezels' dark plastic and the tunnels' (linear albedo,
-// GGX roughness); the glass's reflectance head on.
-const BEZEL=vec3f(.06,.058,.055);
-const BEZEL_ROUGH=.42;
-const RIM=vec3f(.09,.087,.083);
+const OPENING_POWER=4.5;
+const SET=vec2f(184.0,146.0);
+const SET_DEPTH=300.0;
+const SET_ROUND=5.0;
+const CHAMFER=12.0;
+const LIP=6.0;
+const GAP=8.0;
+const PITCH=vec2f(376.0,300.0);
+// The controls under each face: a row of four buttons (their centre,
+// spacing, half size, how far they stand out) and a knob (centre, radius,
+// height).
+const BUTTONS=vec2f(64.0,-129.0);
+const BUTTON_SPACING=17.0;
+const BUTTON=vec2f(5.5,3.5);
+const BUTTON_OUT=3.0;
+const KNOB=vec2f(-128.0,-129.0);
+const KNOB_RADIUS=5.5;
+const KNOB_OUT=4.0;
+// The materials: the bezels' dark plastic, the tunnels' and the controls'
+// (linear albedo, GGX roughness); the glass's reflectance head on.
+const BEZEL=vec3f(.075,.075,.072);
+const BEZEL_ROUGH=.38;
+const RIM=vec3f(.1,.1,.095);
 const RIM_ROUGH=.45;
+const CONTROLS=vec3f(.14,.14,.135);
+const CONTROLS_ROUGH=.3;
 const GLASS_F0=.04;
 // The screens' light on the sets: its scale (the exposure the dark sets are
-// seen at), the dot's light and its afterglow's, the share of the bank's
-// light the glass's phosphor scatters back (its grey), the faint sheen of
-// the bank's light on the glass (its strength, direction and tightness),
-// and the tubes' hint of warmth.
-const LIGHT=22.0;
-const SCATTER=vec3f(.0016,.0017,.0018);
+// seen at), the wall's light at large, the dot's light and its afterglow's,
+// the faint sheen of the wall's light on the glass (strength, direction,
+// tightness).
+const LIGHT=26.0;
+const WALL_FILL=.05;
 const DOT_LIGHT=150.0;
 const AFTER_LIGHT=60.0;
 const SHEEN=.1;
 const SHEEN_FROM=vec3f(-.3,.8,.52);
 const SHEEN_POWER=8.0;
-const WARMTH=vec3f(1.03,1.0,.95);
-// Each set's differences, left to right and top to bottom (index 4 is the
-// centre): brightness and warmth (red up and blue down by it); the
-// picture's offset across and down (rows), its turn (degrees) and size.
-const LOOK=array<vec4f,9>(
-    vec4f(.92,.03,0,0),vec4f(1.0,-.01,0,0),vec4f(.95,.02,0,0),
-    vec4f(.97,-.02,0,0),vec4f(1.0,0.0,0,0),vec4f(.9,.015,0,0),
-    vec4f(1.02,.02,0,0),vec4f(.94,-.03,0,0),vec4f(.97,0.0,0,0));
-const PLACE=array<vec4f,9>(
-    vec4f(1.2,-.8,.4,1.01),vec4f(-.6,.9,-.3,.99),vec4f(.4,.5,.6,1.015),
-    vec4f(-1.0,-.4,-.5,.995),vec4f(0,0,0,1),vec4f(.8,.7,.3,1.005),
-    vec4f(-.5,1.1,-.2,1.01),vec4f(1.1,-.6,.5,.985),vec4f(-.9,-1.0,-.4,1.0));
+// The sets' differences: brightness from LOOK_DIM to 1; how far the green
+// turns warmer or cooler (on the phosphor's exponents); the picture's
+// offset (rows), turn (degrees) and size. The oddities' shares of the sets
+// (rolled, skewed, tinted, dimmed) and their sizes.
+const LOOK_DIM=.84;
+const LOOK_WARMTH=.18;
+const LOOK_OFFSET=1.4;
+const LOOK_TURN=.6;
+const LOOK_SIZE=.015;
+const ODD=vec4f(.05,.09,.12,.16);
+const ROLL=vec2f(.3,.7);
+const BLANKING=.14;
+const SKEW=.08;
+const PURITY=vec3f(1.18,.86,1.12);
+const DIMMED=.65;
 // The march.
-const STEPS=110u;
+const STEPS=120u;
 const STEP=.75;
 
 // ---- Bindings ----------------------------------------------------------------------
@@ -102,47 +120,57 @@ fn round_box(p:vec3f,b:vec3f,r:f32)->f32 {
     let q=abs(p)-b+r;
     return length(max(q,vec3f(0)))+min(max(q.x,max(q.y,q.z)),0.0)-r;
 }
-// One set, its face's centre at the origin: a rounded body, its front at
-// z = TUNNEL, with a tunnel down to the glass whose outline flares from
-// the glass's at z = 0 to the opening's at the front.
+// The controls under the face: the buttons and the knob.
+fn controls(p:vec3f)->f32 {
+    let along=p.x-BUTTONS.x;
+    let i=clamp(floor(along/BUTTON_SPACING)+.5,-1.5,1.5);
+    let q=vec3f(along-i*BUTTON_SPACING,p.y-BUTTONS.y,p.z-TUNNEL);
+    let button=round_box(q,vec3f(BUTTON,BUTTON_OUT),1.2);
+    let r=vec2f(length(p.xy-KNOB)-KNOB_RADIUS,abs(p.z-TUNNEL)-KNOB_OUT);
+    let knob=min(max(r.x,r.y),0.0)+length(max(r,vec2f(0)))-1.0;
+    return min(button,knob);
+}
+// One set, its face's centre at the origin: a body with a chamfered front
+// at z = TUNNEL, a tunnel down to the glass whose outline flares from the
+// glass's at z = 0 to the opening's at the front, its lip rounded, and the
+// controls under the face.
 fn set_shape(p:vec3f,a:f32)->f32 {
-    let body=round_box(p-vec3f(0,0,TUNNEL-SET_DEPTH*.5),vec3f(SET,SET_DEPTH*.5),SET_ROUND);
+    var body=round_box(p-vec3f(0,0,TUNNEL-SET_DEPTH*.5),vec3f(SET,SET_DEPTH*.5),SET_ROUND);
+    let rim=max(abs(p.x)-SET.x,abs(p.y)-SET.y);
+    body=max(body,(rim+CHAMFER+p.z-TUNNEL)*.70710678);
     let s=clamp(p.z/TUNNEL,0.0,1.0);
     let f=s*s;
     let hole=outline(p.xy,mix(glass_half(a),OPENING,f),mix(glass_power(a),OPENING_POWER,f));
-    // The opening's lip rounded where the tunnel meets the front.
-    let k=LIP;
-    let h=clamp(.5-.5*(-hole-body)/k,0.0,1.0);
-    return mix(-hole,body,h)+k*h*(1.0-h);
+    let h=clamp(.5-.5*(-hole-body)/LIP,0.0,1.0);
+    let carved=mix(-hole,body,h)+LIP*h*(1.0-h);
+    return min(carved,controls(p));
 }
-// The set a point belongs to, -1 to 1 across and up.
-fn set_of(q:vec2f)->vec2f {return clamp(round(q/PITCH),vec2f(-1),vec2f(1));}
-fn bank(p:vec3f,a:f32)->f32 {
+// The set a point belongs to: its place in the wall, across and up.
+fn set_of(q:vec2f)->vec2f {return round(q/PITCH);}
+fn wall(p:vec3f,a:f32)->f32 {
     return set_shape(p-vec3f(set_of(p.xy)*PITCH,0.0),a);
 }
-fn bank_normal(p:vec3f,a:f32)->vec3f {
+fn wall_normal(p:vec3f,a:f32)->vec3f {
     let e=.05;
     return normalize(vec3f(
-        bank(p+vec3f(e,0,0),a)-bank(p-vec3f(e,0,0),a),
-        bank(p+vec3f(0,e,0),a)-bank(p-vec3f(0,e,0),a),
-        bank(p+vec3f(0,0,e),a)-bank(p-vec3f(0,0,e),a)));
+        wall(p+vec3f(e,0,0),a)-wall(p-vec3f(e,0,0),a),
+        wall(p+vec3f(0,e,0),a)-wall(p-vec3f(0,e,0),a),
+        wall(p+vec3f(0,0,e),a)-wall(p-vec3f(0,0,e),a)));
 }
-// The ray's span inside the bank's box, or none.
-fn bank_span(o:vec3f,d:vec3f)->vec2f {
-    let lo=vec3f(-1.5*PITCH,TUNNEL-SET_DEPTH)-1.0;
-    let hi=vec3f(1.5*PITCH,TUNNEL)+1.0;
-    let inv=1.0/d;
-    let t0=(lo-o)*inv;
-    let t1=(hi-o)*inv;
-    let near=min(t0,t1);
-    let far=max(t0,t1);
-    return vec2f(max(max(near.x,near.y),max(near.z,0.0)),min(far.x,min(far.y,far.z)));
+// The ray's span within the wall's depth (from the controls' fronts to the
+// sets' backs), or none.
+fn wall_span(o:vec3f,d:vec3f)->vec2f {
+    let front=TUNNEL+BUTTON_OUT+KNOB_OUT+1.0;
+    let back=TUNNEL-SET_DEPTH;
+    let t0=(front-o.z)/d.z;
+    let t1=(back-o.z)/d.z;
+    return vec2f(max(min(t0,t1),0.0),max(t0,t1));
 }
 fn march(o:vec3f,d:vec3f,span:vec2f,a:f32)->f32 {
     var t=span.x;
     for(var i=0u;i<STEPS;i++) {
         if t>span.y {break;}
-        let h=bank(o+d*t,a);
+        let h=wall(o+d*t,a);
         if h<.0004*t+.002 {return t;}
         t+=h*STEP;
     }
@@ -168,8 +196,60 @@ fn glass_hit(o:vec3f,d:vec3f,a:f32)->vec3f {
     return vec3f(t,tv);
 }
 
+// ---- The sets' differences ----------------------------------------------------------
+// Four numbers from 0 to 1, fixed per set.
+fn scramble(x:u32)->u32 {
+    var v=x;
+    v^=v>>16u;v*=0x7feb352du;v^=v>>15u;v*=0x846ca68bu;v^=v>>16u;
+    return v;
+}
+fn hash4(tv:vec2f,salt:u32)->vec4f {
+    let i=vec2u(vec2i(tv)+vec2i(32768));
+    let h0=scramble(i.x*1973u+i.y*9277u+salt*26699u);
+    let h1=scramble(h0^0x9e3779b9u);
+    let h2=scramble(h1^0x85ebca6bu);
+    let h3=scramble(h2^0xc2b2ae35u);
+    return vec4f(vec4u(h0,h1,h2,h3)>>vec4u(8u))/16777216.0;
+}
+struct Look {
+    brightness:f32, exponents:vec3f, offset:vec2f, turn:f32, size:f32,
+    roll:f32, skew:f32, purity:f32,
+}
+fn look_of(tv:vec2f)->Look {
+    var look=Look(1.0,PHOSPHOR,vec2f(0),0.0,1.0,0.0,0.0,0.0);
+    if all(tv==vec2f(0)) {return look;}
+    let h=hash4(tv,1u);
+    let g=hash4(tv,2u);
+    let warmth=h.y*2.0-1.0;
+    look.brightness=mix(LOOK_DIM,1.0,h.x);
+    look.exponents=PHOSPHOR+vec3f(-LOOK_WARMTH*warmth,0.0,LOOK_WARMTH*warmth);
+    look.offset=(g.xy*2.0-1.0)*LOOK_OFFSET;
+    look.turn=(g.z*2.0-1.0)*LOOK_TURN;
+    look.size=1.0+(g.w*2.0-1.0)*LOOK_SIZE;
+    let odd=h.w;
+    if odd<ODD.x {look.roll=mix(ROLL.x,ROLL.y,h.z);}
+    else if odd<ODD.y {look.skew=SKEW*(h.z*2.0-1.0);}
+    else if odd<ODD.z {look.purity=1.0;}
+    else if odd<ODD.w {look.brightness*=DIMMED;}
+    return look;
+}
+// The point of the picture a set shows at `local` on its face (in units of
+// the picture's half size), with its place, turn, size, roll and skew.
+fn placed(local:vec2f,look:Look)->vec2f {
+    let q=(local-look.offset*vec2f(1,-1))/look.size;
+    let turn=radians(look.turn);
+    var plain=vec2f(cos(turn)*q.x+sin(turn)*q.y,-sin(turn)*q.x+cos(turn)*q.y)/PICTURE;
+    plain.x+=look.skew*plain.y;
+    if look.roll>0.0 {
+        // The picture rolled down by `roll` of its height, the blanking
+        // between frames showing as a bar.
+        let y=(plain.y+1.0-2.0*look.roll)-(2.0+BLANKING)*floor((plain.y+1.0-2.0*look.roll)/(2.0+BLANKING));
+        plain.y=select(y-1.0,4.0,y>2.0);
+    }
+    return plain;
+}
+
 // ---- The screens' light -------------------------------------------------------------
-fn index_of(tv:vec2f)->u32 {return u32(tv.x+1.0)+3u*u32(1.0-tv.y);}
 fn cell_light(c:u32)->vec3f {
     let a=cells[frame_now()*12u+c].rgb;
     let b=cells[frame_next()*12u+c].rgb;
@@ -186,10 +266,6 @@ fn screen_gain()->f32 {
 fn screen_flash()->f32 {
     let cover=ec.tube.z;
     return (FLASH-1.0)*cover+FLASH_GLOW*max(ec.glow.z-max(cover,ec.tube.y),0.0);
-}
-fn set_tint(k:u32)->vec3f {
-    let look=LOOK[k];
-    return look.x*vec3f(1.0+look.y,1.0,1.0-look.y)*mix(vec3f(1),WARMTH,ec.tube.x);
 }
 // GGX's distribution.
 fn ggx(nh:f32,alpha:f32)->f32 {
@@ -215,8 +291,15 @@ fn glow_from(p:vec3f,n:vec3f,v:vec3f,albedo:vec3f,rough:f32,centre:vec3f,light:v
     let spec=e*ggx(max(dot(n,h),0.0),alpha)*f/(4.0*max(dot(n,v),.2));
     return albedo/PI*e*cr+spec;
 }
-// The light every screen throws on the point p of set `own`: its own
-// screen in twelve patches, each neighbour's as one, and the dots.
+// The wall's light at large, as the screens show it: their mean colour.
+fn wall_light()->vec3f {
+    var mean=vec3f(0);
+    for(var c=0u;c<12u;c++) {mean+=cell_light(c);}
+    return graded(mean/12.0*screen_gain()+screen_flash(),PHOSPHOR,ec.tube.x)*LIGHT;
+}
+// The light the screens throw on the point p of set `own`: its own screen
+// in twelve patches, each neighbour's as one, the dots, and the wall's
+// light at large.
 fn lit(p:vec3f,n:vec3f,v:vec3f,albedo:vec3f,rough:f32,own:vec2f)->vec3f {
     let gain=screen_gain();
     let flash=screen_flash();
@@ -229,24 +312,27 @@ fn lit(p:vec3f,n:vec3f,v:vec3f,albedo:vec3f,rough:f32,own:vec2f)->vec3f {
     var out=vec3f(0);
     for(var j=-1;j<=1;j++) {
         for(var i=-1;i<=1;i++) {
-            let tv=vec2f(f32(i),f32(j));
+            let tv=own+vec2f(f32(i),f32(j));
+            let look=look_of(tv);
             let at=vec3f(tv*PITCH,z);
-            let tint=set_tint(index_of(tv))*LIGHT;
-            if all(tv==own) {
+            let scale=look.brightness*LIGHT;
+            if i==0 && j==0 {
                 let size=vec2f(2.0*PICTURE.x/4.0,2.0*PICTURE.y/3.0);
                 for(var c=0u;c<12u;c++) {
                     let cell=vec2f(f32(c%4u),f32(c/4u));
                     let q=vec2f(-PICTURE.x,PICTURE.y)+(cell+.5)*size*vec2f(1,-1);
-                    let light=(cell_light(c)*gain+flash)*tint;
+                    let light=graded(cell_light(c)*gain+flash,look.exponents,a)*scale;
                     out+=glow_from(p,n,v,albedo,rough,at+vec3f(q*.9,0),light,size.x*size.y);
                 }
             } else {
-                let light=(mean*gain+flash)*tint;
+                let light=graded(mean*gain+flash,look.exponents,a)*scale;
                 out+=glow_from(p,n,v,albedo,rough,at,light,4.0*PICTURE.x*PICTURE.y);
             }
-            out+=glow_from(p,n,v,albedo,rough,at+vec3f(0,0,1),vec3f(dot_light)*tint,1.0);
+            let spot=graded(vec3f(dot_light),look.exponents,a)*scale;
+            out+=glow_from(p,n,v,albedo,rough,at+vec3f(0,0,1),spot,1.0);
         }
     }
+    out+=albedo*WALL_FILL*wall_light()*(.6+.4*max(n.z,0.0));
     return out*a;
 }
 
@@ -265,54 +351,54 @@ fn lit(p:vec3f,n:vec3f,v:vec3f,albedo:vec3f,rough:f32,own:vec2f)->vec3f {
     let toward=-d;
     var light=vec3f(0);
     let glass=glass_hit(eye,d,a);
-    var span=bank_span(eye,d);
+    var span=wall_span(eye,d);
     if glass.x>0.0 {span.y=min(span.y,glass.x);}
     let t=select(-1.0,march(eye,d,span,a),span.x<span.y);
     if t>0.0 {
-        // A bezel, its rim or a tunnel.
+        // A bezel, its chamfer, its rim, a tunnel or the controls.
         let p=eye+d*t;
         let tv=set_of(p.xy);
-        let n=bank_normal(p,a);
+        let n=wall_normal(p,a);
         let local=p-vec3f(tv*PITCH,0.0);
         let inside=outline(local.xy,OPENING,OPENING_POWER)<1.0 && local.z<TUNNEL-.5;
-        light=lit(p,n,toward,select(BEZEL,RIM,inside),select(BEZEL_ROUGH,RIM_ROUGH,inside),tv);
+        let knobs=controls(local)<.5;
+        var albedo=select(BEZEL,RIM,inside);
+        var rough=select(BEZEL_ROUGH,RIM_ROUGH,inside);
+        if knobs {albedo=CONTROLS;rough=CONTROLS_ROUGH;}
+        light=lit(p,n,toward,albedo,rough,tv);
     } else if glass.x>0.0 {
-        // The glass: the picture through it, the lit rim in its curve and a
-        // faint sheen of the bank's light.
+        // The glass: the picture through it, the lit rim in its curve, a
+        // faint glare and the phosphor's scattered light.
         let tv=glass.yz;
-        let k=index_of(tv);
+        let look=look_of(tv);
         let p=eye+d*glass.x;
         let local=p-vec3f(tv*PITCH,0.0);
         let half=glass_half(a);
         let n=normalize(vec3f(BULGE*a*local.xy/(half*half),1.0));
         let cv=max(dot(n,toward),0.0);
         let fresnel=GLASS_F0+(1.0-GLASS_F0)*pow(1.0-cv,5.0);
-        // The picture's place on this set's face.
-        let place=PLACE[k];
-        let turn=radians(place.z);
-        let q=(local.xy-place.xy*vec2f(1,-1))/place.w;
-        let turned=vec2f(cos(turn)*q.x+sin(turn)*q.y,-sin(turn)*q.x+cos(turn)*q.y);
+        let plain=placed(local.xy,look);
         let pixel=glass.x*2.0*ec.eye.w/u.screen.y/max(cv,.3);
         let edge=1.0-smoothstep(-pixel,0.0,outline(local.xy,half,glass_power(a)));
-        light=screen(turned/PICTURE,a,pixel)*set_tint(k)*(1.0-fresnel*a)*edge;
+        var shown=screen(plain,a,pixel,look.exponents)*look.brightness;
+        if look.purity>0.0 {
+            // A patch of the face tinted by the tube's purity.
+            let w=local.xy/half-vec2f(.45,.35);
+            shown*=mix(vec3f(1),PURITY,exp(-dot(w,w)*3.0));
+        }
+        light=shown*(1.0-fresnel*a)*edge;
         if a>0.0 {
             let r=reflect(d,n);
-            var reach=bank_span(p,r);
+            var reach=wall_span(p,r);
             reach.y=min(reach.y,reach.x+200.0);
             let back=select(-1.0,march(p+n*.05,r,reach,a),reach.x<reach.y);
             if back>0.0 {
                 let q2=p+n*.05+r*back;
-                let n2=bank_normal(q2,a);
+                let n2=wall_normal(q2,a);
                 light+=fresnel*lit(q2,n2,-r,RIM,RIM_ROUGH,set_of(q2.xy));
             }
-            var mean=vec3f(0);
-            for(var c=0u;c<12u;c++) {mean+=cell_light(c);}
-            let bank_light=(mean/12.0*screen_gain()+screen_flash())*LIGHT;
-            // The sheen is a glare, near white: the bank's light's brightness.
             let sheen=pow(max(dot(r,normalize(SHEEN_FROM)),0.0),SHEEN_POWER);
-            let glare=dot(bank_light,vec3f(.2126,.7152,.0722))*vec3f(.97,1.0,1.03);
-            light+=SHEEN*a*fresnel/GLASS_F0*sheen*glare;
-            light+=SCATTER*a*bank_light*edge;
+            light+=SHEEN*a*fresnel/GLASS_F0*sheen*wall_light();
         }
     }
     return vec4f(max(light*ec.beam.w,vec3f(0)),1);

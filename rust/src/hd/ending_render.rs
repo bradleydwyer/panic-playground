@@ -4,7 +4,7 @@
 //! renderer's HDR target, which then takes the shared bloom and tonemap, as
 //! part 7's does.
 use super::clip::vga_linear;
-use super::ending::{EndingPreview, halation};
+use super::ending::{EndingPreview, halation, picture_levels};
 use super::renderer::wgsl_parts;
 use wgpu::util::DeviceExt;
 use wgpu::*;
@@ -141,6 +141,61 @@ impl EndingRenderer {
             bytemuck::cast_slice(&halation(&preview.monster, preview.palette(0))),
             8,
         );
+        // The far tubes' pictures: on the hold's palette and on the white
+        // behind the monster, with their mipmaps.
+        let white = preview.frames.iter().position(|f| f.step >= 2).unwrap_or(0);
+        let layers = [
+            picture_levels(&preview.monster, preview.palette(0)),
+            picture_levels(&preview.monster, preview.palette(white)),
+        ];
+        let pictures = device.create_texture(&TextureDescriptor {
+            label: Some("Part 8 far pictures"),
+            size: Extent3d {
+                width: 320,
+                height: 200,
+                depth_or_array_layers: 2,
+            },
+            mip_level_count: layers[0].len() as u32,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: HDR,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        for (layer, levels) in layers.iter().enumerate() {
+            for (mip, (w, h, texels)) in levels.iter().enumerate() {
+                queue.write_texture(
+                    TexelCopyTextureInfo {
+                        texture: &pictures,
+                        mip_level: mip as u32,
+                        origin: Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: layer as u32,
+                        },
+                        aspect: TextureAspect::All,
+                    },
+                    bytemuck::cast_slice(texels),
+                    TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(w * 8),
+                        rows_per_image: Some(*h),
+                    },
+                    Extent3d {
+                        width: *w,
+                        height: *h,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+        }
+        let trilinear = device.create_sampler(&SamplerDescriptor {
+            label: Some("Part 8 far pictures"),
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: MipmapFilterMode::Linear,
+            ..Default::default()
+        });
         let original = device.create_texture(&TextureDescriptor {
             label: Some("Part 8 original"),
             size: Extent3d {
@@ -199,6 +254,15 @@ impl EndingRenderer {
                 entry(7, sampled(float)),
                 entry(8, storage),
                 entry(9, storage),
+                entry(
+                    10,
+                    BindingType::Texture {
+                        sample_type: float,
+                        view_dimension: TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                ),
+                entry(11, BindingType::Sampler(SamplerBindingType::Filtering)),
             ],
         });
         let view = |t: &Texture| t.create_view(&Default::default());
@@ -208,6 +272,10 @@ impl EndingRenderer {
             view(&original),
             view(&glow),
         );
+        let pictures_view = pictures.create_view(&TextureViewDescriptor {
+            dimension: Some(TextureViewDimension::D2Array),
+            ..Default::default()
+        });
         let data = device.create_bind_group(&BindGroupDescriptor {
             label: Some("Part 8 data"),
             layout: &layout,
@@ -251,6 +319,14 @@ impl EndingRenderer {
                 BindGroupEntry {
                     binding: 9,
                     resource: cells.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 10,
+                    resource: BindingResource::TextureView(&pictures_view),
+                },
+                BindGroupEntry {
+                    binding: 11,
+                    resource: BindingResource::Sampler(&trilinear),
                 },
             ],
         });
@@ -365,7 +441,7 @@ fn key(preview: &EndingPreview) -> (usize, usize) {
 mod tests {
     use super::super::clip::{Clip, ScrollerLighting};
     use super::super::ending::{
-        BANK_HEIGHT, DOT_COLUMN, EndingBlock, LINE_ROW, PERSISTENCE, TRAIL_AGES,
+        DOT_COLUMN, EndingBlock, LINE_ROW, PERSISTENCE, SET_PITCH, TRAIL_AGES,
     };
     use super::super::renderer::{Renderer, View};
     use std::mem::{offset_of, size_of};
@@ -469,11 +545,11 @@ mod tests {
         for constant in [persistence, ages] {
             assert!(crt.contains(&constant), "ending_crt.wgsl lacks {constant}");
         }
-        // The bank the camera frames (ending::BANK_HEIGHT): three sets and
-        // two gaps high, at a pitch of a set and a gap.
+        // The wall the camera draws back from (ending::SET_PITCH): a set and
+        // a gap to each pitch.
         let bank = include_str!("ending_set.wgsl");
-        let (set, gap) = ((182.0, 142.0), 5.0);
-        assert_eq!(6.0 * set.1 + 2.0 * gap, BANK_HEIGHT);
+        let (set, gap) = ((184.0, 146.0), 8.0);
+        assert_eq!(2.0 * set.1 + gap, SET_PITCH);
         for constant in [
             format!("const SET=vec2f({:.1},{:.1});", set.0, set.1),
             format!("const GAP={gap:.1};"),
