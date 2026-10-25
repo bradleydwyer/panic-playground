@@ -451,7 +451,7 @@ mod tests {
         let crt = include_str!("ending_crt.wgsl");
         let part7 = [
             include_str!("greetings_common.wgsl"),
-            include_str!("greetings_light.wgsl"),
+            include_str!("greetings_monster.wgsl"),
         ]
         .concat();
         let compact = |s: &str| s.split_whitespace().collect::<String>();
