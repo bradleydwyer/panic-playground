@@ -70,8 +70,9 @@ the full importer.
 
 The `panic-hd` preview covers the opening through the PANIC logo, and with
 `--scroller`, `--rings`, `--field`, `--dots`, `--plasma`, `--greetings` and
-`--ending` continues through parts 2, 6, 5, 3, 4, 7 and 8, to the demo's end.
-Build and run it from the repository root after importing your data:
+`--ending` continues through parts 2, 6, 5, 3, 4, 7 and 8, to the demo's end;
+`--full` is the same as `--ending`, the whole demo. Build and run it from the
+repository root after importing your data:
 
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --modern

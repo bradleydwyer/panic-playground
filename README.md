@@ -43,7 +43,13 @@ needs Python, Deark and the packages in `requirements-import.txt`. It checks the
 release and every generated file against known hashes, and keeps its output
 under the ignored `artifacts/` directory.
 
-Then, from the repository root:
+Then, from the repository root, to play the whole demo:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --full
+```
+
+`--modern` on its own plays the intro and holds on the PANIC logo:
 
 ```sh
 cargo run --release --locked --features hires --bin panic-hd -- --modern
@@ -57,7 +63,7 @@ with `--data /path/to/local-data`, or set `PANIC_DATA`.
 For a split comparison, with the original on the left:
 
 ```sh
-cargo run --release --locked --features hires --bin panic-hd -- --modern --split
+cargo run --release --locked --features hires --bin panic-hd -- --full --split
 ```
 
 To continue through the next transition, where the logo screen is cut away
