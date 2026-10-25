@@ -1587,9 +1587,10 @@ and motion, and on the block fitted to the logo.
   1.4 deep; and the stone's colour and mottling are the logo's, flattened
   of its painted light. The faces are polished and the cut and the cracks
   rough, with a fine grain.
-- The plasma is two sheets of light standing behind the slab, 70 units
-  apart, their bottom edges on the plasma's last raster, leaning a little
-  over the slab, wide enough for a 21:9 drawable: the original's two
+- The plasma is two sheets of light standing on the floor behind the
+  slab, both from the line where the floor meets the plasma's last raster,
+  leaning over the slab, the back one less, so it stands further back as
+  they rise, wide enough for a 21:9 drawable: the original's two
   interlaced copies of the field, the even rasters' and the odd ones', a
   sheet each, sliding past each other as the strides move them. On each,
   at each point, the colour the original's copy shows there, made
@@ -1624,6 +1625,11 @@ and motion, and on the block fitted to the logo.
   while the plasma is dark and dims to a fifth as the plasma rises.
 - A mist hanging at the sheets scatters a little of their light, so it
   spills softly below their edges.
+- The ground, which the original lacks, is the slab's base reaching back
+  to the sheets, which stand on it: calm water mirroring them, with an
+  occasional drop, or with **D** polished dark stone. The number keys tune
+  the water. It shows only by their light, so only while the plasma is lit
+  ([docs/part4-plasma.md](../docs/part4-plasma.md)).
 - The arrival: on the slab frame part 3's own modern view, its box flared,
   is still drawn, and gives way to this one over 0.35 s. The stone comes in
   overexposed, white rather than its colour, and the exposure settles over
@@ -1631,7 +1637,8 @@ and motion, and on the block fitted to the logo.
   white first.
 - Each order's first row swells the sheet's light a little; the slab sinks
   along the camera's vertical so its far edge, the top of its silhouette,
-  follows the original's line compare.
+  follows the original's line compare, the floor and the dark sheets with
+  it.
 
 Part 3's view during the handover is part 3's renderer at a moment past
 its last frame, which it already handles (its slab frame is held and the

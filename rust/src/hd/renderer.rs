@@ -177,7 +177,7 @@ struct PlasmaBlock {
     camera: vec4f,
     // The slab: near top edge's centre, rounding; tilt's sine and cosine,
     // width, depth; height, deepest carving, stone red and green; stone
-    // blue.
+    // blue, the ground (0 water, 1 polished floor).
     slab_origin: vec4f,
     slab_axes: vec4f,
     slab_size: vec4f,
@@ -193,9 +193,13 @@ struct PlasmaBlock {
     // The modern view's palette, smoothed over time: rotation per frame,
     // rotation, level.
     motion: vec4f,
-    // The back sheet: bottom edge's centre, height; half width.
+    // The back sheet: bottom edge's centre, height; half width, up.
     sheet_back: vec4f,
     sheet_back_size: vec4f,
+    // The water: mirror gain, swell height, swell clock, swell size; the
+    // drops: place across and back, age, 1 (0 none).
+    water: vec4f,
+    drops: array<vec4f,6>,
 }
 // Part 7's controls (hd/greetings.rs, GreetingsBlock), in u.greetings.
 struct GreetingsBlock {
@@ -2438,9 +2442,11 @@ mod tests {
             motion,
             sheet_back,
             sheet_back_size,
+            water,
+            drops,
         ];
         assert_eq!(
-            expected.last().unwrap().1 + size_of::<[f32; 4]>(),
+            expected.last().unwrap().1 + size_of::<[[f32; 4]; super::super::plasma::MAX_DROPS]>(),
             size_of::<PlasmaBlock>()
         );
         for (name, source) in [

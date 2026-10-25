@@ -152,10 +152,11 @@ pub struct PlasmaBlock {
     /// Its height, the deepest carving, and the stone's colour (linear):
     /// red and green.
     pub slab_size: [f32; 4],
-    /// The stone's blue, unused.
+    /// The stone's blue; the ground the slab stands on (0 water, 1 the
+    /// polished floor, [`PlasmaPreview::polished_floor`]); unused.
     pub stone: [f32; 4],
     /// The plasma's front sheet of light: its bottom edge's centre in
-    /// camera space and its height.
+    /// camera space, slide included, and its height.
     pub sheet: [f32; 4],
     /// Its half width, and the direction up it (camera space).
     pub sheet_size: [f32; 4],
@@ -168,10 +169,82 @@ pub struct PlasmaBlock {
     /// ([`PlasmaPreview::glide`]): its rotation per frame toward the next
     /// (for the shutter), its rotation and its level; unused.
     pub motion: [f32; 4],
-    /// The back sheet: its bottom edge's centre and height; its half width,
-    /// unused.
+    /// The back sheet: its bottom edge's centre and height; its half width
+    /// and the direction up it.
     pub sheet_back: [f32; 4],
     pub sheet_back_size: [f32; 4],
+    /// The water ([`WaterTuning`]): the mirror's gain, the swell's height
+    /// (its slopes' scale), the swell's own clock (seconds) and its size
+    /// (its wavelengths' scale).
+    pub water: [f32; 4],
+    /// The drops on the water ([`PlasmaPreview::drops`]): each one's place
+    /// on it (across, and back from below the slab's near top edge), its
+    /// age (seconds) and 1, or all 0 for none.
+    pub drops: [[f32; 4]; MAX_DROPS],
+}
+
+/// The water's mirror gain by default (authored; see plasma_light.wgsl,
+/// shade_water): water reflects only 2 to 7% at this camera's angles.
+pub const WATER_MIRROR: f64 = 3.0;
+/// The live tuning (the preview's number keys): each a step of x1.25,
+/// between these steps from the default. The mirror's gain is held to 1
+/// (water as it is) to 8; the swell's height reaches 0 (a flat mirror) one
+/// step below its lowest, and the drops' rate 0 (none) likewise.
+pub const WATER_MIRROR_RANGE: (f64, f64) = (1.0, 8.0);
+pub const WATER_STEPS: (i32, i32) = (-6, 6);
+pub const SWELL_HEIGHT_STEPS: (i32, i32) = (-10, 6);
+const TUNING_STEP: f64 = 1.25;
+/// The drops (authored): how many can be on the water at once, how long
+/// each lasts (plasma_light.wgsl's DROP_LIFE), the range of the intervals
+/// between them (seconds, at the default rate), and how long after the
+/// plasma begins to light the first falls. The last falls in time to be
+/// gone when the plasma is dark again.
+pub const MAX_DROPS: usize = 6;
+pub const DROP_LIFE: f64 = 4.0;
+const DROP_INTERVALS: (f64, f64) = (3.0, 6.0);
+const DROP_FIRST: f64 = 2.0;
+/// Where drops fall (authored): rows of the screen below the plasma, the
+/// distance from the frame's centre line (scene units, a 16:9 frame
+/// reaching 178), and how far clear of the slab, so they fall in view and
+/// never behind it.
+const DROP_ROWS: (f64, f64) = (122.0, 192.0);
+const DROP_ACROSS: (f64, f64) = (95.0, 170.0);
+const DROP_CLEAR: f64 = 15.0;
+
+/// The water's live tuning (authored), in steps of x1.25 from the
+/// defaults; all 0 by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WaterTuning {
+    /// The mirror's gain, the swell's height, speed and size, and the
+    /// drops' rate.
+    pub mirror: i32,
+    pub height: i32,
+    pub speed: i32,
+    pub size: i32,
+    pub drops: i32,
+    /// Where the swell's clock was when its speed last changed: part-4
+    /// seconds and the clock's own, so a change of speed does not move
+    /// the waves.
+    anchor: (f64, f64),
+}
+
+/// The water's tuning knobs, as the preview's number keys step them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaterKnob {
+    Mirror,
+    Height,
+    Speed,
+    Size,
+    Drops,
+}
+
+/// A number from 0 to 1 for `k` (splitmix64), for the drops' fixed
+/// schedule and places.
+fn unit_hash(k: u64) -> f64 {
+    let mut z = k.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    (z ^ (z >> 31)) as f64 / u64::MAX as f64
 }
 
 /// Part 4 of the HD clip: from its first drawn frame to part 7's first.
@@ -201,6 +274,11 @@ pub struct PlasmaPreview {
     pub glide: Vec<[f64; 2]>,
     /// Clip times of the orders' first rows during part 4.
     order_starts: Vec<f64>,
+    /// The modern view's ground: the polished stone floor instead of the
+    /// water (authored, both; the preview's D key).
+    pub polished_floor: bool,
+    /// The water's live tuning.
+    pub water: WaterTuning,
 }
 
 impl PlasmaPreview {
@@ -323,6 +401,8 @@ impl PlasmaPreview {
             stone,
             glide,
             order_starts,
+            polished_floor: false,
+            water: WaterTuning::default(),
         })
     }
 }
@@ -600,6 +680,144 @@ impl PlasmaPreview {
         &self.order_starts
     }
 
+    /// The water's mirror gain, the swell's height, speed and size, and the
+    /// drops' rate, as tuned (each 1 by default but the gain).
+    pub fn water_mirror(&self) -> f64 {
+        (WATER_MIRROR * TUNING_STEP.powi(self.water.mirror))
+            .clamp(WATER_MIRROR_RANGE.0, WATER_MIRROR_RANGE.1)
+    }
+    pub fn swell_height(&self) -> f64 {
+        if self.water.height < SWELL_HEIGHT_STEPS.0 {
+            0.0
+        } else {
+            TUNING_STEP.powi(self.water.height)
+        }
+    }
+    pub fn swell_speed(&self) -> f64 {
+        TUNING_STEP.powi(self.water.speed)
+    }
+    pub fn swell_size(&self) -> f64 {
+        TUNING_STEP.powi(self.water.size)
+    }
+    pub fn drop_rate(&self) -> f64 {
+        if self.water.drops < WATER_STEPS.0 {
+            0.0
+        } else {
+            TUNING_STEP.powi(self.water.drops)
+        }
+    }
+
+    /// The swell's own clock at part-4 `seconds`: the part's seconds at the
+    /// default speed, running faster or slower from where it was when the
+    /// speed last changed.
+    pub fn swell_time(&self, seconds: f64) -> f64 {
+        let (at, clock) = self.water.anchor;
+        clock + self.swell_speed() * (seconds - at)
+    }
+
+    /// Step a knob down or up at clip time `time`, and say where it is.
+    pub fn tune_water(&mut self, knob: WaterKnob, up: bool, time: f64) -> String {
+        let step = if up { 1 } else { -1 };
+        let w = &mut self.water;
+        match knob {
+            WaterKnob::Mirror => {
+                let lowest = (WATER_MIRROR_RANGE.0 / WATER_MIRROR).ln() / TUNING_STEP.ln();
+                let highest = (WATER_MIRROR_RANGE.1 / WATER_MIRROR).ln() / TUNING_STEP.ln();
+                w.mirror = (w.mirror + step).clamp(lowest.floor() as i32, highest.ceil() as i32);
+                format!("Part 4 water: mirror x{:.2}", self.water_mirror())
+            }
+            WaterKnob::Height => {
+                w.height = (w.height + step).clamp(SWELL_HEIGHT_STEPS.0 - 1, SWELL_HEIGHT_STEPS.1);
+                format!("Part 4 water: swell height x{:.2}", self.swell_height())
+            }
+            WaterKnob::Speed => {
+                let seconds = time - self.seconds(0);
+                let clock = self.swell_time(seconds);
+                let w = &mut self.water;
+                w.anchor = (seconds, clock);
+                w.speed = (w.speed + step).clamp(WATER_STEPS.0, WATER_STEPS.1);
+                format!("Part 4 water: swell speed x{:.2}", self.swell_speed())
+            }
+            WaterKnob::Size => {
+                w.size = (w.size + step).clamp(WATER_STEPS.0, WATER_STEPS.1);
+                format!("Part 4 water: swell size x{:.2}", self.swell_size())
+            }
+            WaterKnob::Drops => {
+                w.drops = (w.drops + step).clamp(WATER_STEPS.0 - 1, WATER_STEPS.1);
+                format!("Part 4 water: {}", self.drops_label())
+            }
+        }
+    }
+
+    /// The drops' rate in words: their mean interval, or none.
+    pub fn drops_label(&self) -> String {
+        let rate = self.drop_rate();
+        if rate <= 0.0 {
+            "no drops".to_owned()
+        } else {
+            let mean = (DROP_INTERVALS.0 + DROP_INTERVALS.1) / 2.0 / rate;
+            format!("a drop every {mean:.1} s")
+        }
+    }
+
+    /// The water's settings for the window's title.
+    pub fn water_title(&self) -> String {
+        format!(
+            "water: mirror ×{:.2}, swell ×{:.2} high ×{:.2} fast ×{:.2} long, {}",
+            self.water_mirror(),
+            self.swell_height(),
+            self.swell_speed(),
+            self.swell_size(),
+            self.drops_label()
+        )
+    }
+
+    /// The drops on the water at part-4 `seconds` (authored, fixed): drop
+    /// k falls at a fixed time, the intervals between them each between
+    /// DROP_INTERVALS (from a hash of k) over the rate, the first
+    /// DROP_FIRST after the plasma begins to light and none so late that
+    /// it would outlast the plasma's light; each falls at a fixed place
+    /// (from a hash of k), in view beside the slab. Up to MAX_DROPS at
+    /// once: their places, ages and 1.
+    pub fn drops(&self, seconds: f64) -> [[f32; 4]; MAX_DROPS] {
+        let mut out = [[0.0; 4]; MAX_DROPS];
+        let rate = self.drop_rate();
+        let e = &self.events;
+        if rate <= 0.0 || e.fade_in < 0.0 || e.dark < 0.0 {
+            return out;
+        }
+        let mut at = e.fade_in + DROP_FIRST;
+        let mut n = 0;
+        for k in 0_u64.. {
+            if at > seconds || at + DROP_LIFE > e.dark || n == MAX_DROPS {
+                break;
+            }
+            let age = seconds - at;
+            if age < DROP_LIFE
+                && let Some([x, back]) = self.drop_place(k)
+            {
+                out[n] = [x as f32, back as f32, age as f32, 1.0];
+                n += 1;
+            }
+            let (lo, hi) = DROP_INTERVALS;
+            at += (lo + (hi - lo) * unit_hash(2 * k)) / rate;
+        }
+        out
+    }
+
+    /// Where drop k falls on the water (across, back), from a hash of k: a
+    /// point of the screen beside the slab, left or right, taken down to
+    /// the water; tried again where the slab, with a margin, would hide it.
+    fn drop_place(&self, k: u64) -> Option<[f64; 2]> {
+        (0..16).find_map(|attempt| {
+            let h = |i: u64| unit_hash(((2 * k + 1) << 8) + 4 * attempt + i);
+            let side = if h(0) < 0.5 { -1.0 } else { 1.0 };
+            let across = side * (DROP_ACROSS.0 + (DROP_ACROSS.1 - DROP_ACROSS.0) * h(1));
+            let row = DROP_ROWS.0 + (DROP_ROWS.1 - DROP_ROWS.0) * h(2);
+            self.stone.ground_point(160.0 + across * 1.2, row, DROP_CLEAR)
+        })
+    }
+
     /// Everything part 4 puts in `u.plasma` at a clip time, but the music's
     /// cue strengths, which the renderer adds.
     pub fn controls(&self, time: f64) -> PlasmaBlock {
@@ -636,6 +854,13 @@ impl PlasmaPreview {
         let pose = stone.pose(slide_rows);
         let handover = (1.0 - seconds.max(0.0) / HANDOVER).clamp(0.0, 1.0);
         let [front, rear] = stone.sheets;
+        // The sheets, the floor (the slab's base) and the slab slide as one,
+        // as if the camera rose (authored): the slab exactly as before, the
+        // floor and the sheets, dark by then, with it.
+        let slid = |p: [f64; 3]| -> [f32; 3] {
+            std::array::from_fn(|k| (p[k] + pose[k] - stone.corner[k]) as f32)
+        };
+        let (front_base, rear_base) = (slid(front.base), slid(rear.base));
         PlasmaBlock {
             part: [
                 1.0,
@@ -686,18 +911,23 @@ impl PlasmaPreview {
                 stone.colour[0],
                 stone.colour[1],
             ],
-            stone: [stone.colour[2], 0.0, 0.0, 0.0],
+            stone: [
+                stone.colour[2],
+                if self.polished_floor { 1.0 } else { 0.0 },
+                0.0,
+                0.0,
+            ],
             sheet: [
-                front.base[0] as f32,
-                front.base[1] as f32,
-                front.base[2] as f32,
+                front_base[0],
+                front_base[1],
+                front_base[2],
                 front.height as f32,
             ],
             sheet_size: [
                 front.half_width as f32,
-                stone.sheet_up[0] as f32,
-                stone.sheet_up[1] as f32,
-                stone.sheet_up[2] as f32,
+                front.up[0] as f32,
+                front.up[1] as f32,
+                front.up[2] as f32,
             ],
             hits,
             hit_strength: [0.0; 4],
@@ -712,12 +942,24 @@ impl PlasmaPreview {
                 0.0,
             ],
             sheet_back: [
-                rear.base[0] as f32,
-                rear.base[1] as f32,
-                rear.base[2] as f32,
+                rear_base[0],
+                rear_base[1],
+                rear_base[2],
                 rear.height as f32,
             ],
-            sheet_back_size: [rear.half_width as f32, 0.0, 0.0, 0.0],
+            sheet_back_size: [
+                rear.half_width as f32,
+                rear.up[0] as f32,
+                rear.up[1] as f32,
+                rear.up[2] as f32,
+            ],
+            water: [
+                self.water_mirror() as f32,
+                self.swell_height() as f32,
+                self.swell_time(seconds) as f32,
+                self.swell_size() as f32,
+            ],
+            drops: self.drops(seconds),
         }
     }
 }

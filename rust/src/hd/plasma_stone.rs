@@ -23,8 +23,10 @@
 //!   colour and mottling are the logo's, flattened of its painted light.
 //! - Authored: the carving's depth and bevel, the cracks' depth, the
 //!   rounding of the edges, the plasma's sheet of light behind the slab
-//!   (where it stands and how large it is), the exposure the slab arrives
-//!   with and everything in plasma_light.wgsl.
+//!   (where it stands and how large it is), the floor the slab stands on
+//!   and where the sheets meet it, the exposure the slab arrives with and
+//!   everything in plasma_light.wgsl. The original has no floor: below
+//!   its plasma, beside the logo, it is black.
 use half::f16;
 
 /// The edges' rounding, the carving's depth and the width of its bevel,
@@ -39,14 +41,24 @@ const OUTLINE_BLUR: f64 = 2.0;
 const CRACK_DEPTH: f64 = 1.4;
 /// No carving this near a face's edges (the logo darkens its silhouette).
 const EDGE_MARGIN: f64 = 4.0;
+/// The slab's right end (authored): over how far in from the margin the
+/// cracks fade out toward it (see `Stone::carve`).
+const RIGHT_END_FADE: f64 = 4.0;
 /// Texels of the relief across the block's width (authored; the logo
 /// spans about 300 of its pixels).
 pub const RELIEF_TEXELS: usize = 1024;
-/// The plasma's two sheets of light (authored): how far behind the slab's
-/// far edge the front one stands and the back one behind it, the source
-/// row their bottom edges project to (the plasma's last raster, 225, read
-/// from the code: its bottom is row 113), how far above the screen's top
-/// they reach, and the widest drawable they span (aspect).
+/// The plasma's two sheets of light (authored). Their top edges stand
+/// where they did before the floor: each top edge where a sheet leaning
+/// SHEET_LEAN toward the camera from upright, its foot SHEET_BEHIND behind
+/// the slab's far edge at the height of its top face (and SHEET_GAP
+/// further for the back one), reaches SHEET_ABOVE_ROWS above the screen.
+/// From there each sheet runs down to the floor, both to one line on it:
+/// where the floor, seen straight back past the slab, meets the source row
+/// their bottom edges project to (the plasma's last raster, 225, read from
+/// the code: its bottom is row 113). So on the screen they span what they
+/// did, and they stand on the floor; the back one leans a little less
+/// than the front, so they open from that line like the pages of a book.
+/// The widest drawable they span (aspect).
 const SHEET_BEHIND: f64 = 30.0;
 const SHEET_GAP: f64 = 70.0;
 /// How far the sheet leans toward the camera from upright (radians), so
@@ -77,12 +89,14 @@ pub struct Relief {
 }
 
 /// One of the plasma's sheets of light: its bottom edge's centre in camera
-/// space, its height (up the sheet) and its half width.
+/// space, its height (up the sheet), its half width and the direction up
+/// it (camera space).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sheet {
     pub base: [f64; 3],
     pub height: f64,
     pub half_width: f64,
+    pub up: [f64; 3],
 }
 
 /// The modern view's slab and the camera it is seen through.
@@ -102,10 +116,8 @@ pub struct Stone {
     pub size: [f64; 3],
     /// The stone's colour, linear.
     pub colour: [f32; 3],
-    /// The plasma's two sheets, the front one first, and the direction up
-    /// them (camera space).
+    /// The plasma's two sheets, the front one first.
     pub sheets: [Sheet; 2],
-    pub sheet_up: [f64; 3],
     /// The top face, across (x) and from the near edge to the far (y), and
     /// the front face, across and from the top edge down.
     pub top: Relief,
@@ -166,6 +178,44 @@ fn blur(values: &[f64], weight: &[f64], w: usize, sigma: (f64, f64)) -> Vec<f64>
         .zip(&den)
         .map(|(n, d)| if *d > 1e-6 { n / d } else { 0.0 })
         .collect()
+}
+
+/// `mask` (`w` wide) less every region of it (4-connected) that reaches
+/// column `column`.
+fn without_regions_reaching(mask: &[bool], w: usize, column: usize) -> Vec<bool> {
+    let h = mask.len() / w;
+    let mut out = mask.to_vec();
+    let mut stack = Vec::new();
+    for y in 0..h {
+        let i = y * w + column;
+        if out[i] {
+            out[i] = false;
+            stack.push(i);
+        }
+    }
+    while let Some(i) = stack.pop() {
+        let (x, y) = (i % w, i / w);
+        let mut next = Vec::with_capacity(4);
+        if x > 0 {
+            next.push(i - 1);
+        }
+        if x + 1 < w {
+            next.push(i + 1);
+        }
+        if y > 0 {
+            next.push(i - w);
+        }
+        if y + 1 < h {
+            next.push(i + w);
+        }
+        for j in next {
+            if out[j] {
+                out[j] = false;
+                stack.push(j);
+            }
+        }
+    }
+    out
 }
 
 /// Bilinear sample of a `w`-wide image at (x, y), clamped at its edges.
@@ -298,7 +348,6 @@ impl Stone {
             size,
             colour: [0.0; 3],
             sheets: [Sheet::default(); 2],
-            sheet_up: [0.0; 3],
             top: Relief {
                 size: (0, 0),
                 texels: Vec::new(),
@@ -345,33 +394,98 @@ impl Stone {
         1.0 + ARRIVAL_EXPOSURE * (1.0 - progress.clamp(0.0, 1.0)).powf(ARRIVAL_CURVE)
     }
 
+    /// The floor the slab stands on (authored): its base, the box's height
+    /// below its top face, level with it. Its point straight below the
+    /// near top edge's centre (camera space).
+    pub fn floor(&self) -> [f64; 3] {
+        let (_, down) = self.axes();
+        std::array::from_fn(|k| self.corner[k] + self.size[2] * down[k])
+    }
+
+    /// Where the ray through source point (`column`, `row`) meets the
+    /// floor, in its coordinates (across, and back from below the near top
+    /// edge), or None where it misses it or the block, grown by `clear`
+    /// all round, stands in the way.
+    pub fn ground_point(&self, column: f64, row: f64, clear: f64) -> Option<[f64; 2]> {
+        let (back, down) = self.axes();
+        let d = [
+            (column - self.axis) / (1.2 * self.focal),
+            (row - 100.0) / self.focal,
+            1.0,
+        ];
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let floor = self.floor();
+        // The floor's normal is -down: the ray meets it going down.
+        let toward = dot(d, down);
+        if toward <= 0.0 {
+            return None;
+        }
+        let t = dot(floor, down) / toward;
+        let p = d.map(|v| v * t);
+        // The block in its own coordinates (across, back, down from the
+        // top face), grown by `clear`: the slab test along the ray.
+        let o = self.corner.map(|v| -v);
+        let (ro, rd) = (
+            [o[0], dot(o, back), dot(o, down)],
+            [d[0], dot(d, back), dot(d, down)],
+        );
+        let lo = [-self.size[0] / 2.0 - clear, -clear, -clear];
+        let hi = [self.size[0] / 2.0 + clear, self.size[1] + clear, self.size[2] + clear];
+        let (mut near, mut far) = (0.0_f64, t);
+        for i in 0..3 {
+            let (a, b) = ((lo[i] - ro[i]) / rd[i], (hi[i] - ro[i]) / rd[i]);
+            near = near.max(a.min(b));
+            far = far.min(a.max(b));
+        }
+        if near < far {
+            return None;
+        }
+        let q: [f64; 3] = std::array::from_fn(|i| p[i] - floor[i]);
+        Some([q[0], dot(q, back)])
+    }
+
+    /// How far back along the floor, from below the near top edge, it
+    /// projects to source row `row` (straight back from the camera's
+    /// axis).
+    pub fn floor_back_to_row(&self, row: f64) -> f64 {
+        let (back, _) = self.axes();
+        let floor = self.floor();
+        let r = (row - 100.0) / self.focal;
+        (r * floor[2] - floor[1]) / (back[1] - r * back[2])
+    }
+
     /// Stand the two sheets of light behind the slab, one behind the other,
-    /// leaning toward the camera from upright, their bottom edges on the
-    /// plasma's last raster.
+    /// their top edges where a sheet leaning toward the camera from
+    /// upright behind the slab reaches above the screen, their bottom
+    /// edges together on the floor where it meets the plasma's last raster
+    /// (see SHEET_BEHIND).
     fn place_sheets(&mut self) {
         let (back, down) = self.axes();
         let (s, c) = SHEET_LEAN.sin_cos();
-        let up: [f64; 3] = std::array::from_fn(|k| -c * down[k] - s * back[k]);
-        self.sheet_up = up;
+        let lean: [f64; 3] = std::array::from_fn(|k| -c * down[k] - s * back[k]);
+        let floor = self.floor();
+        let along = self.floor_back_to_row(SHEET_BOTTOM_ROW);
+        let bottom: [f64; 3] = std::array::from_fn(|k| floor[k] + along * back[k]);
         for (k, sheet) in self.sheets.iter_mut().enumerate() {
             let behind = self.size[1] + SHEET_BEHIND + k as f64 * SHEET_GAP;
-            let base: [f64; 3] = std::array::from_fn(|i| self.corner[i] + behind * back[i]);
-            // The height along `up` at which a point of the sheet projects
-            // to source row `row`.
+            let foot: [f64; 3] = std::array::from_fn(|i| self.corner[i] + behind * back[i]);
+            // The distance along `lean` at which a point of the leaning
+            // sheet projects to source row `row`.
             let at_row = |row: f64| {
                 let r = row - 100.0;
-                (r * base[2] - self.focal * base[1]) / (self.focal * up[1] - r * up[2])
+                (r * foot[2] - self.focal * foot[1]) / (self.focal * lean[1] - r * lean[2])
             };
-            let bottom = at_row(SHEET_BOTTOM_ROW);
-            let top = at_row(-SHEET_ABOVE_ROWS);
-            let base: [f64; 3] = std::array::from_fn(|i| base[i] + bottom * up[i]);
-            let height = top - bottom;
+            let reach = at_row(-SHEET_ABOVE_ROWS);
+            let top: [f64; 3] = std::array::from_fn(|i| foot[i] + reach * lean[i]);
+            let span: [f64; 3] = std::array::from_fn(|i| top[i] - bottom[i]);
+            let height = span.iter().map(|v| v * v).sum::<f64>().sqrt();
             let columns = 160.0 * SHEET_ASPECT / (4.0 / 3.0) + 40.0;
-            let far = base[2] + height * up[2].max(0.0);
+            let far = bottom[2].max(top[2]);
             *sheet = Sheet {
-                base,
+                base: bottom,
                 height,
-                half_width: columns * far.max(base[2]) / (1.2 * self.focal),
+                half_width: columns * far / (1.2 * self.focal),
+                up: span.map(|v| v / height),
             };
         }
     }
@@ -454,19 +568,30 @@ impl Stone {
                     .map(|(&l, _)| l)
                     .collect::<Vec<_>>(),
             ) - 0.05;
-            let carved: Vec<bool> = (0..w * h)
+            let cut: Vec<bool> = (0..w * h)
                 .map(|i| {
                     let (x, y) = (i % w, i / w);
                     seen[i] && light[i] < threshold && x >= border && y >= border && x + border < w
                 })
                 .collect();
+            // The right end (an interpretation, authored): the logo's light
+            // comes from the upper left, so it paints the slab's right end
+            // in shade and outlines its right edge dark. Read as carving,
+            // that shade ran into the margin and was cut off straight there,
+            // and the outline read as a crack along the edge, so the end
+            // looked framed. Carving that reaches the right margin is taken
+            // as that shade and left uncut, the cracks fade out before the
+            // margin, and the stone's colour runs on to the edge (below).
+            let last = w - border - 1;
+            let carved = without_regions_reaching(&cut, w, last);
             let distance = super::clip::signed_distance(&carved, w, h);
             // The stone's own tone on this face, to flatten the painted
-            // light out of its colour.
+            // light out of its colour (over the stone as first read, so the
+            // right end's change leaves the rest of the face as it was).
             let stone_light = {
                 let values: Vec<f64> = light
                     .iter()
-                    .zip(&carved)
+                    .zip(&cut)
                     .zip(&seen)
                     .filter(|&((_, &c), &s)| s && !c)
                     .map(|((&l, _), _)| l)
@@ -485,11 +610,13 @@ impl Stone {
                     }
                 })
                 .collect();
+            let fade = RIGHT_END_FADE / texel;
             let crack: Vec<f64> = (0..w * h)
                 .map(|i| {
                     let p = &places[i];
+                    let end = ((last as f64 - (i % w) as f64) / fade).clamp(0.0, 1.0);
                     if seen[i] {
-                        ((at(&broad, p) - at(&fine, p) - 0.035) / 0.06).clamp(0.0, 1.0)
+                        ((at(&broad, p) - at(&fine, p) - 0.035) / 0.06).clamp(0.0, 1.0) * end
                     } else {
                         0.0
                     }
@@ -501,15 +628,27 @@ impl Stone {
                 .map(|(&c, &k)| CARVE_DEPTH * c + CRACK_DEPTH * k * (1.0 - c))
                 .collect();
             let depth = blur(&depth, &vec![1.0; w * h], w, (DEPTH_BLUR, DEPTH_BLUR));
+            let mut albedo: Vec<f64> = (0..w * h)
+                .map(|i| {
+                    if seen[i] {
+                        (1.0 + 0.9 * (light[i] - stone_light)).clamp(0.55, 1.35)
+                            * if carved[i] { 1.15 } else { 1.0 }
+                    } else {
+                        1.0
+                    }
+                })
+                .collect();
+            // In the right margin, the painted outline and the columns past
+            // the logo's edge take the stone's colour mirrored from just
+            // inside it.
+            for y in 0..h {
+                for x in last + 1..w {
+                    albedo[y * w + x] = albedo[y * w + 2 * last + 1 - x];
+                }
+            }
             let mut texels = Vec::with_capacity(w * h * 4);
             for i in 0..w * h {
-                let albedo = if seen[i] {
-                    (1.0 + 0.9 * (light[i] - stone_light)).clamp(0.55, 1.35)
-                        * if carved[i] { 1.15 } else { 1.0 }
-                } else {
-                    1.0
-                };
-                texels.extend([depth[i], albedo, carve[i], crack[i]].map(f16::from_f64));
+                texels.extend([depth[i], albedo[i], carve[i], crack[i]].map(f16::from_f64));
             }
             Relief {
                 size: (w as u32, h as u32),
