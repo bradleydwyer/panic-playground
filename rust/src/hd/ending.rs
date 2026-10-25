@@ -54,7 +54,7 @@ pub const LINE_COMPRESSION: f64 = 200.0;
 /// trail's taps; the fade to black over the last END_FADE frames.
 pub const CRT_RAMP: f64 = 182.0;
 pub const PERSISTENCE: f64 = 1.6;
-pub const WHITE_PERSISTENCE: f64 = 0.7;
+pub const WHITE_PERSISTENCE: f64 = 0.5;
 pub const AFTERGLOW: f64 = 24.0;
 pub const TRAIL_AGES: [f64; 4] = [1.0, 2.0, 3.0, 4.5];
 pub const END_FADE: f64 = 24.0;
@@ -198,7 +198,7 @@ pub struct EndingPreview {
     /// than 0, and the row's mean colour under the line's palette (linear).
     pub content: (usize, usize),
     pub line_colour: [f64; 3],
-    /// Each column's mean colour under the line's palette (linear), for the
+    /// Each column's mean colour under the hold's palette (linear), for the
     /// squeezed band's trail.
     pub profile: Vec<[f32; 4]>,
     /// Per frame, the phosphor's state after it (authored persistence over
@@ -312,6 +312,7 @@ impl EndingPreview {
         }
         preview.line_colour = sum.map(|s| s / lit.len() as f64);
         let monster = &preview.monster;
+        let palette = preview.palette(0).to_vec();
         let columns: Vec<[f32; 3]> = (0..320)
             .map(|x| {
                 let mut sum = [0.0f32; 3];

@@ -89,14 +89,14 @@ const AFTER_HALO=.25;
 const PERSISTENCE=1.6;
 const TRAIL_AGES=array<f32,5>(0.0,1.0,2.0,3.0,4.5);
 const TRAIL=.12;
-const TRAIL_FALLOFF=1.5;
+const TRAIL_FALLOFF=4.0;
 
 // ---- Bindings --------------------------------------------------------------------
 // Each frame's palette in linear light, 256 entries a frame.
 @group(0) @binding(6) var<storage,read> colours:array<vec4f>;
 // The monster on the hold's palette, linear, blurred (ending::halation).
 @group(0) @binding(7) var halation:texture_2d<f32>;
-// Each column's mean colour under the line's palette (ending::profile).
+// Each column's mean colour under the hold's palette (ending::profile).
 @group(0) @binding(8) var<storage,read> profile:array<vec4f>;
 
 // ---- Part 7's look --------------------------------------------------------------
