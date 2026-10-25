@@ -1,9 +1,10 @@
-//! GPU side of part 7: its tables, the letters' faces, the dust, and the
-//! pipelines. Faithful HD draws straight into the output from the tables;
-//! the modern view draws the dust, marches the cubes (writing the shafts'
-//! source beside them), gathers the shafts at half size and composites into
-//! the modern renderer's HDR target, which then takes the shared bloom and
-//! tonemap.
+//! GPU side of part 7: its tables, the letters' faces, the dust, the air's
+//! density, and the pipelines. Faithful HD draws straight into the output
+//! from the tables. The modern view maps what the strips let through as the
+//! lamp sees it, marches the cubes (their colour, depth and where their
+//! polish mirrors the picture), draws the dust in front of them, marches the
+//! lit air at half size, and composites into the modern renderer's HDR
+//! target, which then takes the shared bloom and tonemap.
 use super::greetings::{GreetingsPreview, ROWS, SLOTS, STRIPS};
 use super::greetings_type::ATLAS_SIZE;
 use super::renderer::wgsl_parts;
@@ -26,16 +27,24 @@ pub(super) fn light_source() -> String {
     wgsl_parts(&[COMMON, LIGHT])
 }
 
+/// The strips' transmission seen from the lamp: the map's size, and its
+/// half extent on the strips' plane (source rows; greetings_light.wgsl's
+/// TRANSMISSION_EXTENT).
+pub const TRANSMISSION_SIZE: (u32, u32) = (1024, 768);
+#[cfg_attr(not(test), allow(dead_code))]
+pub const TRANSMISSION_EXTENT: (f64, f64) = (240.0, 180.0);
+/// The air's density noise: its size (texels a side) and lattices.
+pub const NOISE_SIZE: u32 = 64;
+
 /// The images the modern view's passes hand on, for one drawable size.
 struct Targets {
     size: (u32, u32),
     dust: TextureView,
     cubes: TextureView,
-    scatter: TextureView,
+    depth: TextureView,
     mirror: TextureView,
-    shafts: TextureView,
-    cubes_inputs: BindGroup,
-    shafts_inputs: BindGroup,
+    air: TextureView,
+    scene_inputs: BindGroup,
     style_inputs: BindGroup,
 }
 
@@ -47,14 +56,15 @@ pub(super) struct GreetingsRenderer {
     /// The original frame uploaded to `original`.
     original_frame: Option<usize>,
     motes: u32,
-    cubes_layout: BindGroupLayout,
-    shafts_layout: BindGroupLayout,
+    transmission: TextureView,
+    scene_layout: BindGroupLayout,
     style_layout: BindGroupLayout,
     targets: Option<Targets>,
     faithful: RenderPipeline,
-    dust: RenderPipeline,
+    strips_transmission: RenderPipeline,
     cubes: RenderPipeline,
-    shafts: RenderPipeline,
+    dust: RenderPipeline,
+    air: RenderPipeline,
     style: RenderPipeline,
 }
 
@@ -262,6 +272,52 @@ impl GreetingsRenderer {
             min_filter: FilterMode::Linear,
             ..Default::default()
         });
+        let repeat = device.create_sampler(&SamplerDescriptor {
+            label: Some("Part 7 repeating"),
+            address_mode_u: AddressMode::Repeat,
+            address_mode_v: AddressMode::Repeat,
+            address_mode_w: AddressMode::Repeat,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            ..Default::default()
+        });
+        let noise_texture = device.create_texture(&TextureDescriptor {
+            label: Some("Part 7 air's density"),
+            size: Extent3d {
+                width: NOISE_SIZE,
+                height: NOISE_SIZE,
+                depth_or_array_layers: NOISE_SIZE,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D3,
+            format: TextureFormat::R8Unorm,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            noise_texture.as_image_copy(),
+            &noise(),
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(NOISE_SIZE),
+                rows_per_image: Some(NOISE_SIZE),
+            },
+            Extent3d {
+                width: NOISE_SIZE,
+                height: NOISE_SIZE,
+                depth_or_array_layers: NOISE_SIZE,
+            },
+        );
+        let noise_view = noise_texture.create_view(&Default::default());
+        let transmission = texture(
+            device,
+            "Part 7 strips' transmission",
+            TRANSMISSION_SIZE,
+            HDR,
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        )
+        .create_view(&Default::default());
         let all = ShaderStages::VERTEX | ShaderStages::FRAGMENT;
         let storage = BindingType::Buffer {
             ty: BufferBindingType::Storage { read_only: true },
@@ -289,6 +345,16 @@ impl GreetingsRenderer {
                 entry(7, all, BindingType::Sampler(SamplerBindingType::Filtering)),
                 entry(8, all, sampled(FLOAT)),
                 entry(9, all, storage),
+                entry(
+                    10,
+                    all,
+                    BindingType::Texture {
+                        sample_type: FLOAT,
+                        view_dimension: TextureViewDimension::D3,
+                        multisampled: false,
+                    },
+                ),
+                entry(11, all, BindingType::Sampler(SamplerBindingType::Filtering)),
             ],
         });
         let original_view = original.create_view(&Default::default());
@@ -309,21 +375,29 @@ impl GreetingsRenderer {
                 },
                 view(8, &glyphs),
                 resource(9, &motes),
+                view(10, &noise_view),
+                BindGroupEntry {
+                    binding: 11,
+                    resource: BindingResource::Sampler(&repeat),
+                },
             ],
         });
-        let inputs = |label, bindings: &[u32]| {
-            let entries: Vec<BindGroupLayoutEntry> = bindings
-                .iter()
-                .map(|&b| entry(b, ShaderStages::FRAGMENT, sampled(FLOAT)))
-                .collect();
-            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: Some(label),
-                entries: &entries,
-            })
-        };
-        let cubes_layout = inputs("Part 7 cubes' inputs", &[1]);
-        let shafts_layout = inputs("Part 7 shafts' inputs", &[2]);
-        let style_layout = inputs("Part 7 picture's inputs", &[1, 3, 4, 5]);
+        let depth_type = sampled(TextureSampleType::Float { filterable: false });
+        let scene_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("Part 7 scene's inputs"),
+            entries: &[entry(2, all, depth_type), entry(3, all, sampled(FLOAT))],
+        });
+        let fragment = ShaderStages::FRAGMENT;
+        let style_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("Part 7 picture's inputs"),
+            entries: &[
+                entry(1, fragment, sampled(FLOAT)),
+                entry(2, fragment, depth_type),
+                entry(4, fragment, sampled(FLOAT)),
+                entry(5, fragment, sampled(FLOAT)),
+                entry(6, fragment, sampled(FLOAT)),
+            ],
+        });
         let layout = |groups: &[&BindGroupLayout]| {
             let groups: Vec<Option<&BindGroupLayout>> = groups.iter().map(|&g| Some(g)).collect();
             device.create_pipeline_layout(&PipelineLayoutDescriptor {
@@ -383,28 +457,41 @@ impl GreetingsRenderer {
             "faithful",
             &[target(output, None)],
         );
+        let scene = layout(&[&data_layout, &scene_layout]);
+        let strips_transmission = pipeline(
+            "Part 7 strips' transmission",
+            &layout(&[&data_layout]),
+            &light_module,
+            "fullscreen",
+            "strips_transmission",
+            &[target(HDR, None)],
+        );
+        let cubes = pipeline(
+            "Part 7 cubes",
+            &layout(&[&data_layout]),
+            &light_module,
+            "fullscreen",
+            "cubes",
+            &[
+                target(HDR, None),
+                target(TextureFormat::R32Float, None),
+                target(HDR, None),
+            ],
+        );
         let dust = pipeline(
             "Part 7 dust",
-            &layout(&[&data_layout]),
+            &scene,
             &light_module,
             "dust_vertex",
             "dust_fragment",
             &[target(HDR, Some(ADD))],
         );
-        let cubes = pipeline(
-            "Part 7 cubes",
-            &layout(&[&data_layout, &cubes_layout]),
+        let air = pipeline(
+            "Part 7 air",
+            &scene,
             &light_module,
             "fullscreen",
-            "cubes",
-            &[target(HDR, None), target(HDR, None), target(HDR, None)],
-        );
-        let shafts = pipeline(
-            "Part 7 shafts",
-            &layout(&[&data_layout, &shafts_layout]),
-            &light_module,
-            "fullscreen",
-            "shafts",
+            "air",
             &[target(HDR, None)],
         );
         let style = pipeline(
@@ -421,14 +508,15 @@ impl GreetingsRenderer {
             original,
             original_frame: None,
             motes: preview.motes.len() as u32,
-            cubes_layout,
-            shafts_layout,
+            transmission,
+            scene_layout,
             style_layout,
             targets: None,
             faithful,
-            dust,
+            strips_transmission,
             cubes,
-            shafts,
+            dust,
+            air,
             style,
         }
     }
@@ -459,50 +547,39 @@ impl GreetingsRenderer {
             return;
         }
         let usage = TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING;
-        let make =
-            |label, size| texture(device, label, size, HDR, usage).create_view(&Default::default());
-        let dust = make("Part 7 dust image", size);
-        let cubes = make("Part 7 cubes image", size);
-        let scatter = make("Part 7 shafts' source", size);
-        let mirror = make("Part 7 cubes' mirror", size);
-        let half = (size.0.div_ceil(2).max(1), size.1.div_ceil(2).max(1));
-        let shafts = make("Part 7 shafts", half);
-        let group = |label, layout: &BindGroupLayout, entries: &[BindGroupEntry]| {
-            device.create_bind_group(&BindGroupDescriptor {
-                label: Some(label),
-                layout,
-                entries,
-            })
+        let make = |label, size, format| {
+            texture(device, label, size, format, usage).create_view(&Default::default())
         };
-        let cubes_inputs = group(
-            "Part 7 cubes' inputs",
-            &self.cubes_layout,
-            &[view(1, &dust)],
-        );
-        let shafts_inputs = group(
-            "Part 7 shafts' inputs",
-            &self.shafts_layout,
-            &[view(2, &scatter)],
-        );
-        let style_inputs = group(
-            "Part 7 picture's inputs",
-            &self.style_layout,
-            &[
+        let dust = make("Part 7 dust image", size, HDR);
+        let cubes = make("Part 7 cubes image", size, HDR);
+        let depth = make("Part 7 cubes' depth", size, TextureFormat::R32Float);
+        let mirror = make("Part 7 cubes' mirror", size, HDR);
+        let half = (size.0.div_ceil(2).max(1), size.1.div_ceil(2).max(1));
+        let air = make("Part 7 lit air", half, HDR);
+        let scene_inputs = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Part 7 scene's inputs"),
+            layout: &self.scene_layout,
+            entries: &[view(2, &depth), view(3, &self.transmission)],
+        });
+        let style_inputs = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Part 7 picture's inputs"),
+            layout: &self.style_layout,
+            entries: &[
                 view(1, &dust),
-                view(3, &cubes),
-                view(4, &shafts),
-                view(5, &mirror),
+                view(2, &depth),
+                view(4, &cubes),
+                view(5, &air),
+                view(6, &mirror),
             ],
-        );
+        });
         self.targets = Some(Targets {
             size,
             dust,
             cubes,
-            scatter,
+            depth,
             mirror,
-            shafts,
-            cubes_inputs,
-            shafts_inputs,
+            air,
+            scene_inputs,
             style_inputs,
         });
     }
@@ -533,30 +610,40 @@ impl GreetingsRenderer {
         })
     }
 
-    /// The modern view into the HDR target: the dust, the cubes, the shafts'
-    /// source and where the cubes mirror the picture, the shafts, then the
-    /// picture. Call
+    /// The modern view into the HDR target: what the strips let through,
+    /// seen from the lamp; the cubes, their depth and where they mirror the
+    /// picture; the dust; the lit air; then the picture. Call
     /// [`GreetingsRenderer::resize`] first.
     pub fn draw_style(&self, encoder: &mut CommandEncoder, hdr: &TextureView) {
         let t = self.targets.as_ref().unwrap();
         {
-            let mut pass = Self::pass(encoder, "Part 7 dust", &[&t.dust]);
+            let mut pass = Self::pass(
+                encoder,
+                "Part 7 strips' transmission",
+                &[&self.transmission],
+            );
             pass.set_bind_group(0, &self.data, &[]);
-            pass.set_pipeline(&self.dust);
-            pass.draw(0..6, 0..self.motes);
+            pass.set_pipeline(&self.strips_transmission);
+            pass.draw(0..3, 0..1);
         }
         {
-            let mut pass = Self::pass(encoder, "Part 7 cubes", &[&t.cubes, &t.scatter, &t.mirror]);
+            let mut pass = Self::pass(encoder, "Part 7 cubes", &[&t.cubes, &t.depth, &t.mirror]);
             pass.set_bind_group(0, &self.data, &[]);
-            pass.set_bind_group(1, &t.cubes_inputs, &[]);
             pass.set_pipeline(&self.cubes);
             pass.draw(0..3, 0..1);
         }
         {
-            let mut pass = Self::pass(encoder, "Part 7 shafts", &[&t.shafts]);
+            let mut pass = Self::pass(encoder, "Part 7 dust", &[&t.dust]);
             pass.set_bind_group(0, &self.data, &[]);
-            pass.set_bind_group(1, &t.shafts_inputs, &[]);
-            pass.set_pipeline(&self.shafts);
+            pass.set_bind_group(1, &t.scene_inputs, &[]);
+            pass.set_pipeline(&self.dust);
+            pass.draw(0..6, 0..self.motes);
+        }
+        {
+            let mut pass = Self::pass(encoder, "Part 7 air", &[&t.air]);
+            pass.set_bind_group(0, &self.data, &[]);
+            pass.set_bind_group(1, &t.scene_inputs, &[]);
+            pass.set_pipeline(&self.air);
             pass.draw(0..3, 0..1);
         }
         let mut pass = Self::pass(encoder, "Part 7 modern", &[hdr]);
@@ -575,6 +662,53 @@ impl GreetingsRenderer {
     }
 }
 
+/// The air's density (authored): a smooth noise that tiles in all three
+/// directions, two octaves of value noise on 4- and 8-cell lattices, cubic
+/// between their points, NOISE_SIZE texels a side, 0 to 255.
+pub fn noise() -> Vec<u8> {
+    let n = NOISE_SIZE as usize;
+    let hash = |x: usize, y: usize, z: usize, cells: usize, seed: u64| -> f64 {
+        let (x, y, z) = (x % cells, y % cells, z % cells);
+        let mut h =
+            (x as u64 * 73_856_093) ^ (y as u64 * 19_349_663) ^ (z as u64 * 83_492_791) ^ seed;
+        h = h.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        h ^= h >> 29;
+        h = h.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        h ^= h >> 32;
+        (h >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let smooth = |t: f64| t * t * (3.0 - 2.0 * t);
+    let octave = |x: usize, y: usize, z: usize, cells: usize, seed: u64| -> f64 {
+        let scale = cells as f64 / n as f64;
+        let (fx, fy, fz) = (x as f64 * scale, y as f64 * scale, z as f64 * scale);
+        let (ix, iy, iz) = (fx as usize, fy as usize, fz as usize);
+        let (tx, ty, tz) = (
+            smooth(fx - ix as f64),
+            smooth(fy - iy as f64),
+            smooth(fz - iz as f64),
+        );
+        let mut v = 0.0;
+        for k in 0..8 {
+            let (dx, dy, dz) = (k & 1, (k >> 1) & 1, k >> 2);
+            let w = if dx == 1 { tx } else { 1.0 - tx }
+                * if dy == 1 { ty } else { 1.0 - ty }
+                * if dz == 1 { tz } else { 1.0 - tz };
+            v += w * hash(ix + dx, iy + dy, iz + dz, cells, seed);
+        }
+        v
+    };
+    let mut out = Vec::with_capacity(n * n * n);
+    for z in 0..n {
+        for y in 0..n {
+            for x in 0..n {
+                let v = (octave(x, y, z, 4, 7) * 2.0 + octave(x, y, z, 8, 11)) / 3.0;
+                out.push((v.clamp(0.0, 1.0) * 255.0).round() as u8);
+            }
+        }
+    }
+    out
+}
+
 fn key(preview: &GreetingsPreview) -> (usize, usize) {
     (preview.palettes.as_ptr() as usize, preview.palettes.len())
 }
@@ -582,8 +716,8 @@ fn key(preview: &GreetingsPreview) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::super::greetings::{
-        CAMERA_DISTANCE, DUST_DEPTH, ROWS, SLOT_ROWS, SLOTS, STAR_BASE, STRIP_WIDTH, STRIP_X,
-        STRIPS, SWEEP_CENTRE,
+        CAMERA_DISTANCE, ROWS, SLOT_ROWS, SLOTS, STAR_BASE, STRIP_WIDTH, STRIP_X, STRIPS,
+        SWEEP_CENTRE,
     };
     use super::super::greetings_type::{ATLAS_COLUMNS, ATLAS_SIZE, CELL, FACE};
 
@@ -611,7 +745,11 @@ mod tests {
         let (w, h) = ATLAS_SIZE;
         for constant in [
             format!("const CAMERA_DISTANCE={CAMERA_DISTANCE:.1};"),
-            format!("const DUST_DEPTH={DUST_DEPTH:.1};"),
+            format!(
+                "const TRANSMISSION_EXTENT=vec2f({:.1},{:.1});",
+                super::TRANSMISSION_EXTENT.0,
+                super::TRANSMISSION_EXTENT.1
+            ),
             format!("const HALF={};", FACE / 2.0),
             format!("const SLOT_ROWS={SLOT_ROWS}.0;"),
             format!("const SLOTS={SLOTS}u;"),
@@ -630,5 +768,32 @@ mod tests {
         }
         assert!((ATLAS_COLUMNS * (ATLAS_SIZE.1 as usize / CELL)) >= 26);
         assert_eq!(ATLAS_COLUMNS * CELL, ATLAS_SIZE.0 as usize);
+        // The map's texels are square on the plane.
+        let (w, h) = super::TRANSMISSION_SIZE;
+        let (ex, ey) = super::TRANSMISSION_EXTENT;
+        assert!((ex / w as f64 - ey / h as f64).abs() < 1e-9);
+    }
+
+    /// The air's density tiles: its opposite faces meet without a seam, and
+    /// it varies smoothly between neighbours.
+    #[test]
+    fn the_airs_density_tiles_smoothly() {
+        let n = super::NOISE_SIZE as usize;
+        let v = super::noise();
+        assert_eq!(v.len(), n * n * n);
+        let at = |x: usize, y: usize, z: usize| v[(z % n) * n * n + (y % n) * n + x % n] as i32;
+        let mut largest = 0;
+        for z in 0..n {
+            for y in 0..n {
+                for x in 0..n {
+                    for (dx, dy, dz) in [(1, 0, 0), (0, 1, 0), (0, 0, 1)] {
+                        largest = largest.max((at(x, y, z) - at(x + dx, y + dy, z + dz)).abs());
+                    }
+                }
+            }
+        }
+        assert!(largest <= 32, "steps of {largest} between neighbours");
+        let (lo, hi) = (v.iter().min().unwrap(), v.iter().max().unwrap());
+        assert!(*lo < 80 && *hi > 175, "range {lo} to {hi}");
     }
 }

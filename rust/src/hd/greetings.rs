@@ -28,8 +28,9 @@
 //!   between the 70 Hz frames.
 //! - Authored: everything the modern view adds (greetings_light.wgsl and the
 //!   values marked authored here): the depths, the camera, the dust motes'
-//!   scatter and the sky beyond the original's 320 columns, the beam, the
-//!   cubes' material, the gaps the modern view leaves open.
+//!   depths and drift and the sky beyond the original's 320 columns, the
+//!   beam and the air, the cubes' material, the gaps the modern view leaves
+//!   open.
 use super::greetings_type::{GLYPH_BASE, GLYPH_ROW, GLYPH_STRIDE, Letterforms, letterforms};
 use super::plasma::PlasmaPreview;
 use crate::{
@@ -65,17 +66,17 @@ pub const SLOTS: usize = 16;
 /// The stars' colours (read from the code): entries 192 to 255.
 pub const STAR_BASE: u8 = 192;
 /// The modern view's depths (authored, in source rows on the 4:3 display):
-/// the camera's distance from the strips' plane, the dust's mean depth
-/// behind it and its spread, and the light's depth.
+/// the camera's distance from the strips' plane, and the nearest and
+/// farthest the dust lies (scene z, the strips' plane 0).
 pub const CAMERA_DISTANCE: f64 = 580.0;
-pub const DUST_DEPTH: f64 = 220.0;
-pub const DUST_SPREAD: f64 = 30.0;
+pub const DUST_NEAR: f64 = -340.0;
+pub const DUST_FAR: f64 = 230.0;
 /// The centre the stars' indices turn round (fitted to the data: the
 /// brightness centroid of the stored stars under the real palette turns
 /// 5.65 degrees a frame round it, residual 3.7 degrees).
 pub const SWEEP_CENTRE: (f64, f64) = (160.0, 85.0);
 /// Each stored star becomes this many motes (authored).
-pub const MOTES_PER_STAR: usize = 5;
+pub const MOTES_PER_STAR: usize = 6;
 
 /// What a part-7 frame shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -467,16 +468,19 @@ impl Rng {
 }
 
 /// The modern view's dust, from the sky the TRUG maps hold (read from the
-/// data: each pixel with colour 192 to 255 is a star, its colour index
-/// 0 to 63 sets when the cycle lights it). Authored: each star becomes
-/// [`MOTES_PER_STAR`] motes scattered within its pixel and in depth about
-/// [`DUST_DEPTH`], placed so they project where the original shows the star;
-/// beyond the original's columns, for the wider frame, the outer 60 columns'
-/// stars mirrored across the edges and thinning away from them, their
+/// data: each pixel with colour 192 to 255 is a star, its colour index 0 to
+/// 63). Authored: each star becomes [`MOTES_PER_STAR`] motes in the air,
+/// each on the camera's ray through a point within the star's pixel, at a
+/// depth between [`DUST_NEAR`] and [`DUST_FAR`] (scene z: the strips' plane
+/// is 0, the camera at minus [`CAMERA_DISTANCE`]), drawn so the motes fill
+/// the air evenly, not more thickly near the camera; so at the moment the
+/// air starts to drift they project where the original shows its stars.
+/// Beyond the original's columns, for the wider frame, the outer 60 columns'
+/// stars are mirrored across the edges, thinning away from them, their
 /// indices from the fitted turn (the stars' index is about 17.8 less 64 /
 /// 2 pi times their angle round the centre, scattered by about 12). Per
-/// mote: across, up, depth, and the index times four plus its brightness
-/// (0 to 4).
+/// mote: across, up, depth (scene), and the star's colour index plus a size
+/// between 0 and 1.
 pub fn motes(planes: &[u8]) -> Vec<[f32; 4]> {
     let mut rng = Rng(0x5eed_0007);
     let mut stars = Vec::new();
@@ -507,19 +511,23 @@ pub fn motes(planes: &[u8]) -> Vec<[f32; 4]> {
         }
     }
     stars.extend(extra);
+    // Distances from the camera, drawn with density in proportion to their
+    // square, so the motes fill the frustum evenly.
+    let (near, far) = (CAMERA_DISTANCE + DUST_NEAR, CAMERA_DISTANCE + DUST_FAR);
     let mut motes = Vec::with_capacity(stars.len() * MOTES_PER_STAR);
     for &(x, y, index) in &stars {
         for _ in 0..MOTES_PER_STAR {
-            let sx = x + 0.45 * rng.normal();
-            let sy = y + 0.45 * rng.normal();
-            let z = DUST_DEPTH + DUST_SPREAD * rng.normal();
-            let scale = (CAMERA_DISTANCE + z) / CAMERA_DISTANCE;
-            let brightness = (-rng.next().max(1e-9).ln()).min(3.99);
+            let sx = x + rng.next() - 0.5;
+            let sy = y + rng.next() - 0.5;
+            let u = rng.next();
+            let distance = (near.powi(3) + u * (far.powi(3) - near.powi(3))).cbrt();
+            let scale = distance / CAMERA_DISTANCE;
+            let size = rng.next().powi(2);
             motes.push([
                 ((sx - 160.0) * 5.0 / 6.0 * scale) as f32,
                 ((100.0 - sy) * scale) as f32,
-                z as f32,
-                (index * 4.0 + brightness) as f32,
+                (distance - CAMERA_DISTANCE) as f32,
+                (index + size.min(0.999)) as f32,
             ]);
         }
     }

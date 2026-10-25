@@ -364,27 +364,29 @@ stored views of the letter, chosen by a sine, so the letters twist. At its
 comes out of the white; part 8 takes over at 242.30. All of that is read
 from the port and checked against it frame by frame.
 
-The modern look is a lighthouse in the dust:
+The modern look is a lighthouse in dusty air:
 
-- The stars become dust lit as the original lights it, and the turning
-  colours become one hard cream beam from a glowing lamp at the sweep's
-  centre, turning as fast as the original's band, its light streaming
-  past the letters in shafts. It is taken over a shutter so it sweeps
-  smoothly.
+- The turning colours become one hard cream spotlight from a lamp at the
+  sweep's centre, turning as fast as the original's band, in air marched in
+  3D: the light falls off with distance, softens at the cone's edge, glows
+  more as it turns toward the camera, and the cubes cast real shafts and
+  shadows through it. The air thickens and thins slowly as an authored
+  wind carries it.
+- The original's stars become dust in the air at all depths, drifting on
+  that wind, lit only where the beam passes: near motes are soft discs out
+  of focus, far ones fine points.
 - The 16 views read as a square column turning, so each letter is a cube
   of polished black with rounded edges, the letter inset on its four faces
   as a panel of light in the original's white-to-teal, turned row by row by
-  the original's sine; the lamp catches the edges and the beam glints off
-  the faces as they turn, and lights the panels from behind. The
-  letterforms are derived from your data when the preview loads; none are
-  stored here.
+  the original's sine. The letterforms are derived from your data when the
+  preview loads; none are stored here.
 - At the end the beam swings into the lens, from a little before the
   original's fade to white, and the monster develops out of the white at
   the original's levels.
 
-The dust's depth, the beam, the cubes and their material, and the swing
-into the lens are authored; the positions, motion, letters and timing are
-the port's. Faithful HD (**M**) shows the original's pixels at display
+The air, the dust's depth and drift, the beam, the cubes and their
+material, and the swing into the lens are authored; the positions,
+motion, letters and timing are the port's. Faithful HD (**M**) shows the original's pixels at display
 resolution. The [renderer notes](rust/README.md#part-7-greetings) say what
 is read, what is interpreted and what is authored.
 

@@ -1710,33 +1710,49 @@ copied sky included), the stars drawn as round dots, the letters' colours
 interpolated, the palette turning between frames; the monster is
 upscaled smoothly. With **Tab** or **C** the original is shown.
 
-The modern view is a lighthouse in the dust. All of it is authored, on the
-port's timing, positions and motion, with the letters derived from the
+The modern view is a lighthouse in dusty air. All of it is authored, on
+the port's timing, positions and motion, with the letters derived from the
 user's data:
 
-- The stars are dust: each stored star becomes five motes scattered within
-  its pixel and in depth about 220 units behind the strips, placed so they
-  project where the original shows it, each lit as the original lights it
-  (its colour index through the pulse), so the original's broad band
-  still sweeps the dust. For the wider frame the outer 60 columns' stars
-  are mirrored past the edges, thinning away from them.
-- The cycle is also one hard beam from a lamp at the sweep's centre,
-  behind the strips: the top of the pulse, full within about 8 degrees of
-  its peak, turning once every 64 frames (about 1.1 turns a second), in the
-  stars' cream. The lamp is a bulb glowing all round, placed so it projects
-  on the sweep's centre, with the beam leaving it. The dust in the beam
-  glows, and its light streams past the cubes in shafts (scattering
-  gathered toward the lamp in screen space at half size, the cubes
-  standing in its way). The beam and the dust are taken over a shutter of
-  one 70 Hz frame, six instants along the turn, so the beam sweeps rather
-  than steps.
+- The sweep is one hard cream spotlight, turning once every 64 frames
+  (about 1.1 turns a second): its direction on the screen is the peak of
+  the original's band round the sweep's centre, tilted 23 degrees toward the
+  camera so it passes through the outer strips. The lamp stands a little
+  behind the strips, where it projects on the sweep's centre: a bright core
+  with a halo, the beam leaving an aperture of finite size.
+- The air is a participating medium, marched in 3D at half resolution
+  within the cone (36 samples a pixel, up to the cubes), lit only by the
+  beam: its light falls off with the square of the distance, its profile
+  is brighter on the axis and soft at the edge (a penumbra that grows with
+  distance, as from an aperture), and it scatters toward the camera by a
+  Henyey-Greenstein phase function (g = 0.62), so the beam brightens as it
+  turns toward the lens. The air is a thin haze with slow, large thicker
+  and thinner regions (a smooth, tiling noise) carried on an authored wind
+  of a few rows a second; nothing changes quickly. Each sample is at its own
+  instant over a shutter of one 70 Hz frame, so the beam sweeps rather than
+  steps.
+- The cubes shadow the air and the dust through a map of what the strips
+  let through, seen from the lamp: for each point of the strips' plane the
+  lamp's ray through the cubes' slab, with how far it gets, softened over
+  the aperture's penumbra. It holds colour, so later letters can tint or
+  shape the light. The shafts and the shadow wedges between the cubes are
+  3D.
+- The dust is motes in the air, seeded from the original's stars: each
+  star's screen position, six motes at depths along its ray from in front
+  of the strips to behind them, filling the air evenly, so at rest they
+  would project where the original shows its stars. They drift on the same
+  authored wind and swirl slowly round it (the original's stars never
+  move). Each is lit by the beam, forward scattering strongly (g = 0.75),
+  and all but invisible outside it (a trace of the original's band is
+  left); the camera is focused on the strips, so near motes are soft discs
+  and far ones fine points, of varied sizes.
 - Each letter is a polished black cube with rounded edges, the letter
   inset on its four faces (at 80% of the face, a border of the black round
   it) as a panel of frosted light in the original's letter colours (white
   crowns, teal edges), always readable. The lamp lights the cubes all round
   and the beam more, so their edges and the faces turned toward it catch
   highlights and glints as they turn; the beam behind a cube brightens its
-  panels; the polish mirrors the dust, the shafts and the lamp (toward the
+  panels; the polish mirrors the dust, the lit air and the lamp (toward the
   camera, the picture behind the strips mirrored about their plane, as if
   it surrounded them). Each row of a cube is turned by the original's
   sine, so the letters twist as the original's do, and the panels are
@@ -1750,20 +1766,21 @@ user's data:
   the counters of A and O are 8 and 14 pixels), upsampled, softened, cut
   at half and measured as a signed distance, with a bevel tilted by the
   original's shading. No glyph data is stored in the repository.
-- The end: the beam swings into the lens, its cone opening round the lamp
-  and the lamp brightening from 0.4 s before the original's feedback fade
-  (authored motion), which then blends every colour toward white at the
-  original's timing and levels; the monster, upscaled, develops out of the
-  white at the original's levels.
+- The end: the beam swings to the lens from 0.45 s before the original's
+  feedback fade (authored motion), its forward scattering and the lamp's
+  flare flooding the picture, which the fade then blends toward white at
+  the original's timing and levels; the monster, upscaled, develops out of
+  the white at the original's levels.
 
 Nothing follows the music, as in the original. Everything is a function of
 the clip's time; an ignored test checks frames drawn after others against
 a new renderer's, byte for byte. The look's constants are at the top of
 `greetings_light.wgsl`, the letterforms' in `greetings_type.rs`.
 
-At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (120 frames,
-on a machine in use), modern part 7 takes about 2 ms a frame, the shutter
-included; faithful HD under 1 ms.
+At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (150 frames,
+on a machine in use), modern part 7 takes about 2 to 3 ms a frame, the
+air's march, the shadow map and the shutter included; faithful HD under
+1 ms.
 
 ### Options and tests
 
