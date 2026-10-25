@@ -53,7 +53,7 @@ const HIT_DECAY=.45;
 // The key light: toward it (camera space), its colour and strength; a cool
 // fill from the camera's side, and the ambient light.
 const KEY_DIR=vec3f(-.5,-.55,-.67);
-const KEY=vec3f(1.0,.93,.84)*.95;
+const KEY=vec3f(1.0,.93,.84)*.75;
 // How far the key dims as the plasma comes up (at its full level).
 const KEY_DUCK=.8;
 const FILL=vec3f(.55,.68,.9)*.2;
@@ -75,6 +75,9 @@ const SHADOW_SHARPNESS=10.0;
 const HAZE=.0012;
 const HAZE_DEPTH=45.0;
 const HAZE_STEPS=6u;
+// The arrival: the exposure over 1 at which the stone's colour has given
+// way to white.
+const ARRIVAL_WASH=8.0;
 // The ray march: steps, and the distance field's safety factor (the
 // carving's slopes are steeper than one).
 const MARCH_STEPS=96u;
@@ -474,7 +477,10 @@ fn shade_stone(p:vec3f,d:vec3f)->vec3f {
             }
         }
         if field_written() && pc.palette.y>0.0 {c+=haze(d,reach);}
-        c*=pc.camera.w;
+        // Overexposed, the stone goes white as the film does, not orange:
+        // its colour gives way to its luminance while the exposure is high.
+        let over=clamp((pc.camera.w-1.0)/ARRIVAL_WASH,0.0,1.0);
+        c=mix(c,vec3f(dot(c,vec3f(.2126,.7152,.0722))),over)*pc.camera.w;
     }
     if pc.camera.z>0.0 {c=mix(c,textureLoad(part3_view,pixel,0).rgb,pc.camera.z);}
     return vec4f(max(c,vec3f(0)),1);

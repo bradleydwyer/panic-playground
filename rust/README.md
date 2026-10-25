@@ -1606,8 +1606,9 @@ and motion, and on the block fitted to the logo.
   softly below the sheet's edge.
 - The arrival: on the slab frame part 3's own modern view, its box flared,
   is still drawn, and gives way to this one over 0.35 s. The stone comes in
-  overexposed and the exposure settles over the original's 64 frames, so
-  the carving, the darkest, comes out of the white first.
+  overexposed, white rather than its colour, and the exposure settles over
+  the original's 64 frames, so the carving, the darkest, comes out of the
+  white first.
 - Each order's first row swells the sheet's light a little; the slab sinks
   along the camera's vertical so its far edge, the top of its silhouette,
   follows the original's line compare.

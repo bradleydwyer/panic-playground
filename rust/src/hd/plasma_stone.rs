@@ -61,7 +61,7 @@ const ARRIVAL_EXPOSURE: f64 = 40.0;
 const ARRIVAL_CURVE: f64 = 2.2;
 /// The stone's albedo, its luminance in linear light; its hue is the
 /// logo's (authored level).
-const STONE_ALBEDO: f32 = 0.3;
+const STONE_ALBEDO: f32 = 0.26;
 /// The block's tilt, focal length and depth must fall in these (a
 /// sanity check on the measurement).
 const TILT_RANGE: (f64, f64) = (0.15, 1.1);
