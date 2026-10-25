@@ -251,6 +251,9 @@ struct EndingBlock {
     // Part-8 seconds: white, collapse, line, dot; end, last.
     events: vec4f,
     events_late: vec4f,
+    // The camera: its position and tan(half its field of view); its aim.
+    eye: vec4f,
+    aim: vec4f,
 }
 struct Controls {
     screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode

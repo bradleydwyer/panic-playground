@@ -1,22 +1,20 @@
-// The modern part 8: the monster becomes an old television, which is then
-// switched off. Authored throughout, on the port's timing, pictures and
-// palettes (ending_common.wgsl, hd/ending.rs).
+// The modern part 8's pictures: what each tube of the bank shows, as a
+// function of the point on its face (ending_set.wgsl builds the bank, the
+// camera and the light around them). Authored throughout, on the port's
+// timing, pictures and palettes (ending_common.wgsl, hd/ending.rs).
 //
 // The original holds part 7's monster until the music reaches 35:00, then
 // turns colour 0 white behind it, shows a white frame, squeezes the picture
 // toward row 100 over 17 frames while lifting every colour toward white,
 // keeps row 100 alone as a line, erases it from both ends to one pixel,
 // pulses that pixel's colour twice and stops. It reads as a monitor
-// switching off; here it is a television:
-// - The hold. Part 8's first frame is part 7's last, the monster upscaled as
-//   part 7 shows it, which part 7 draws (renderer.rs); from there this view
-//   starts from the same picture. Over the hold it becomes, slightly, an old
-//   television's
-//   picture: the tube drawn back a little from part 7's framing, its face
-//   gently curved with rounded corners, the picture on the original's 200
-//   lines as scanlines whose spot widens on bright lines, a little halation
-//   and convergence error toward the sides, a gentle vignette, and the
-//   tube's face a shade above black, so it shows against the room.
+// switching off; here each tube of the bank does:
+// - The hold. As the camera draws back the picture becomes an old tube's:
+//   the raster bowed with the glass, the original's 200 lines as scanlines
+//   whose spot widens on bright lines (fading out once a line is smaller
+//   than about two of the frame's pixels), a little halation and
+//   convergence error toward the sides, a vignette, and the face a shade
+//   above black.
 // - The switch-off follows the original's stages and timing. The white
 //   behind the monster and the white frame flash the face, and their light
 //   lingers on the phosphor. The picture squeezes with the original's
@@ -30,17 +28,19 @@
 //   glows, fading, so the collapse leaves a short trail. Everything is a
 //   function of the moment (hd/ending.rs works out the past states).
 // Nothing flickers: every value moves smoothly between the original's frames.
-// Module: the shared controls, ending_common.wgsl and this file.
+// Module: the shared controls, ending_common.wgsl, this file and
+// ending_set.wgsl.
 
 // ---- The look (authored) -------------------------------------------------------
-// The tube: the face's height on the screen at full CRT (part 7's framing is
-// 1), its curvature, and its corners' radius (rows).
-const TUBE_ZOOM=.92;
-const WARP=.05;
+// The raster: how far it bows with the glass (each axis pulled in by the
+// other's square), and its corners' radius (rows).
+const WARP=.08;
 const CORNER=11.0;
 // The scanlines: how far the beam's line shape replaces the smooth picture,
-// and the spot's spread (rows) on a dark and a bright line.
+// fading out between these sizes of a frame's pixel (rows), and the spot's
+// spread (rows) on a dark and a bright line.
 const SCANLINES=.6;
+const SCANLINES_GONE=vec2f(.3,.5);
 const SPOT_DARK=.3;
 const SPOT_BRIGHT=.45;
 // Halation (of the blurred picture), convergence error at the face's sides
@@ -65,22 +65,22 @@ const BAND_TAPS=6;
 // The line: its spot (rows), its light, rising as it shortens by this
 // power of the shortening, at most LINE_MOST; its halo's share and reach
 // (rows).
-const LINE_SPOT=.42;
+const LINE_SPOT=.6;
 const LINE_GAIN=5.0;
 const LINE_POWER=.5;
 const LINE_MOST=4.0;
 const LINE_HALO=.035;
-const LINE_HALO_REACH=5.0;
+const LINE_HALO_REACH=8.0;
 // The dot: the phosphor's colour, the spot's spread and light, its halo's
 // light and reach (rows); the afterglow's spread, light and halo, a little
 // greener (a white phosphor's longest-lived part).
 const DOT_WHITE=vec3f(1.0,1.0,1.0);
-const DOT_SPOT=.6;
-const DOT_CORE=40.0;
-const DOT_HALO=.7;
-const DOT_REACH=5.0;
+const DOT_SPOT=1.1;
+const DOT_CORE=30.0;
+const DOT_HALO=.9;
+const DOT_REACH=9.0;
 const AFTER_TINT=vec3f(.85,1.0,.95);
-const AFTER_SPOT=.9;
+const AFTER_SPOT=1.5;
 const AFTER_CORE=6.0;
 const AFTER_HALO=.25;
 // The phosphor's persistence (70 Hz frames) and the trail's taps' ages
@@ -207,21 +207,17 @@ fn persisted(d:f32,reach:array<f32,5>,light:array<f32,5>)->f32 {
     return last_glow*exp(-(d-last_reach)/TRAIL_FALLOFF);
 }
 
-@fragment fn crt(v:Vertex)->@location(0) vec4f {
-    ending_begin();
-    let q=scene_of_uv(v.uv);
-    let a=ec.tube.x;
-    // The tube: drawn back, curved (each axis pulled in by the other's
-    // square), its face a rounded rectangle on the picture's 4:3.
-    let zoom=mix(1.0,TUBE_ZOOM,a);
+// The light a tube shows at `plain`, a point on its face in units of the
+// picture's half size (so the 4:3 picture spans -1 to 1 on each axis), with
+// the CRT's presence `a` and a frame's pixel `pixel` rows across there:
+// HDR, before the fade to black.
+fn screen(plain:vec2f,a:f32,pixel:f32)->vec3f {
     let half=vec2f(160.0*COLUMN,100.0);
-    let plain=q/(half*zoom);
     let n=plain*(1.0+WARP*a*plain.yx*plain.yx);
     let p=n*half;
     let radius=CORNER*a;
     let box=abs(p)-half+radius;
     let edge=length(max(box,vec2f(0)))+min(max(box.x,box.y),0.0)-radius;
-    let pixel=200.0/(u.screen.y*zoom);
     let face=1.0-smoothstep(-.5*pixel,.5*pixel,edge);
     let s=vec2f(160.0+p.x/COLUMN,100.0-p.y);
     let shift=CONVERGENCE*a*n.x;
@@ -232,7 +228,8 @@ fn persisted(d:f32,reach:array<f32,5>,light:array<f32,5>)->f32 {
         var c=vec3f(0);
         var gain=1.0;
         if compression<=1.0 {
-            c=scanned(s,shift,SCANLINES*a);
+            let fine=1.0-smoothstep(SCANLINES_GONE.x,SCANLINES_GONE.y,pixel);
+            c=scanned(s,shift,SCANLINES*a*fine);
             c+=HALATION*a*textureSampleLevel(halation,linear,s/vec2f(320,200),0.0).rgb;
             c+=GLASS*a;
         } else {
@@ -299,7 +296,7 @@ fn persisted(d:f32,reach:array<f32,5>,light:array<f32,5>)->f32 {
     let slow=ec.glow.y;
     light+=DOT_WHITE*fast*(DOT_CORE*exp(-r*r/(2.0*DOT_SPOT*DOT_SPOT))+DOT_HALO*exp(-r/DOT_REACH));
     light+=AFTER_TINT*slow*(AFTER_CORE*exp(-r*r/(2.0*AFTER_SPOT*AFTER_SPOT))+AFTER_HALO*exp(-r/DOT_REACH));
-    // The face's edge and the vignette, then the fade to black at the end.
+    // The raster's edge and the vignette.
     let vignette=1.0-VIGNETTE*a*(1.0-(1.0-.5*n.x*n.x)*(1.0-.5*n.y*n.y));
-    return vec4f(max(light*face*vignette*ec.beam.w,vec3f(0)),1);
+    return max(light*face*vignette,vec3f(0));
 }

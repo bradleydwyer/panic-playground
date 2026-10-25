@@ -12,7 +12,7 @@ rings as a pool of liquid chrome under neon, part 5's deep Mandelbrot
 zoom and molten Mandelbrot mountain, part 3's shade bobs and morphing
 dots as light painting, part 4's plasma as the light on a carved stone
 slab, part 7's greetings as crystal letters in a lighthouse's beam, and part 8's
-ending as an old television switched off. The idea is to keep the
+ending as a bank of old monitors switched off. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
 letters that refract the stars behind them, a mirrored plate that reflects the
 warp, motion blur, a starfield that ramps into warp, a heated metal logo with
@@ -417,23 +417,24 @@ twice and, a second later, the demo ends at 249.17. It reads as a monitor
 switching off. All of that is read from the port and checked against it
 frame by frame.
 
-The modern look makes it an old television:
+The modern look pulls back from the monster to a bank of nine old monitors
+in the dark and switches them all off:
 
-- Over the hold the monster, upscaled as part 7 leaves it, becomes slightly
-  an old TV's picture: the tube drawn back a little, its face gently curved
-  with rounded corners, the picture on the original's 200 lines as
-  scanlines, with a little halation, convergence error toward the sides and
-  a gentle vignette.
-- Then it is switched off on the original's stages and timing: the white
-  flashes the face, the picture squeezes and brightens as the beam's lines
-  crowd together, the line blooms and brightens as it shortens, and the dot
-  is a glowing point of phosphor following the original's pulse, its
-  afterglow decaying to black. What the beam lit a few frames before still
-  glows, fading. Nothing flickers.
+- Over the hold the camera draws back from the centre set's face, which
+  becomes an old tube's (bulging glass with bowed sides and deep corners,
+  scanlines on the original's 200 lines), to a 3 × 3 bank of sets, their
+  thick dark bezels nearly touching, each showing the monster with small
+  differences of its own. The screens are the only light.
+- Then every set is switched off on the original's stages and timing: the
+  white flashes the faces and lights the bank, the pictures squeeze and
+  brighten as the beam's lines crowd together, the lines bloom and
+  brighten as they shorten, and the dots glow as points of phosphor
+  following the original's pulse, their afterglow and the bank's light
+  dying to black. Nothing flickers.
 
-The tube, its curvature and scanlines, the phosphor's glow and persistence
-and the gains are authored; the pictures, palettes, stages and timing are
-the port's. Faithful HD (**M**) shows the original's pixels at display
+The bank, the camera, the tubes' shape and scanlines, the phosphor's glow
+and persistence and the light are authored; the pictures, palettes, stages
+and timing are the port's. Faithful HD (**M**) shows the original's pixels at display
 resolution. The [renderer notes](rust/README.md#part-8-the-ending) say what
 is read, what is interpreted and what is authored.
 

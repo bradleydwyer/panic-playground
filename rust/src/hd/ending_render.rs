@@ -1,7 +1,8 @@
-//! GPU side of part 8: its pictures, palettes and halation image, and the
-//! two pipelines. Faithful HD draws straight into the output; the modern
-//! view draws the television into the modern renderer's HDR target, which
-//! then takes the shared bloom and tonemap, as part 7's does.
+//! GPU side of part 8: its pictures, palettes, halation image and the
+//! screens' light, and the two pipelines. Faithful HD draws straight into
+//! the output; the modern view draws the bank of monitors into the modern
+//! renderer's HDR target, which then takes the shared bloom and tonemap, as
+//! part 7's does.
 use super::clip::vga_linear;
 use super::ending::{EndingPreview, halation};
 use super::renderer::wgsl_parts;
@@ -11,6 +12,7 @@ use wgpu::*;
 const COMMON: &str = include_str!("ending_common.wgsl");
 const FAITHFUL: &str = include_str!("ending_faithful.wgsl");
 const CRT: &str = include_str!("ending_crt.wgsl");
+const SET: &str = include_str!("ending_set.wgsl");
 
 /// Faithful HD's module: the shared controls, ending_common.wgsl and
 /// ending_faithful.wgsl.
@@ -18,10 +20,10 @@ pub(super) fn faithful_source() -> String {
     wgsl_parts(&[COMMON, FAITHFUL])
 }
 
-/// The modern module: the shared controls, ending_common.wgsl and
-/// ending_crt.wgsl.
+/// The modern module: the shared controls, ending_common.wgsl,
+/// ending_crt.wgsl (the pictures) and ending_set.wgsl (the bank).
 pub(super) fn crt_source() -> String {
-    wgsl_parts(&[COMMON, CRT])
+    wgsl_parts(&[COMMON, CRT, SET])
 }
 
 pub(super) struct EndingRenderer {
@@ -104,6 +106,10 @@ impl EndingRenderer {
             .collect();
         let colours = buffer("Part 8 palettes, linear", bytemuck::cast_slice(&colours));
         let profile = buffer("Part 8 columns", bytemuck::cast_slice(&preview.profile));
+        let cells = buffer(
+            "Part 8 screens' light",
+            bytemuck::cast_slice(&preview.cells),
+        );
         let indices: Vec<u8> = (0..=255).collect();
         let palettes: Vec<u8> = (0..frames)
             .flat_map(|j| super::field::rgba(&indices, preview.palette(j)))
@@ -192,6 +198,7 @@ impl EndingRenderer {
                 entry(6, storage),
                 entry(7, sampled(float)),
                 entry(8, storage),
+                entry(9, storage),
             ],
         });
         let view = |t: &Texture| t.create_view(&Default::default());
@@ -241,6 +248,10 @@ impl EndingRenderer {
                     binding: 8,
                     resource: profile.as_entire_binding(),
                 },
+                BindGroupEntry {
+                    binding: 9,
+                    resource: cells.as_entire_binding(),
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
@@ -282,7 +293,7 @@ impl EndingRenderer {
         Self {
             key: key(preview),
             faithful: pipeline("Part 8 faithful HD", faithful_source(), "faithful", output),
-            crt: pipeline("Part 8 modern", crt_source(), "crt", HDR),
+            crt: pipeline("Part 8 modern", crt_source(), "television", HDR),
             data,
             original,
             original_frame: None,
@@ -353,7 +364,9 @@ fn key(preview: &EndingPreview) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::super::clip::{Clip, ScrollerLighting};
-    use super::super::ending::{DOT_COLUMN, EndingBlock, LINE_ROW, PERSISTENCE, TRAIL_AGES};
+    use super::super::ending::{
+        BANK_HEIGHT, DOT_COLUMN, EndingBlock, LINE_ROW, PERSISTENCE, TRAIL_AGES,
+    };
     use super::super::renderer::{Renderer, View};
     use std::mem::{offset_of, size_of};
 
@@ -390,7 +403,9 @@ mod tests {
             trail_left,
             trail_right,
             events,
-            events_late
+            events_late,
+            eye,
+            aim
         ];
         assert_eq!(
             expected.last().unwrap().1 + size_of::<[f32; 4]>(),
@@ -453,6 +468,23 @@ mod tests {
         let ages = format!("const TRAIL_AGES=array<f32,5>(0.0,{ages});");
         for constant in [persistence, ages] {
             assert!(crt.contains(&constant), "ending_crt.wgsl lacks {constant}");
+        }
+        // The bank the camera frames (ending::BANK_HEIGHT): three sets and
+        // two gaps high, at a pitch of a set and a gap.
+        let bank = include_str!("ending_set.wgsl");
+        let (set, gap) = ((182.0, 142.0), 5.0);
+        assert_eq!(6.0 * set.1 + 2.0 * gap, BANK_HEIGHT);
+        for constant in [
+            format!("const SET=vec2f({:.1},{:.1});", set.0, set.1),
+            format!("const GAP={gap:.1};"),
+            format!(
+                "const PITCH=vec2f({:.1},{:.1});",
+                2.0 * set.0 + gap,
+                2.0 * set.1 + gap
+            ),
+            format!("const PICTURE=vec2f({:.5},100.0);", 400.0 / 3.0),
+        ] {
+            assert!(bank.contains(&constant), "ending_set.wgsl lacks {constant}");
         }
     }
 
