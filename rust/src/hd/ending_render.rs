@@ -1,6 +1,6 @@
 //! GPU side of part 8: its pictures, palettes, halation image and the
 //! screens' light, and the two pipelines. Faithful HD draws straight into
-//! the output; the modern view draws the bank of monitors into the modern
+//! the output; the modern view draws the wall of monitors into the modern
 //! renderer's HDR target, which then takes the shared bloom and tonemap, as
 //! part 7's does.
 use super::clip::vga_linear;
@@ -21,7 +21,7 @@ pub(super) fn faithful_source() -> String {
 }
 
 /// The modern module: the shared controls, ending_common.wgsl,
-/// ending_crt.wgsl (the pictures) and ending_set.wgsl (the bank).
+/// ending_crt.wgsl (the pictures) and ending_set.wgsl (the wall).
 pub(super) fn crt_source() -> String {
     wgsl_parts(&[COMMON, CRT, SET])
 }
@@ -141,19 +141,20 @@ impl EndingRenderer {
             bytemuck::cast_slice(&halation(&preview.monster, preview.palette(0))),
             8,
         );
-        // The far tubes' pictures: on the hold's palette and on the white
-        // behind the monster, with their mipmaps.
-        let white = preview.frames.iter().position(|f| f.step >= 2).unwrap_or(0);
-        let layers = [
-            picture_levels(&preview.monster, preview.palette(0)),
-            picture_levels(&preview.monster, preview.palette(white)),
-        ];
+        // The far tubes' pictures: on each palette the picture is shown on,
+        // from the hold to the line, with their mipmaps, and each frame's.
+        let (palettes_shown, layer_of) = picture_layers(preview);
+        let layers: Vec<_> = palettes_shown
+            .iter()
+            .map(|&j| picture_levels(&preview.monster, preview.palette(j)))
+            .collect();
+        let layer_of = buffer("Part 8 frames' pictures", bytemuck::cast_slice(&layer_of));
         let pictures = device.create_texture(&TextureDescriptor {
             label: Some("Part 8 far pictures"),
             size: Extent3d {
                 width: 320,
                 height: 200,
-                depth_or_array_layers: 2,
+                depth_or_array_layers: layers.len() as u32,
             },
             mip_level_count: layers[0].len() as u32,
             sample_count: 1,
@@ -263,6 +264,7 @@ impl EndingRenderer {
                     },
                 ),
                 entry(11, BindingType::Sampler(SamplerBindingType::Filtering)),
+                entry(12, storage),
             ],
         });
         let view = |t: &Texture| t.create_view(&Default::default());
@@ -327,6 +329,10 @@ impl EndingRenderer {
                 BindGroupEntry {
                     binding: 11,
                     resource: BindingResource::Sampler(&trilinear),
+                },
+                BindGroupEntry {
+                    binding: 12,
+                    resource: layer_of.as_entire_binding(),
                 },
             ],
         });
@@ -433,6 +439,30 @@ impl EndingRenderer {
     }
 }
 
+/// The frames whose palettes the far pictures are drawn on, one for each
+/// distinct palette shown up to the line (the picture is not drawn after
+/// it), and each frame's layer among them (from the line on, the last).
+fn picture_layers(preview: &EndingPreview) -> (Vec<usize>, Vec<u32>) {
+    let mut shown: Vec<usize> = Vec::new();
+    let mut layer_of = Vec::with_capacity(preview.frames.len());
+    for (j, frame) in preview.frames.iter().enumerate() {
+        if frame.step <= 21 {
+            let found = shown
+                .iter()
+                .position(|&k| preview.palette(k) == preview.palette(j));
+            if found.is_none() {
+                shown.push(j);
+            }
+        }
+        let layer = shown
+            .iter()
+            .position(|&k| preview.palette(k) == preview.palette(j))
+            .unwrap_or(shown.len() - 1);
+        layer_of.push(layer as u32);
+    }
+    (shown, layer_of)
+}
+
 fn key(preview: &EndingPreview) -> (usize, usize) {
     (preview.palettes.as_ptr() as usize, preview.palettes.len())
 }
@@ -441,7 +471,8 @@ fn key(preview: &EndingPreview) -> (usize, usize) {
 mod tests {
     use super::super::clip::{Clip, ScrollerLighting};
     use super::super::ending::{
-        DOT_COLUMN, EndingBlock, LINE_ROW, PERSISTENCE, SET_PITCH, TRAIL_AGES,
+        DOT_COLUMN, EndingBlock, EndingEvents, EndingFrame, EndingPreview, LINE_ROW, PERSISTENCE,
+        SET_PITCH, Stage, TRAIL_AGES,
     };
     use super::super::renderer::{Renderer, View};
     use std::mem::{offset_of, size_of};
@@ -562,6 +593,56 @@ mod tests {
         ] {
             assert!(bank.contains(&constant), "ending_set.wgsl lacks {constant}");
         }
+        // Every set shows the whole picture, centred and upright in its
+        // screen: no set moves, turns, sizes, rolls or skews its picture.
+        let compact_bank = compact(bank);
+        assert!(compact_bank.contains("fnplaced(local:vec2f)->vec2f{returnlocal/PICTURE;}"));
+        assert!(compact_bank.contains("structLook{brightness:f32,exponents:vec3f}"));
+    }
+
+    /// The far pictures: one layer for each palette shown up to the line,
+    /// each frame drawing on its own palette's, the frames after the line on
+    /// the last.
+    #[test]
+    fn far_pictures_take_each_palette_up_to_the_line() {
+        let steps = [0, 0, 0, 2, 3, 4, 5, 5, 20, 21, 22, 68, 69];
+        let palette = |step: usize| -> Vec<u8> {
+            let mut p = vec![10u8; 768];
+            match step {
+                2 | 3 => p[..3].fill(63),
+                4..=20 => p[3..].fill(10 + step as u8),
+                21.. => p[3..].fill(60),
+                _ => {}
+            }
+            if step >= 68 {
+                p[3..6].fill(step as u8 - 40);
+            }
+            p
+        };
+        let preview = EndingPreview {
+            start: 0,
+            frames: steps
+                .iter()
+                .map(|&step| EndingFrame {
+                    step,
+                    stage: Stage::of(step),
+                    image: 0,
+                })
+                .collect(),
+            palettes: steps.iter().flat_map(|&s| palette(s)).collect(),
+            images: vec![vec![0; 64000]],
+            monster: vec![0; 64000],
+            music: Vec::new(),
+            events: EndingEvents::default(),
+            content: (0, 319),
+            line_colour: [0.0; 3],
+            profile: Vec::new(),
+            phosphor: Vec::new(),
+            cells: Vec::new(),
+        };
+        let (shown, layer_of) = super::picture_layers(&preview);
+        assert_eq!(shown, [0, 3, 5, 6, 8, 9]);
+        assert_eq!(layer_of, [0, 0, 0, 1, 1, 2, 3, 3, 4, 5, 5, 5, 5]);
     }
 
     fn view(time: f64, modern: bool) -> View {
@@ -612,7 +693,9 @@ mod tests {
                 e.dot + 0.05,
             ];
             if modern {
-                moments.push(e.end + 0.4);
+                // The afterglow as the pulse ends: by then the wall is a far
+                // field of dots, dim on a frame this small soon after.
+                moments.push(e.end + 0.05);
             }
             let mut played = Vec::new();
             for &m in &moments {

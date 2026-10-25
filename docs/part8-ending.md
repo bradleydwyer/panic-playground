@@ -84,23 +84,30 @@ and timing:
   green-yellow phosphor (yellow-green mids, green-black shadows, pale green
   highlights), keeping enough of the picture's own colour for the monster to
   be recognised.
-- The scroll out. The camera then draws back and never stops: its speed (in
-  the logarithm of its distance) is a bump that peaks at mid hold plus a
-  slow drift that carries on through the switch-off to the end, so the
-  centre set is about a quarter of the frame's height at the switch-off and
-  a fifth at the end. The face becomes a tube's, its glass bulging into
-  bowed sides and deep corners, set deep into a thick chamfered bezel with a
-  row of buttons and a knob below it, and more and more sets come into view
-  in every direction; the wall has no edge (the sets are ray-marched, one
-  every 376 by 300 rows). Where a tube is too small for its 200 lines or its
-  stripes, coarser lines (2, 4, 8 ... rows a line) and stripes take over, so
-  it still reads as a CRT, never aliasing, and far pictures are taken from a
-  filtered copy.
-- The sets. Each shows the monster a little brighter or dimmer, its green a
-  little warmer or cooler, its picture slightly shifted, turned and sized,
-  fixed per set; about one in six has an oddity, fixed too: its picture
-  rolled with the blanking bar showing, skewed by its sync, tinted in a
-  patch by its purity, or dimmed. The centre set has none.
+- The scroll out. The camera then draws back and never stops, eased in on
+  the logarithm of its distance: that speed rises from rest over the first
+  240 frames (a smootherstep) and keeps rising gently to the end, so the
+  zoom out starts softly out of the centre screen and keeps accelerating,
+  with its momentum through the switch-off. About 1 set fills the frame's
+  width for the first second and a half, 4 at 245.2 s, 9 at 245.9 s and 17
+  across (some 200 sets in view) at the switch-off at 246.36 s; the dots
+  appear with some 57 across and the pulse ends with nearly 200. The face
+  becomes a tube's, its glass bulging into bowed sides and deep corners, set
+  deep into a thick chamfered bezel with a row of buttons and a knob below
+  it, and more and more sets come into view in every direction; the wall
+  has no edge (the sets are ray-marched, one every 376 by 300 rows). Where a
+  tube is too small for its 200 lines or its stripes, coarser lines (2, 4,
+  8 ... rows a line) and stripes take over, the stripes easing back so the
+  lines lead, and far pictures are taken from a filtered copy on each
+  frame's palette, so it still reads as a CRT, never aliasing. Where the
+  sets are small, the controls sink into the bezel and the glass stops
+  showing the rim, smoothly.
+- The sets. Every set shows the whole picture, centred and upright in its
+  screen. They differ only a little, fixed per set: a little brighter or
+  dimmer (88 to 100 percent) and a little warmer or cooler green. (The
+  previous version also shifted, turned and sized each set's picture and
+  gave some a rolled, skewed, tinted or dimmed picture; these read as
+  mistakes and are gone.)
 - The light. There is no room: the screens are the only light. Each set is
   lit in green by its own screen (twelve patches, from the original
   picture's mean colours), its eight neighbours' and their dots, and the
@@ -116,10 +123,16 @@ and timing:
   brightening as they shorten. The dots are glowing points of green
   phosphor following the original's colour 1, so they pulse as the
   original does, with a slower afterglow that decays through the last
-  second: an endless grid of dots. The line and the dot keep a least size
-  on the frame, so they read on the small tubes. Everything fades to black
-  over the last third of a second. What the beam lit a few frames before
-  still glows, fading.
+  second: an endless field of dots. The line and the dot keep a least size
+  on the frame (as a 1440-line frame shows them; other sizes keep that
+  light), so they read on the small tubes; widened, a dot keeps its peak up
+  to 30 times its area and from there keeps its light, so the far field
+  stays points of light in the dark. Each dot is drawn from the sets
+  nearest the ray, so it stays round however small its set, and where the
+  sets are small the squeezed pictures and the lines are taken over the
+  pixel so they do not sparkle. Everything fades to black over the last
+  third of a second. What the beam lit a few frames before still glows,
+  fading.
 
 Nothing flickers, rolls or is noise: every value moves smoothly between the
 original's frames, and the sets' differences are fixed. Everything is a
@@ -132,5 +145,5 @@ top of `rust/src/hd/ending_crt.wgsl`, the wall's in
 `rust/src/hd/ending.rs`.
 
 At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (120 frames, on
-a machine in use), modern part 8 takes about 2 to 3 ms a frame; faithful HD
-under 2 ms.
+a machine in use), modern part 8 takes about 3 to 4 ms a frame, the widest
+wall included; faithful HD under 2 ms.

@@ -20,12 +20,13 @@
 //!   dot and the dot's pulse read that way); interpolation between the
 //!   70 Hz frames.
 //! - Authored: everything the modern view adds (ending_crt.wgsl,
-//!   ending_set.wgsl and the values marked authored here): the bank of nine
-//!   monitors and the camera's pull back from the centre one's face, the
-//!   tubes' shape and scanlines on the original's 200 lines, the phosphor's
-//!   glow and persistence, the gains that brighten the picture as it
-//!   squeezes, the light the screens throw on the sets, the CRT coming on
-//!   over the hold and the fade to black over the last frames.
+//!   ending_set.wgsl and the values marked authored here): the endless wall
+//!   of monitors and the camera's eased-in pull back from the centre one's
+//!   face, the tubes' shape and scanlines on the original's 200 lines, the
+//!   green phosphor's tint, glow and persistence, the gains that brighten
+//!   the picture as it squeezes, the light the screens throw on the sets,
+//!   the CRT coming on over the hold and the fade to black over the last
+//!   frames.
 use super::{clip::vga_linear, greetings::GreetingsPreview};
 use crate::{
     data::Data,
@@ -70,21 +71,39 @@ pub const CELLS: (usize, usize) = (4, 3);
 /// the centre set's face at the origin, its front toward +z). Its vertical
 /// field of view (degrees): from 100 / tan(half of it) the face's 200 rows
 /// fill the frame's height, as part 7's picture does, which is where it
-/// starts. It draws back from there and never stops. Its speed, in the
-/// logarithm of its distance a 70 Hz frame, is the sum of a bump over the
-/// first BUMP frames (as 30 x^2 (1 - x)^2, covering BUMP_SPAN: slow at
-/// first, so it holds close while the CRT comes on, fastest at mid hold,
-/// fading by the switch-off) and a drift of DRIFT a frame that comes up
-/// over the first DRIFT_RISE frames and carries on to the end. It turns a
-/// little with the bump (TURN, degrees across and down). The wall
-/// (ending_set.wgsl) has a set every SET_PITCH rows up.
+/// starts. It draws back from there and never stops, eased in on the
+/// logarithm of its distance: its speed there (a 70 Hz frame) rises from
+/// rest as a smootherstep over the first EASE frames to SPEED, gently at
+/// first so the centre set still fills the frame while the CRT comes on, and
+/// keeps rising, by GAIN of SPEED over SPAN frames, so the zoom out
+/// accelerates through the hold and keeps its momentum through the
+/// switch-off to the end. By the switch-off (frame 284) a field of about 17
+/// sets across the frame is in view; by the end, hundreds. It turns a little
+/// as it draws back (TURN, degrees across and down, approached as the
+/// logarithm grows past TURN_LOG). The wall (ending_set.wgsl) has a set
+/// every SET_PITCH rows up.
 pub const FIELD_OF_VIEW: f64 = 30.0;
-pub const BUMP: f64 = 320.0;
-pub const BUMP_SPAN: f64 = 1.48;
-pub const DRIFT: f64 = 0.00145;
-pub const DRIFT_RISE: f64 = 120.0;
+pub const EASE: f64 = 240.0;
+pub const SPEED: f64 = 0.0153;
+pub const GAIN: f64 = 0.3;
+pub const SPAN: f64 = 481.0;
 pub const TURN: (f64, f64) = (2.0, 3.0);
+pub const TURN_LOG: f64 = 2.0;
 pub const SET_PITCH: f64 = 300.0;
+
+/// How far the camera has drawn back at part-8 frame position `tau`, as the
+/// logarithm of its distance over its first (the integral of its speed).
+pub fn pull_back(tau: f64) -> f64 {
+    let tau = tau.max(0.0);
+    let x = tau / EASE;
+    let eased = if x < 1.0 {
+        // The integral of 6x^5 - 15x^4 + 10x^3.
+        EASE * x * x * x * x * (x * x - 3.0 * x + 2.5)
+    } else {
+        tau - EASE / 2.0
+    };
+    SPEED * (eased + GAIN * tau * tau / (2.0 * SPAN))
+}
 
 /// Where the camera is and what it looks at, at part-8 frame position
 /// `tau` (continuous): its position, the point it looks at, and the
@@ -92,16 +111,10 @@ pub const SET_PITCH: f64 = 300.0;
 pub fn camera(tau: f64) -> ([f64; 3], [f64; 3], f64) {
     let tan_half = (FIELD_OF_VIEW / 2.0).to_radians().tan();
     let first = 100.0 / tan_half;
-    let x = (tau / BUMP).clamp(0.0, 1.0);
-    let bump = x * x * x * (10.0 - 15.0 * x + 6.0 * x * x);
-    let y = (tau / DRIFT_RISE).max(0.0);
-    let drift = if y < 1.0 {
-        DRIFT_RISE * (y * y * y - y * y * y * y / 2.0)
-    } else {
-        tau - DRIFT_RISE / 2.0
-    };
-    let distance = (first.ln() + BUMP_SPAN * bump + DRIFT * drift).exp();
-    let (across, down) = (TURN.0.to_radians() * bump, TURN.1.to_radians() * bump);
+    let back = pull_back(tau);
+    let distance = first * back.exp();
+    let turned = 1.0 - (-back / TURN_LOG).exp();
+    let (across, down) = (TURN.0.to_radians() * turned, TURN.1.to_radians() * turned);
     let direction = [
         across.sin() * down.cos(),
         down.sin(),
@@ -758,37 +771,41 @@ mod tests {
 
     /// The camera starts where the face's 200 rows fill the frame, straight
     /// on and at rest; it holds close while the CRT comes on, then draws
-    /// back, never stopping, smoothly, the centre set about a quarter of the
-    /// frame's height at the switch-off and a fifth at the end.
+    /// back, eased in on the logarithm of its distance: that speed rises
+    /// from rest and never falls, so it never stops or slows, and the
+    /// switch-off shows a field of sets, many dozens of them.
     #[test]
-    fn camera_starts_on_the_face_and_never_stops_drawing_back() {
+    fn camera_starts_on_the_face_and_accelerates_away() {
         let (eye, aim, tan_half) = camera(0.0);
         assert_eq!(aim, [0.0; 3]);
         assert_eq!(&eye[..2], &[0.0, 0.0]);
         assert!((eye[2] * tan_half - 100.0).abs() < 1e-9);
         let length = |e: [f64; 3]| (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]).sqrt();
+        // Sets across a 16:9 frame (the pitch across is 376 rows), and the
+        // frame's height a set takes.
+        let across = |tau: f64| 2.0 * length(camera(tau).0) * tan_half * 16.0 / 9.0 / 376.0;
         let share = |tau: f64| SET_PITCH / (2.0 * length(camera(tau).0) * tan_half);
-        assert!(share(CRT_RAMP) > 0.6, "{}", share(CRT_RAMP));
-        assert!((0.2..0.3).contains(&share(285.0)), "{}", share(285.0));
-        assert!((0.15..0.22).contains(&share(481.0)), "{}", share(481.0));
-        // Tenths of a frame: always moving away once started, each step
-        // small against the distance, the speed never changing suddenly.
-        let mut previous = camera(0.0).0;
+        assert!(share(CRT_RAMP) > 1.4, "{}", share(CRT_RAMP));
+        assert!((15.0..22.0).contains(&across(284.0)), "{}", across(284.0));
+        assert!(across(284.0) * 9.0 / 16.0 * 376.0 / 300.0 > 8.0);
+        assert!(
+            (100.0..1000.0).contains(&across(481.0)),
+            "{}",
+            across(481.0)
+        );
+        // Tenths of a frame: the logarithm of the distance always rising,
+        // its speed never falling and never changing suddenly, each step
+        // small against the distance.
+        let log = |tau: f64| length(camera(tau).0).ln();
         let mut speed = 0.0;
         for k in 1..=4810 {
             let tau = k as f64 / 10.0;
-            let now = camera(tau).0;
-            let step = length(now) - length(previous);
+            let step = log(tau) - log(tau - 0.1);
             assert!(step > 0.0, "the camera stops at frame {tau}");
-            assert!(
-                step < 0.002 * length(now),
-                "the camera jumps at frame {tau}"
-            );
-            assert!(
-                (step - speed).abs() < 0.02,
-                "its speed jumps at frame {tau}"
-            );
-            (previous, speed) = (now, step);
+            assert!(step >= speed - 1e-12, "the camera slows at frame {tau}");
+            assert!(step < 0.003, "the camera jumps at frame {tau}");
+            assert!(step - speed < 2e-5, "its speed jumps at frame {tau}");
+            speed = step;
         }
     }
 

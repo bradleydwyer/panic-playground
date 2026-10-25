@@ -1,29 +1,30 @@
 // The wall of monitors the modern part 8 scrolls out from, and the light
 // their screens throw on it. Authored throughout: the sets, their shape,
-// material, small differences and oddities, the camera's move
-// (hd/ending.rs, `camera`) and the light. The pictures are ending_crt.wgsl's.
+// material and small differences, the camera's move (hd/ending.rs,
+// `camera`) and the light. The pictures are ending_crt.wgsl's.
 //
 // - The camera starts where the centre set's face fills the frame's height
 //   as part 7's picture does, straight on, with the glass flat, the face the
 //   picture's own rectangle and the sets unlit, so part 8 starts on part 7's
 //   last frame. It holds close while the picture becomes an old green
-//   surveillance monitor's, then draws back: the face becomes a tube's, its
-//   glass bulging into bowed sides and deep corners, set deep into a thick
-//   chamfered bezel, and more and more sets come into view in every
-//   direction; the wall has no edge. It keeps drawing back, more slowly,
-//   through the switch-off, to the end.
-// - Every set shows the monster with small differences of its own, fixed
-//   per set (brightness, a warmer or cooler green, the picture's place, turn
-//   and size); here and there one has an oddity, fixed too: its picture
-//   rolled, with the blanking bar showing, or skewed by its sync, or tinted
-//   in a patch by its purity, or dimmed. The centre set has none. All of
-//   them switch off together on the original's timing.
+//   surveillance monitor's, then draws back, eased in, ever faster: the face
+//   becomes a tube's, its glass bulging into bowed sides and deep corners,
+//   set deep into a thick chamfered bezel, and more and more sets come into
+//   view in every direction, a field of about 17 across the frame by the
+//   switch-off and hundreds by the end; the wall has no edge.
+// - Every set shows the whole picture, centred and upright in its screen.
+//   The sets differ only a little, fixed per set: brightness and a warmer
+//   or cooler green. All of them switch off together on the original's
+//   timing. Their dots are drawn from the nearest sets wherever a ray goes,
+//   so each stays a round point of light however small its set.
 // - There is no room. The sets are lit only by the screens: each by its own
 //   (in twelve patches, from the original picture's mean colours), by its
 //   eight neighbours' and their dots, and by the wall's light at large, on
 //   the chamfers, rims, lips, tunnels and buttons, all in the screens'
 //   green. As the screens go dark, so does the wall. The glass shows the lit
 //   rim in its curve, a faint glare and the phosphor's scattered green.
+// - Where the sets are small, what is too small to see goes smoothly: the
+//   controls sink into the bezel and the glass stops showing the rim.
 // Module: the shared controls, ending_common.wgsl, ending_crt.wgsl and this
 // file.
 
@@ -80,21 +81,17 @@ const AFTER_LIGHT=60.0;
 const SHEEN=.1;
 const SHEEN_FROM=vec3f(-.3,.8,.52);
 const SHEEN_POWER=8.0;
-// The sets' differences: brightness from LOOK_DIM to 1; how far the green
-// turns warmer or cooler (on the phosphor's exponents); the picture's
-// offset (rows), turn (degrees) and size. The oddities' shares of the sets
-// (rolled, skewed, tinted, dimmed) and their sizes.
-const LOOK_DIM=.84;
-const LOOK_WARMTH=.18;
-const LOOK_OFFSET=1.4;
-const LOOK_TURN=.6;
-const LOOK_SIZE=.015;
-const ODD=vec4f(.05,.09,.12,.16);
-const ROLL=vec2f(.3,.7);
-const BLANKING=.14;
-const SKEW=.08;
-const PURITY=vec3f(1.18,.86,1.12);
-const DIMMED=.65;
+// The sets' differences, small and fixed per set: brightness from LOOK_DIM
+// to 1, and how far the green turns warmer or cooler (on the phosphor's
+// exponents). Every set shows the whole picture, centred and upright in its
+// screen.
+const LOOK_DIM=.88;
+const LOOK_WARMTH=.12;
+// Where the sets are small, what is too small to see goes: the controls
+// sink into the bezel and the glass stops showing the rim, between these
+// sizes (source rows a frame's pixel spans).
+const CONTROLS_FADE=vec2f(2.5,5.0);
+const REFLECT_FADE=vec2f(1.5,3.0);
 // The march.
 const STEPS=120u;
 const STEP=.75;
@@ -120,14 +117,16 @@ fn round_box(p:vec3f,b:vec3f,r:f32)->f32 {
     let q=abs(p)-b+r;
     return length(max(q,vec3f(0)))+min(max(q.x,max(q.y,q.z)),0.0)-r;
 }
+// How much the controls stand out (1 near, 0 where the sets are small).
+var<private> standing:f32;
 // The controls under the face: the buttons and the knob.
 fn controls(p:vec3f)->f32 {
     let along=p.x-BUTTONS.x;
     let i=clamp(floor(along/BUTTON_SPACING)+.5,-1.5,1.5);
     let q=vec3f(along-i*BUTTON_SPACING,p.y-BUTTONS.y,p.z-TUNNEL);
-    let button=round_box(q,vec3f(BUTTON,BUTTON_OUT),1.2);
-    let r=vec2f(length(p.xy-KNOB)-KNOB_RADIUS,abs(p.z-TUNNEL)-KNOB_OUT);
-    let knob=min(max(r.x,r.y),0.0)+length(max(r,vec2f(0)))-1.0;
+    let button=round_box(q,vec3f(BUTTON,BUTTON_OUT*standing),1.2*standing);
+    let r=vec2f(length(p.xy-KNOB)-KNOB_RADIUS,abs(p.z-TUNNEL)-KNOB_OUT*standing);
+    let knob=min(max(r.x,r.y),0.0)+length(max(r,vec2f(0)))-standing;
     return min(button,knob);
 }
 // One set, its face's centre at the origin: a body with a chamfered front
@@ -211,43 +210,16 @@ fn hash4(tv:vec2f,salt:u32)->vec4f {
     let h3=scramble(h2^0xc2b2ae35u);
     return vec4f(vec4u(h0,h1,h2,h3)>>vec4u(8u))/16777216.0;
 }
-struct Look {
-    brightness:f32, exponents:vec3f, offset:vec2f, turn:f32, size:f32,
-    roll:f32, skew:f32, purity:f32,
-}
+struct Look {brightness:f32, exponents:vec3f}
 fn look_of(tv:vec2f)->Look {
-    var look=Look(1.0,PHOSPHOR,vec2f(0),0.0,1.0,0.0,0.0,0.0);
-    if all(tv==vec2f(0)) {return look;}
+    if all(tv==vec2f(0)) {return Look(1.0,PHOSPHOR);}
     let h=hash4(tv,1u);
-    let g=hash4(tv,2u);
     let warmth=h.y*2.0-1.0;
-    look.brightness=mix(LOOK_DIM,1.0,h.x);
-    look.exponents=PHOSPHOR+vec3f(-LOOK_WARMTH*warmth,0.0,LOOK_WARMTH*warmth);
-    look.offset=(g.xy*2.0-1.0)*LOOK_OFFSET;
-    look.turn=(g.z*2.0-1.0)*LOOK_TURN;
-    look.size=1.0+(g.w*2.0-1.0)*LOOK_SIZE;
-    let odd=h.w;
-    if odd<ODD.x {look.roll=mix(ROLL.x,ROLL.y,h.z);}
-    else if odd<ODD.y {look.skew=SKEW*(h.z*2.0-1.0);}
-    else if odd<ODD.z {look.purity=1.0;}
-    else if odd<ODD.w {look.brightness*=DIMMED;}
-    return look;
+    return Look(mix(LOOK_DIM,1.0,h.x),PHOSPHOR+vec3f(-LOOK_WARMTH*warmth,0.0,LOOK_WARMTH*warmth));
 }
-// The point of the picture a set shows at `local` on its face (in units of
-// the picture's half size), with its place, turn, size, roll and skew.
-fn placed(local:vec2f,look:Look)->vec2f {
-    let q=(local-look.offset*vec2f(1,-1))/look.size;
-    let turn=radians(look.turn);
-    var plain=vec2f(cos(turn)*q.x+sin(turn)*q.y,-sin(turn)*q.x+cos(turn)*q.y)/PICTURE;
-    plain.x+=look.skew*plain.y;
-    if look.roll>0.0 {
-        // The picture rolled down by `roll` of its height, the blanking
-        // between frames showing as a bar.
-        let y=(plain.y+1.0-2.0*look.roll)-(2.0+BLANKING)*floor((plain.y+1.0-2.0*look.roll)/(2.0+BLANKING));
-        plain.y=select(y-1.0,4.0,y>2.0);
-    }
-    return plain;
-}
+// The point of the picture a set shows at `local` on its face, in units of
+// the picture's half size: the same for every set.
+fn placed(local:vec2f)->vec2f {return local/PICTURE;}
 
 // ---- The screens' light -------------------------------------------------------------
 fn cell_light(c:u32)->vec3f {
@@ -336,9 +308,46 @@ fn lit(p:vec3f,n:vec3f,v:vec3f,albedo:vec3f,rough:f32,own:vec2f)->vec3f {
     return out*a;
 }
 
+// ---- The dots ------------------------------------------------------------------------
+// The dots the sets' tubes shrink to, seen along the ray (o, d): each a point
+// of phosphor at the middle of its face, on the glass's crown. They are
+// drawn wherever the ray goes, from the three by three sets nearest it, so a
+// dot never ends at its glass's edge however small its set.
+fn dots(o:vec3f,d:vec3f,a:f32)->vec3f {
+    let t=(BULGE*a-o.z)/d.z;
+    if t<=0.0 {return vec3f(0);}
+    let q=(o+d*t).xy;
+    let pixel=t*2.0*ec.eye.w/u.screen.y;
+    let at=vec2f((DOT_COLUMN+.5-160.0)*COLUMN,100.0-(LINE_ROW+.5));
+    let near=set_of(q);
+    var out=vec3f(0);
+    for(var j=-1;j<=1;j++) {
+        for(var i=-1;i<=1;i++) {
+            let tv=near+vec2f(f32(i),f32(j));
+            let look=look_of(tv);
+            let r=length(q-tv*PITCH-at);
+            out+=graded(dot_glow(r,pixel),look.exponents,a)*look.brightness;
+        }
+    }
+    return out*(1.0-GLASS_F0*a);
+}
+
 // ---- The picture ---------------------------------------------------------------------
 @fragment fn television(v:Vertex)->@location(0) vec4f {
     ending_begin();
+    var light=vec3f(0);
+    for(var k=0;k<SAMPLES*SAMPLES;k++) {
+        let o=(vec2f(f32(k%SAMPLES),f32(k/SAMPLES))+.5)/f32(SAMPLES)-.5;
+        light+=shade(v.uv+o/u.screen.xy);
+    }
+    return vec4f(max(light/f32(SAMPLES*SAMPLES)*ec.beam.w,vec3f(0)),1);
+}
+// Samples a pixel takes across and down (1; more only to make a reference
+// to compare against when checking for aliasing).
+const SAMPLES=1;
+// The light the frame shows at `uv` (0 to 1 across and down), HDR, before
+// the fade to black.
+fn shade(uv:vec2f)->vec3f {
     let a=ec.tube.x;
     // The camera's ray: straight at the face, its 200 rows filling the
     // frame's height, at first.
@@ -346,9 +355,12 @@ fn lit(p:vec3f,n:vec3f,v:vec3f,albedo:vec3f,rough:f32,own:vec2f)->vec3f {
     let forward=normalize(ec.aim.xyz-eye);
     let right=normalize(cross(forward,vec3f(0,1,0)));
     let up=cross(right,forward);
-    let ndc=vec2f(v.uv.x*2.0-1.0,1.0-v.uv.y*2.0)*ec.eye.w;
+    let ndc=vec2f(uv.x*2.0-1.0,1.0-uv.y*2.0)*ec.eye.w;
     let d=normalize(forward+right*ndc.x*screen_aspect()+up*ndc.y);
     let toward=-d;
+    // Rows a frame's pixel spans on the wall, straight ahead.
+    let detail=(eye.z-TUNNEL)*2.0*ec.eye.w/u.screen.y;
+    standing=1.0-smoothstep(CONTROLS_FADE.x,CONTROLS_FADE.y,detail);
     var light=vec3f(0);
     let glass=glass_hit(eye,d,a);
     var span=wall_span(eye,d);
@@ -364,7 +376,7 @@ fn lit(p:vec3f,n:vec3f,v:vec3f,albedo:vec3f,rough:f32,own:vec2f)->vec3f {
         let knobs=controls(local)<.5;
         var albedo=select(BEZEL,RIM,inside);
         var rough=select(BEZEL_ROUGH,RIM_ROUGH,inside);
-        if knobs {albedo=CONTROLS;rough=CONTROLS_ROUGH;}
+        if knobs {albedo=mix(albedo,CONTROLS,standing);rough=mix(rough,CONTROLS_ROUGH,standing);}
         light=lit(p,n,toward,albedo,rough,tv);
     } else if glass.x>0.0 {
         // The glass: the picture through it, the lit rim in its curve, a
@@ -377,17 +389,13 @@ fn lit(p:vec3f,n:vec3f,v:vec3f,albedo:vec3f,rough:f32,own:vec2f)->vec3f {
         let n=normalize(vec3f(BULGE*a*local.xy/(half*half),1.0));
         let cv=max(dot(n,toward),0.0);
         let fresnel=GLASS_F0+(1.0-GLASS_F0)*pow(1.0-cv,5.0);
-        let plain=placed(local.xy,look);
+        let plain=placed(local.xy);
         let pixel=glass.x*2.0*ec.eye.w/u.screen.y/max(cv,.3);
         let edge=1.0-smoothstep(-pixel,0.0,outline(local.xy,half,glass_power(a)));
-        var shown=screen(plain,a,pixel,look.exponents)*look.brightness;
-        if look.purity>0.0 {
-            // A patch of the face tinted by the tube's purity.
-            let w=local.xy/half-vec2f(.45,.35);
-            shown*=mix(vec3f(1),PURITY,exp(-dot(w,w)*3.0));
-        }
+        let shown=screen(plain,a,pixel,look.exponents)*look.brightness;
         light=shown*(1.0-fresnel*a)*edge;
-        if a>0.0 {
+        let rim=1.0-smoothstep(REFLECT_FADE.x,REFLECT_FADE.y,pixel);
+        if a>0.0 && rim>0.0 {
             let r=reflect(d,n);
             var reach=wall_span(p,r);
             reach.y=min(reach.y,reach.x+200.0);
@@ -395,11 +403,15 @@ fn lit(p:vec3f,n:vec3f,v:vec3f,albedo:vec3f,rough:f32,own:vec2f)->vec3f {
             if back>0.0 {
                 let q2=p+n*.05+r*back;
                 let n2=wall_normal(q2,a);
-                light+=fresnel*lit(q2,n2,-r,RIM,RIM_ROUGH,set_of(q2.xy));
+                light+=rim*fresnel*lit(q2,n2,-r,RIM,RIM_ROUGH,set_of(q2.xy));
             }
+        }
+        if a>0.0 {
+            let r=reflect(d,n);
             let sheen=pow(max(dot(r,normalize(SHEEN_FROM)),0.0),SHEEN_POWER);
             light+=SHEEN*a*fresnel/GLASS_F0*sheen*wall_light();
         }
     }
-    return vec4f(max(light*ec.beam.w,vec3f(0)),1);
+    if ec.glow.x+ec.glow.y>0.0 {light+=dots(eye,d,a);}
+    return light;
 }

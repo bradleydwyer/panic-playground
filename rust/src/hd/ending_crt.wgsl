@@ -19,8 +19,9 @@
 //   whole graded toward a green-yellow phosphor, green-black in the
 //   shadows. Where a tube is too small for its 200 lines or its stripes,
 //   they give way to coarser ones (2, 4, 8 ... rows a line; 2, 4 ...
-//   columns a triad) so it still reads as a CRT, never as a clean picture,
-//   and never aliasing; far pictures are taken from a filtered copy.
+//   columns a triad, the coarser stripes eased back so the lines lead) so
+//   it still reads as a CRT, never as a clean picture, and never aliasing;
+//   far pictures are taken from a filtered copy on each frame's palette.
 // - The switch-off follows the original's stages and timing. The white
 //   behind the monster and the white frame flash the face, and their light
 //   lingers on the phosphor. The picture squeezes with the original's
@@ -30,8 +31,12 @@
 //   are erased, brightening as it shortens. The dot is a glowing point of
 //   phosphor following the original's pulse, with a slower afterglow that
 //   gathers while it pulses and decays to black at the end. The line and
-//   the dot keep a least size on the frame, so they read on small tubes.
-//   All of it glows in the same green phosphor.
+//   the dot keep a least size on the frame, so they read on small tubes;
+//   the dot keeps its peak while widened up to a limit and then its light,
+//   so a far field of dots stays points of light in the dark rather than a
+//   haze. Where a tube is small, the squeezed picture and the line are
+//   taken over the pixel, from the filtered copy and from several columns,
+//   so they do not sparkle. All of it glows in the same green phosphor.
 // - The phosphor's persistence: what the beam lit a few frames before still
 //   glows, fading, so the collapse leaves a short trail. Everything is a
 //   function of the moment (hd/ending.rs works out the past states).
@@ -52,10 +57,12 @@ const SPOT_BRIGHT=.26;
 const LINE_PIXELS=3.2;
 const COARSE_DEPTH=.75;
 // The aperture grille: a triad of stripes to each source column at first,
-// its depth, and the least frame pixels a triad (coarser below it).
+// its depth, the least frame pixels a triad (coarser below it) and how much
+// of its depth the coarser stripes give up.
 const TRIAD=1.0;
 const GRILLE=.6;
 const TRIAD_PIXELS=4.5;
+const GRILLE_COARSE=.55;
 // The colour bleeding along the lines: how far back (columns) and how much
 // of the colour comes from there.
 const BLEED=1.6;
@@ -99,14 +106,20 @@ const LINE_HALO=.035;
 const LINE_HALO_REACH=8.0;
 // The dot: the spot's spread (rows, and at least DOT_LEAST frame pixels)
 // and light, its halo's light and reach (rows, and at least DOT_LEAST_REACH
-// pixels); the afterglow's spread, light, halo and a greener tint (a
-// phosphor's longest-lived part).
+// pixels); how many times its area the spot widened to its least size
+// keeps its peak (beyond that it keeps its light, spread wider), and the
+// halo, on a frame this many pixels high (on others the light is that
+// one's); the afterglow's
+// spread, light, halo and a greener tint (a phosphor's longest-lived part).
 const DOT_SPOT=1.1;
 const DOT_LEAST=1.3;
 const DOT_CORE=30.0;
 const DOT_HALO=.9;
 const DOT_REACH=9.0;
-const DOT_LEAST_REACH=9.0;
+const DOT_LEAST_REACH=2.5;
+const DOT_BOOST=30.0;
+const HALO_BOOST=6.0;
+const REFERENCE_HEIGHT=1440.0;
 const AFTER_TINT=vec3f(.8,1.0,.85);
 const AFTER_SPOT=1.5;
 const AFTER_CORE=6.0;
@@ -126,11 +139,13 @@ const TRAIL_FALLOFF=4.0;
 @group(0) @binding(7) var halation:texture_2d<f32>;
 // Each column's mean colour under the hold's palette (ending::profile).
 @group(0) @binding(8) var<storage,read> profile:array<vec4f>;
-// The monster in linear light with its mipmaps (ending::pictures): on the
-// hold's palette, and on the white behind it.
+// The monster in linear light with its mipmaps (ending::picture_levels),
+// one layer for each palette the picture is shown on, from the hold to the
+// line, and each frame's layer.
 @group(0) @binding(10) var pictures:texture_2d_array<f32>;
 // Linear between texels and between mipmaps.
 @group(0) @binding(11) var trilinear:sampler;
+@group(0) @binding(12) var<storage,read> layer_of:array<u32>;
 
 // ---- Part 7's look --------------------------------------------------------------
 // greetings_common.wgsl's inverse of the shared tonemap: part 7 shows the
@@ -231,33 +246,55 @@ fn grille(x:f32,pixel:f32)->vec3f {
     let level=max(log2(TRIAD_PIXELS*pixel/COLUMN/TRIAD),0.0);
     let k=floor(level);
     let f=smoothstep(0.0,1.0,level-k);
-    return mix(stripes(x/(TRIAD*exp2(k))),stripes(x/(TRIAD*exp2(k+1.0))),f);
+    let shown=mix(stripes(x/(TRIAD*exp2(k))),stripes(x/(TRIAD*exp2(k+1.0))),f);
+    // The coarser stripes ease back, so the lines lead on small tubes.
+    return mix(shown,vec3f(1),GRILLE_COARSE*smoothstep(0.0,2.0,level));
 }
-// The picture far off: the filtered copy, on the hold's palette or on the
-// white behind the monster.
-fn far_picture(s:vec2f,pixel:f32)->vec3f {
+// The picture far off: the filtered copy on the shown frame's palette,
+// toward the next's, at mip level `lod`.
+fn far_picture(s:vec2f,lod:f32)->vec3f {
     let uv=s/vec2f(320,200);
-    let lod=max(log2(pixel/COLUMN),0.0);
-    let held=textureSampleLevel(pictures,trilinear,uv,0,lod).rgb;
-    let white=textureSampleLevel(pictures,trilinear,uv,1,lod).rgb;
-    return mix(held,white,clamp(ec.tube.y,0.0,1.0));
+    let a=textureSampleLevel(pictures,trilinear,uv,layer_of[frame_now()],lod).rgb;
+    let b=textureSampleLevel(pictures,trilinear,uv,layer_of[frame_next()],lod).rgb;
+    return mix(a,b,frame_mix());
 }
 // The squeeze: screen row y shows source rows about row 100 + (y - row 100)
 // times the compression; its lines crowd within the beam's spot, so a
-// screen row gathers the source rows the spot spans.
-fn squeezed(s:vec2f,shift:f32,compression:f32)->vec3f {
+// screen row gathers the source rows the spot spans. Where a frame's pixel
+// (`pixel` rows) spans many of them, it gathers them all, from the filtered
+// copy.
+fn squeezed(s:vec2f,shift:f32,compression:f32,pixel:f32)->vec3f {
     let centre=LINE_ROW+.5;
     let m=centre+(s.y-centre)*compression;
-    let reach=max(SPOT_BRIGHT*compression,.5);
-    var c=vec3f(0);
+    let spot=max(SPOT_BRIGHT*compression,.5);
+    let far=smoothstep(.6,1.0,pixel);
+    let rows=pixel*compression;
+    let reach=sqrt(spot*spot+far*rows*rows/12.0);
+    let lod=max(log2(max(pixel/COLUMN,.5*reach)),0.0);
+    var near=vec3f(0);
+    var filtered=vec3f(0);
     var total=0.0;
     for(var i=0;i<BAND_TAPS;i++) {
         let o=((f32(i)+.5)/f32(BAND_TAPS)*2.0-1.0)*1.5*reach;
         let w=exp(-o*o/(2.0*reach*reach));
-        c+=row_rgb(i32(floor(m+o)),s.x,shift,0.0)*w;
+        let row=m+o;
+        if far<1.0 {near+=row_rgb(i32(floor(row)),s.x,shift,0.0)*w;}
+        if far>0.0 {
+            let outside=row<0.0 || row>=200.0;
+            filtered+=select(far_picture(vec2f(s.x,row),lod),colour(0u),outside)*w;
+        }
         total+=w;
     }
-    return max(c/total,vec3f(0));
+    return max(mix(near,filtered,far)/total,vec3f(0));
+}
+// Source row m about column x as a frame's pixel (`pixel` rows) shows it:
+// the columns it spans averaged once they are more than one.
+fn row_seen(m:i32,x:f32,shift:f32,pixel:f32)->vec3f {
+    let width=pixel/COLUMN;
+    if width<=1.0 {return row_rgb(m,x,shift,0.0);}
+    var c=vec3f(0);
+    for(var i=0;i<4;i++) {c+=row_rgb(m,x+((f32(i)+.5)/4.0-.5)*width,shift,0.0);}
+    return c/4.0;
 }
 // The line's light at a point: its row's colours between its ends, in the
 // beam's spot, brighter as it shortens.
@@ -265,8 +302,25 @@ fn line_gain(left:f32,right:f32)->f32 {
     let full=ec.ends.w-ec.ends.z+1.0;
     return LINE_GAIN*min(pow(full/max(right-left+1.0,1.0),LINE_POWER),LINE_MOST);
 }
-fn between(x:f32,left:f32,right:f32)->f32 {
-    return smoothstep(left-.5,left+.5,x)*(1.0-smoothstep(right+.5,right+1.5,x));
+// erf (Abramowitz and Stegun 7.1.26).
+fn erf(x:f32)->f32 {
+    let t=1.0/(1.0+.3275911*abs(x));
+    let y=1.0-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*exp(-x*x);
+    return sign(x)*y;
+}
+// A spot across the line, exp(-dy^2 / 2 sigma^2), averaged over a frame's
+// pixel `pixel` rows high, so a thin line moving across the pixels keeps its
+// light.
+fn spot_across(dy:f32,sigma:f32,pixel:f32)->f32 {
+    if pixel<.05*sigma {return exp(-dy*dy/(2.0*sigma*sigma));}
+    let k=1.0/(sigma*1.4142136);
+    return sigma*1.2533141/pixel*(erf((dy+.5*pixel)*k)-erf((dy-.5*pixel)*k));
+}
+// Whether column x lies on the line between its ends, its edges `width`
+// columns soft.
+fn between(x:f32,left:f32,right:f32,width:f32)->f32 {
+    let w=.5*max(width,1.0);
+    return smoothstep(left-w,left+w,x)*(1.0-smoothstep(right+1.0-w,right+1.0+w,x));
 }
 // The phosphor's persistence at distance d along one way out from the
 // beam: `reach` is how far the lit shape reached at each age (now, then
@@ -297,6 +351,34 @@ fn persisted(d:f32,reach:array<f32,5>,light:array<f32,5>)->f32 {
     }
     if !found {return 0.0;}
     return last_glow*exp(-(d-last_reach)/TRAIL_FALLOFF);
+}
+
+// A spot of `natural` rows widened to at least `least` frame pixels, where a
+// pixel is `pixel` rows: its size, and its light's scale. As a frame
+// REFERENCE_HEIGHT pixels high shows it, the spot keeps its peak until it
+// has been widened to `boost` times its area, and from there keeps its
+// light, so a far field of dots holds its brightness; at other sizes the
+// spot keeps the light it has at that one, so the field looks the same.
+fn widened(natural:f32,least:f32,pixel:f32,boost:f32)->vec2f {
+    let size=max(natural,least*pixel);
+    let reference=max(natural,least*pixel*u.screen.y/REFERENCE_HEIGHT)/natural;
+    let light=min(reference*reference,boost);
+    let k=size/natural;
+    return vec2f(size,light/(k*k));
+}
+// The dot: a point of phosphor at `r` rows from its centre, glowing with the
+// original's pulse, and its slower afterglow, where a frame's pixel is
+// `pixel` rows across; never smaller than a few of the frame's pixels, so it
+// reads as a point of light however small the tube. HDR, before the green.
+fn dot_glow(r:f32,pixel:f32)->vec3f {
+    let spot=widened(DOT_SPOT,DOT_LEAST,pixel,DOT_BOOST);
+    let halo=widened(DOT_REACH,DOT_LEAST_REACH,pixel,HALO_BOOST);
+    let after=widened(AFTER_SPOT,DOT_LEAST*1.3,pixel,DOT_BOOST);
+    let core=DOT_CORE*spot.y*exp(-r*r/(2.0*spot.x*spot.x));
+    let around=halo.y*exp(-r/halo.x);
+    let fast=ec.glow.x*(core+DOT_HALO*around);
+    let slow=ec.glow.y*(AFTER_CORE*after.y*exp(-r*r/(2.0*after.x*after.x))+AFTER_HALO*around);
+    return vec3f(fast)+AFTER_TINT*slow;
 }
 
 // The light a tube shows at `plain`, a point on its face in units of the
@@ -334,7 +416,7 @@ fn screen(plain:vec2f,a:f32,pixel:f32,exponents:vec3f)->vec3f {
                 near=mix(rows.even,rows.lines,a);
             }
             if far>0.0 {
-                even=mix(even,far_picture(s,pixel),far);
+                even=mix(even,far_picture(s,max(log2(pixel/COLUMN),0.0)),far);
             }
             let depth=COARSE_DEPTH*a*(1.0-.5*clamp(luminance(even),0.0,1.0));
             let coarse=even*coarse_lines(s.y,pixel,depth);
@@ -344,7 +426,7 @@ fn screen(plain:vec2f,a:f32,pixel:f32,exponents:vec3f)->vec3f {
             c=graded(c,exponents,a)*mix(vec3f(1),grille(s.x,pixel),GRILLE*a);
             c+=GLASS*a;
         } else {
-            c=graded(squeezed(s,shift,compression),exponents,a);
+            c=graded(squeezed(s,shift,compression,pixel),exponents,a);
             gain=pow(compression,BAND_POWER);
         }
         picture=tonemap_inverse(min(c,vec3f(MONSTER_WHITE)))+max(c-MONSTER_WHITE,vec3f(0))*EXCESS;
@@ -357,13 +439,16 @@ fn screen(plain:vec2f,a:f32,pixel:f32,exponents:vec3f)->vec3f {
     light+=vec3f(FLASH)*cover;
     light+=vec3f(FLASH_GLOW)*max(ec.glow.z-max(cover,ec.tube.y),0.0);
     let dy=s.y-centre;
+    // The line's spot, and its light kept as a frame REFERENCE_HEIGHT
+    // pixels high shows it (widened, the line keeps its peak there).
     let line_spot=max(LINE_SPOT,LINE_LEAST*pixel);
+    let line_light=max(LINE_SPOT,LINE_LEAST*pixel*u.screen.y/REFERENCE_HEIGHT)/line_spot;
     // The line.
     if ec.beam.z>0.0 {
         let gain=line_gain(ec.ends.x,ec.ends.y);
-        let spot=exp(-dy*dy/(2.0*line_spot*line_spot));
-        let row=row_rgb(i32(LINE_ROW),s.x,shift,0.0);
-        light+=row*gain*between(s.x,ec.ends.x,ec.ends.y)*spot*ec.beam.z;
+        let spot=spot_across(dy,line_spot,pixel)*line_light;
+        let row=row_seen(i32(LINE_ROW),s.x,shift,pixel);
+        light+=row*gain*between(s.x,ec.ends.x,ec.ends.y,pixel/COLUMN)*spot*ec.beam.z;
         let dx=max(max(ec.ends.x-.5-s.x,s.x-ec.ends.y-.5),0.0)*COLUMN;
         let halo=exp(-length(vec2f(dx,dy))/LINE_HALO_REACH);
         light+=ec.colour.rgb*gain*LINE_HALO*halo*ec.beam.z*step(ec.ends.x,ec.ends.y);
@@ -398,22 +483,13 @@ fn screen(plain:vec2f,a:f32,pixel:f32,exponents:vec3f)->vec3f {
         any_line+=ec.trail_line[i];
     }
     if any_line>0.0 {
-        let spot=exp(-dy*dy/(2.0*line_spot*line_spot));
+        let spot=spot_across(dy,line_spot,pixel)*line_light;
         let after=persisted(abs(s.x-middle),reach_line,lit);
-        light+=row_rgb(i32(LINE_ROW),s.x,shift,0.0)*TRAIL*after*spot;
+        light+=row_seen(i32(LINE_ROW),s.x,shift,pixel)*TRAIL*after*spot;
     }
-    // The dot: a point of phosphor, glowing with the original's pulse, and
-    // its slower afterglow; never smaller than a few of the frame's pixels.
-    let r=length((s-vec2f(DOT_COLUMN+.5,centre))*vec2f(COLUMN,1.0));
-    let fast=ec.glow.x;
-    let slow=ec.glow.y;
-    let spot=max(DOT_SPOT,DOT_LEAST*pixel);
-    let reach=max(DOT_REACH,DOT_LEAST_REACH*pixel);
-    light+=fast*(DOT_CORE*exp(-r*r/(2.0*spot*spot))+DOT_HALO*exp(-r/reach));
-    let after_spot=max(AFTER_SPOT,DOT_LEAST*1.3*pixel);
-    light+=AFTER_TINT*slow*(AFTER_CORE*exp(-r*r/(2.0*after_spot*after_spot))+AFTER_HALO*exp(-r/reach));
-    // The flash, the line, the trails and the dot in the green phosphor;
-    // the raster's edge, the vignette and the darker corners.
+    // The flash, the line and the trails in the green phosphor; the
+    // raster's edge, the vignette and the darker corners. (The dot is
+    // ending_set.wgsl's, from dot_glow.)
     let vignette=(1.0-VIGNETTE*a*(1.0-(1.0-.5*n.x*n.x)*(1.0-.5*n.y*n.y)))
         *(1.0-CORNERS*a*n.x*n.x*n.y*n.y);
     return max((picture+graded(light,exponents,a))*face*vignette,vec3f(0));
