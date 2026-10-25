@@ -1,4 +1,4 @@
-# Panic playground
+# Panic reprise
 
 Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
@@ -11,7 +11,7 @@ experiments with the following double scroller, part 6's interference
 rings as a pool of liquid chrome under neon, part 5's deep Mandelbrot
 zoom and molten Mandelbrot mountain, part 3's shade bobs and morphing
 dots as light painting, part 4's plasma as the light on a carved stone
-slab, part 7's greetings as crystal letters in a lighthouse's beam, and part 8's
+slab standing in water, part 7's greetings as crystal letters in a lighthouse's beam, and part 8's
 ending as an endless wall of green monitors switched off. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
 letters that refract the stars behind them, a mirrored plate that reflects the
@@ -20,7 +20,10 @@ slowly moving surface reflections, and lighting that pulses and breathes with
 the music.
 
 This builds on the [Rust port of Panic](https://github.com/bradleydwyer/panic).
-It's a work in progress, with modern treatments for the intro, scroller, part 6, part 5, part 3, part 4, part 7 and part 8. The original
+It's very much a work in progress. Every part from the intro to part 8 has
+a first modern treatment, and all of them are still changing. Part 5 is
+still essentially to do: what's there is an early experiment, and it runs
+slowly. The transitions between the scenes need more work too. The original
 player is included as a reference. The new letterforms and block motion are
 authored approximations, not recovered original 3D models.
 
@@ -337,12 +340,20 @@ stone is seen by:
   shadowed by the cut. A dim key light from where the logo's painted light
   comes from keeps the stone lit while the plasma is dark, and gives way
   as it rises.
+- The slab stands in still water that runs back to the foot of the
+  sheets, which stand on it and lean back from it like a book's open
+  pages. The water mirrors the plasma, long, quick swells drawing the
+  reflection out into wavering streaks of its colours, and every second or
+  so a drop lands beside the slab and sends out a ring of ripples. The
+  water is lit only by the sheets, so it comes up and fades with them.
+  **D** swaps it for polished dark stone, and the number keys tune the
+  mirror, the swell and the drops while the preview plays.
 - Part 3's flare overexposes the camera, and the exposure settles over the
   original's 64 frames of fade from white, so the carving comes out of the
   white first. The slab sinks with the original's line compare.
 
-The stone, its carving and finish, the sheet, the lighting and the arrival
-are authored; the positions, motion and timing are the port's. Faithful HD
+The stone, its carving and finish, the sheets, the water, the lighting and
+the arrival are authored; the positions, motion and timing are the port's. Faithful HD
 (**M**) shows the original's rasters at display resolution, the field
 smooth along each raster. The [renderer notes](rust/README.md#part-4-plasma)
 say what is read, what is interpreted and what is authored.
@@ -417,20 +428,26 @@ twice and, a second later, the demo ends at 249.17. It reads as a monitor
 switching off. All of that is read from the port and checked against it
 frame by frame.
 
-The modern look scrolls out from the monster to an endless wall of old green
-surveillance monitors and switches them all off:
+The modern look draws back from the monster through an old green
+surveillance monitor to an endless wall of them, and switches them all off:
 
-- While the centre set's face still fills the frame the picture becomes an
-  old monitor's, strongly: scanlines with dark gaps, an aperture grille,
-  colour bleed, bloom, curvature and darker corners, graded toward a
-  green-yellow phosphor. Then the camera draws back without stopping, and
-  more and more chunky sets come into view in every direction, each showing
-  the monster a little differently, a few with a rolled or skewed picture.
-  The screens are the only light.
+- While the centre set's face still fills the frame the picture, set in the
+  dark glass, becomes an old monitor's, strongly: scanlines with dark gaps,
+  an aperture grille, colour bleed, bloom, curvature and darker corners,
+  graded toward a green-yellow phosphor. The grille is seen as a camera
+  filming the screen would see it: its stripes beat against the camera's
+  pixels in broad moiré bands, bowed and crowding from the middle of the
+  screen out to its mirrored sides, that widen, vanish, reverse and come
+  back as the camera draws back.
+- The camera draws back slowly and never stops. By the switch-off the
+  centre set and its neighbours fill the frame, and more chunky sets keep
+  coming into view in every direction, each showing the monster. The
+  screens are the only light. **T**/**Y** and **Q**/**E** move the moiré
+  and change the pull-back's speed while the preview plays.
 - Every set is switched off on the original's stages and timing: the white
   flashes the faces and lights the wall, the pictures squeeze and brighten,
-  the lines bloom and shorten, and the wall ends as an endless grid of
-  glowing green dots, its light dying to black. Nothing flickers.
+  the lines bloom and shorten, and the wall ends as a grid of glowing green
+  dots, its light dying to black. Nothing flickers.
 
 The wall, the camera, the tubes' look and the light are authored; the
 pictures, palettes, stages and timing are the port's. Faithful HD (**M**)

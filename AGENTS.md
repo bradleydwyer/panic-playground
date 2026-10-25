@@ -1,4 +1,4 @@
-# Panic playground
+# Panic reprise
 
 This is an experiment with modern rendering of Panic's intro through the logo,
 built on the Rust port. Preserve the original sequence and music cues while
