@@ -495,8 +495,16 @@ fn run() -> Result<(), String> {
     }
     let mut paused = o.paused;
     let mut anchor = o.seek;
-    let mut queued = set_audio(&device, &clip, anchor, o.mute, paused)?;
+    let mut queued = set_audio(&device, &clip, anchor, o.mute, true)?;
     let mut time = anchor;
+    // The audio clock moves a device buffer at a time (512 samples, 32 ms),
+    // so between its steps the picture runs on with the wall clock. `heard`
+    // is the audio clock and when it last moved.
+    let buffer = device.spec().samples as f64 / SAMPLE_RATE as f64;
+    let mut heard = (anchor, Instant::now());
+    // Set at the start and on a seek: the frame's catch-up (part 5's smoke
+    // runs every step it skips) finishes on the GPU before the music starts.
+    let mut settle = true;
     let mut events = sdl.event_pump()?;
     let mut last_title = Instant::now() - Duration::from_secs(1);
     let runtime = Instant::now();
@@ -519,16 +527,21 @@ fn run() -> Result<(), String> {
         {
             break;
         }
-        if !paused && !scrubbing {
+        if !paused && !scrubbing && !settle {
             let remaining = device.size() as usize / 2;
             let audio_time =
                 anchor + queued.saturating_sub(remaining) as f64 / (SAMPLE_RATE * 2) as f64;
-            // Audio remains the clock throughout the sequence. Once the hold's
-            // audio finishes, let the logo material keep moving until paused.
+            if audio_time != heard.0 {
+                heard = (audio_time, now);
+            }
+            // Audio remains the clock throughout the sequence: the picture
+            // runs on from its latest step for at most a buffer, and never
+            // back. Once the hold's audio finishes, let the logo material
+            // keep moving until paused.
             time = if remaining == 0 {
                 time.max(audio_time) + delta
             } else {
-                audio_time
+                time.max(audio_time + now.duration_since(heard.1).as_secs_f64().min(buffer))
             };
         }
         let mut seek = None;
@@ -551,6 +564,7 @@ fn run() -> Result<(), String> {
                             device.pause();
                         } else if !scrubbing {
                             device.resume();
+                            heard.1 = now;
                         }
                     }
                     Keycode::Left => {
@@ -705,8 +719,8 @@ fn run() -> Result<(), String> {
         }
         if let Some(t) = seek {
             time = t;
-            anchor = t;
-            queued = set_audio(&device, &clip, t, o.mute, paused)?;
+            device.pause();
+            settle = true;
         }
         if capture {
             match renderer.capture(
@@ -798,6 +812,16 @@ fn run() -> Result<(), String> {
                 hud: o.fps.then_some(rate),
             },
         );
+        if settle {
+            renderer
+                .device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map_err(|e| e.to_string())?;
+            anchor = time;
+            queued = set_audio(&device, &clip, time, o.mute, paused || scrubbing)?;
+            heard = (time, Instant::now());
+            settle = false;
+        }
         let frame = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
