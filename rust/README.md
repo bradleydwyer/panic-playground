@@ -69,7 +69,8 @@ the full importer.
 ## Experimental HD intro and scroller
 
 The `panic-hd` preview covers the opening through the PANIC logo, and with
-`--scroller`, `--rings` and `--field` continues through parts 2, 6 and 5.
+`--scroller`, `--rings`, `--field` and `--dots` continues through parts 2, 6,
+5 and 3.
 Build and run it from the repository root after importing your data:
 
 ```sh
@@ -710,9 +711,9 @@ cargo run --release --locked --features hires --bin panic-hd -- --field --faithf
 `--field` continues past part 6 through part 5, the zoom and the mountain,
 to the first frame of part 3, with the music unbroken. It implies `--rings`.
 `--faithful` (or **M**) shows faithful HD, `--original` (or **Tab**) the
-original and `--split` (or **C**) both, as in the earlier parts. Part 3 itself
-is outside the preview: the clip ends at 130.03 seconds, when part 3 takes
-part 5's last frame, and holds there.
+original and `--split` (or **C**) both, as in the earlier parts. The clip
+ends at 130.03 seconds, when part 3 takes part 5's last frame, and holds
+there; `--dots` carries on through part 3.
 
 Read from the port, and checked against the engine on every frame by an
 ignored test, part 5 runs like this. It begins at 81.27 seconds on the
@@ -1320,9 +1321,153 @@ seconds, so the frame author can bring the lit metal frame in there:
 `picture_level()` rises from 0 to 1 over it and `field_seconds()` is
 negative. The fade is part 5's only with `--field`; `--rings` alone still
 ends on part 6's own picture, as the look check's part-6 shots show it. Part 5 must end on the frame with a
-dark, empty window, which part 3 will zoom into: the window is cleared at
+dark, empty window, which part 3 zooms into: the window is cleared at
 98.11 seconds, and from then on the zoom's layer should stay dark. Check the
 look with `tools/look_check.py`, whose part-5 shots show each phase.
+
+Part 3 takes part 5's last frame from part 5's own renderer, in both views,
+while it holds the frame and zooms into its window. Its one hook is
+`FieldBlock::part3_view`: `field_pixel` divides each pixel's screen position
+by its x, the magnification about the screen's centre, before anything is
+drawn, so the frame, its smoke and its window are resampled at every scale
+rather than enlarged from a picture. It is 0 throughout part 5, which then
+draws exactly as before, and `FieldPreview::controls` never sets it, so the
+smoke's steps never see it. Anything that maps a source point back to the
+screen without `field_pixel` (the frame's mountain shadow does) would not
+follow the zoom; by then the mountain has gone.
+
+### Part 3: Dots
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --dots --seek 130
+cargo run --release --locked --features hires --bin panic-hd -- --dots --faithful --seek 139
+```
+
+`--dots` continues past part 5 through part 3, and part 4's wait, to the
+first frame part 4 draws, with the music unbroken. It implies `--field`.
+**M**, **Tab** and **C** work as in the earlier parts. The clip ends at
+179.96 seconds, on part 4's logo slab in white, and holds there.
+
+Read from the port, and checked against the engine on every frame by an
+ignored test, part 3 runs like this:
+
+- From 130.03 seconds it holds part 5's last frame, its window dark, until
+  the music reaches 1E00.
+- From 131.99 it zooms about the screen's centre: each frame resamples that
+  picture at a scale that falls by 256 a frame from 65535, to 23256 at
+  134.36, 2.82 times, when the window fills the 4:3 screen and all is black.
+- From 134.37, the shade bobs. Each iteration adds 20 discs, 16 by 16
+  pixels, along a path of two pairs of sines, and erases the ones added 16
+  iterations before, so the overlap counts, through a palette that is blue
+  up to 11, whitens from 13 and is white from 25, draw a ribbon. The port
+  takes one iteration a frame. Once the music passes 1E3C, at 138.89, no
+  more are added, and the last are erased by 139.10.
+- From 139.11, 2,660 dot frames. 512 points take eight generated objects
+  in turn: a sphere lattice, a vase (a solid of revolution), cube edges, a
+  grid of lines, a 16 by 8 by 4 lattice, an 8 by 8 by 8 lattice, pyramid
+  edges and a 490 by 200 by 100 box. Each stage lasts 300 frames (the
+  sphere 500, the box 360), and in its last 129 its points move in a
+  straight line to the next object's. The object turns by 3, 4 and 5
+  1024ths of a turn a frame about its three axes and is carried along a
+  92-point spline. Each frame projects the points to column 160 + 256 X / Z
+  and row 100 + 256 Y / Z and sets one bit of one of four pages there, so
+  a page shows eight echoes 4 frames apart, which its palette shows at
+  blue 60, 45, 40, 35, 30, 25, 20 and 15 of 63, the newest brightest. The
+  rotation stops from 176.27, leaving the box tilted by 70 degrees, and the
+  spline brings it to rest by 177.10.
+- Part 4 begins at 177.11 and waits, the box held, until the music reaches
+  29:00 at 179.93. At 179.96 it draws its logo slab at 400 lines, white,
+  where the box landed.
+
+The ignored test checks every replayed frame and palette against the
+engine's and the PCM, that each dot frame's newest bit is set exactly where
+column 160 + x and row 100 + y put its points and nowhere else (the code's
+tables send anything off the screen past the page, and no point wraps back
+on), and that the camera evaluated in floating point is within 7.9 camera
+units of the port's points.
+
+The preview keeps part 3 as compact state per frame (`Dots::hd_state`): the
+phase, the zoom's scale, the shade iterations and their stop, the stage, its
+counters and the angles, with the camera-space points each dot frame drew
+(8 MB) and the scene's tables (`Dots::hd_tables`). The original frames are
+replayed on demand from checkpoints every 64 frames (about 50 MB), and part
+4's two pictures are kept.
+
+The port's pacing differs from the original's. In a DOSBox-X capture of the
+original the shade bobs run about 40 iterations a displayed frame and are
+over in about 0.13 seconds, and the dots start about 4.6 seconds earlier
+against the music. The preview follows the port, which gives the shade bobs
+4.7 seconds; their timing is a choice, not recovered.
+
+Some of this is interpretation:
+
+- Between the original's frames the zoom's scale is linear, the shade path
+  is evaluated at continuous iterations with a floating-point sine (the code
+  tabulates whole indices and truncates), and the dots' rotation, morph and
+  spline are evaluated at continuous frames in floating point, without the
+  code's Q7 coefficients and truncation. Faithful HD keeps the port's own
+  points, linear between its frames.
+- The zoom read as a dolly at constant speed (its scale, the distance to
+  the picture, falls linearly), and the landed box as anticipating the logo
+  slab, which part 4 draws in nearly the same place.
+
+Faithful HD shows the original's look at display resolution, in the 4:3
+frame. The hold and the zoom are part 5's own faithful HD at the original's
+magnification. The shade bobs are each kept iteration's discs where the
+port's path table puts them, as smooth circles, their overlap counted and
+coloured through the shade palette; between frames the newest iteration
+fades in and the oldest out. The dots are the eight echoes, each the port's
+points, projected as the code projects them, as round dots of a source
+pixel's area at the port's echo levels, the brighter showing where they
+overlap. Part 4's slab is smoothly upscaled.
+
+The modern view is light painting: a long exposure in a dark, faintly hazy
+space, as a camera on a tripod would take it. All of it is authored, on the
+port's timing, positions and motion.
+
+- The zoom flies through the window. Part 5's own modern view is drawn at
+  the zoom's magnification, by the original's law, and carries on past the
+  original's last scale until the frame has left the drawable (on a 16:9
+  screen about 0.3 seconds more, to 3.8 times), blurred along the zoom over
+  a 1/80 second exposure and going out of focus as it nears.
+- The shade bobs are a fibre-optic brush. Each of the 20 discs is a tip
+  that sweeps the path continuously, its glow exposed for the 16 iterations
+  the original keeps, so the overlap count becomes the exposure. The
+  film's response is the original's palette: through the shared tonemap a
+  count shows the palette's colour, blue rising, burning to white where the
+  overlaps pile up, and past the palette's white the light keeps rising
+  into the bloom. Each tip also draws its own fine fibre, bright at its
+  head.
+- The dots are 512 lights, each exposed continuously along its path for the
+  32 frames the original's echoes span, brightest at the head and fading at
+  the rate the echo levels fall, then a faint afterglow for 2 seconds more,
+  the long exposure's memory. The exposure along each piece of path is
+  exact for a disc moving at constant speed, so faster lights leave fainter
+  trails and still ones burn brighter, as in a photograph. The lens is
+  focused on the object's centre: a light out of focus is a disc of light,
+  and its trail a swept disc.
+- The haze is lit by every light, by the closed form of single scattering
+  from a point light in a uniform medium (the integral of the inverse
+  square distance along each ray), dimmed with the light's distance from
+  the ray.
+- The music: the lights breathe with the PCM's low band at the moment of
+  each part of the exposure, and each order's first row, read from the
+  music's position, sends a plane of light through the object along a
+  direction of its own, stronger where the PCM shows an onset.
+- At the end the rotation stops, the box's trails collapse into its lights,
+  which burn brighter, and in the second before part 4 draws they flare and
+  swell. Part 4's slab takes over at its own colours through the tonemap,
+  with a flash that fades, so the clip ends on the original's white slab.
+
+Everything is a function of the clip's time, so seeking, captures and video
+agree; an ignored test checks frames drawn after others against a new
+renderer's, byte for byte. Each frame a compute pass takes 105 samples
+along each light's path and 65 along each tip's, the lights are drawn as
+53,000 swept discs, the haze sums 532 lights at half resolution, and a
+composite takes part 5's view during the zoom. The look's constants are at
+the top of `dots_light.wgsl`.
+
+### Options and tests
 
 `--fps` starts with the frame-rate counter in the top-left corner, showing
 frames per second and milliseconds per frame. With vsync the rate can't exceed
@@ -1357,10 +1502,12 @@ intro's reference pixels and PCM against the existing engine, sampled fly-by
 projection heights, the transition's complete reference frames, audio and
 tile schedule, the scroller's letters and positions against every part-2
 frame, part 6's state, replayed frames and PCM against every part-6 frame,
-and part 5's against every part-5 frame; one bakes the frame's shape from
-PSTART and checks what it measures. Another, which needs a GPU, checks
-that part 5's smoke reaches the same state however a moment is reached (it
-re-simulates from the start at each of nine moments, a minute and a half):
+part 5's against every part-5 frame and part 3's against every part-3
+frame; one bakes the frame's shape from PSTART and checks what it measures.
+Two more need a GPU: one checks that part 5's smoke reaches the same state
+however a moment is reached (it re-simulates from the start at each of
+nine moments, a minute and a half), the other that part 3's frames are the
+same however they are reached:
 
 ```sh
 cargo test --release --locked --features hires
@@ -1372,6 +1519,8 @@ PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --featu
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part5_state_matches_every_engine_frame -- --ignored --nocapture
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires frame_is_measured_from_pstart -- --ignored --nocapture
 PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part5_fluid_is_the_same_however_it_is_reached -- --ignored
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part3_state_matches_every_engine_frame -- --ignored --nocapture
+PANIC_DATA=/absolute/path/to/imported-data cargo test --release --locked --features hires part3_frames_are_the_same_however_reached -- --ignored
 ```
 
 `--bench N` draws N frames from `--seek`, a sixtieth of a second apart,
@@ -1415,9 +1564,9 @@ here. Don't commit any binary fixtures, including audio.
 and compares them with an earlier set, to catch unintended changes to the look
 while the shaders change. It needs only the Python standard library and your
 imported data, and writes everything under `artifacts/look-check/`, which Git
-ignores. Its 42 shots cover the modern intro letters, the plate and doors, the
-logo, the laser cut, the scroller with each backdrop and lighting mode, parts 6
-and 5 through their phases, faithful HD and the original view, at 960 × 540. Their
+ignores. Its 58 shots cover the modern intro letters, the plate and doors, the
+logo, the laser cut, the scroller with each backdrop and lighting mode, parts 6,
+5 and 3 through their phases, faithful HD and the original view, at 960 × 540. Their
 times are authored test points, not cues from the original. `list` shows
 them, and `--only` selects shots or groups by name, with wildcards
 (`--only scroller,laser` or `--only 'intro-7*'`).

@@ -119,6 +119,26 @@ SHOTS = (
     _shot('faithful-field', 'faithful', 105.0, '--field', '--faithful'),
     _shot('faithful-field', 'faithful', 125.0, '--field', '--faithful'),
     _shot('original-field', 'original', 105.0, '--field', '--original'),
+    # Part 3 (--dots): part 5's frame held, the zoom into its window, the
+    # shade bobs, the sphere, a morph, the cube edges, a music wave on the
+    # vase, the pyramid, the box landed and held, its flare and part 4's
+    # slab.
+    _shot('dots', 'dots', 131.0, '--dots'),
+    _shot('dots', 'dots', 133.5, '--dots'),
+    _shot('dots', 'dots', 136.5, '--dots'),
+    _shot('dots', 'dots', 141.8, '--dots'),
+    _shot('dots', 'dots', 145.7, '--dots'),
+    _shot('dots', 'dots', 146.9, '--dots'),
+    _shot('dots', 'dots', 151.4, '--dots'),
+    _shot('dots', 'dots', 168.9, '--dots'),
+    _shot('dots', 'dots', 177.5, '--dots'),
+    _shot('dots', 'dots', 179.8, '--dots'),
+    _shot('dots', 'dots', 179.96, '--dots'),
+    _shot('faithful-dots', 'faithful', 133.5, '--dots', '--faithful'),
+    _shot('faithful-dots', 'faithful', 136.5, '--dots', '--faithful'),
+    _shot('faithful-dots', 'faithful', 151.4, '--dots', '--faithful'),
+    _shot('faithful-dots', 'faithful', 179.96, '--dots', '--faithful'),
+    _shot('original-dots', 'original', 151.4, '--dots', '--original'),
 )
 CAPTURE_FLAGS = ('--seek', '--headless', '--size', '--data', '--out')
 

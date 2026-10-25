@@ -1,4 +1,6 @@
 use super::clip::{Clip, HEIGHT, ScrollerLighting, ScrollerPreview, WIDTH, plate_transform};
+use super::dots::{DotsBlock, DotsPreview, PART3_PHASE};
+use super::dots_render::DotsRenderer;
 use super::field::{FRAME_TAKES_PART6_FADE, FieldBlock, FieldPreview, PART5_PHASE};
 use super::field_render::FieldRenderer;
 use super::modern::Modern;
@@ -65,6 +67,8 @@ struct Uniforms {
     rings_style: [[f32; 4]; 4],
     /// Part 5 (`field::FieldPreview::controls`); all zero before it.
     field: FieldBlock,
+    /// Part 3 (`dots::DotsPreview::controls`); all zero before it.
+    dots: DotsBlock,
 }
 
 /// The only WGSL declaration of [`Uniforms`] and its binding. [`wgsl`]
@@ -110,6 +114,41 @@ struct FieldBlock {
     frame_style: array<vec4f,4>,
     zoom_style: array<vec4f,4>,
     mountain_style: array<vec4f,4>,
+    // Part 3's view of part 5's last frame: the magnification about the
+    // screen's centre (0 or 1 for none, as in part 5), unused.
+    part3_view: vec4f,
+}
+// Part 3's controls (hd/dots.rs, DotsBlock), in u.dots.
+struct DotsBlock {
+    // Shown (1), seconds since part 3 began, phase (0 hold, 1 zoom, 2 shade
+    // bobs, 3 dots, 4 part 4 waiting, 5 part 4's slab), part-3 frame.
+    part: vec4f,
+    // Magnification: the original's, the modern view's, the modern's rate
+    // (d ln M / dt per second), part 5's frame still shown in modern (1).
+    zoom: vec4f,
+    // Shade iterations drawn (continuous), the stop, shown, the shown
+    // frame's iterations.
+    shades: vec4f,
+    // Dot frame (continuous; -1 before), the last, the rotation's stop,
+    // shown.
+    dots: vec4f,
+    // Focus distance; the object's centre in camera space.
+    focus: vec4f,
+    // Seconds since the rotation stopped (-1 before), until part 4's slab,
+    // slab shown, seconds since it.
+    end: vec4f,
+    // Part-3 seconds: zoom, zoom end, shades, shade stop; shades end, dots,
+    // rotation stop, part 4.
+    events: vec4f,
+    events_late: vec4f,
+    // Seconds since the last four orders' first rows (newest first, -100
+    // none) and their strengths.
+    hits: vec4f,
+    hit_strength: vec4f,
+    // The PCM's low band now and at each of the 39 ticks before.
+    low: array<vec4f,10>,
+    // The port's eight echo levels (6-bit blue), echo k 4k frames old.
+    echo_levels: array<vec4f,2>,
 }
 struct Controls {
     screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode
@@ -174,6 +213,8 @@ struct Controls {
     rings_style: array<vec4f,4>,
     // Part 5 (Field), all zero before it; field_common.wgsl reads it.
     field: FieldBlock,
+    // Part 3 (Dots), all zero before it; dots_common.wgsl reads it.
+    dots: DotsBlock,
 }
 @group(0) @binding(0) var<uniform> u: Controls;
 ";
@@ -263,6 +304,11 @@ pub struct Renderer {
     /// Part 5's, likewise, and whether the prepared moment is drawn by it.
     field: Option<FieldRenderer>,
     part5: bool,
+    /// Part 3's, likewise, and whether the moment also draws part 5's view
+    /// beneath it (the hold and the zoom).
+    dots: Option<DotsRenderer>,
+    part3: bool,
+    part3_underlay: bool,
 }
 
 impl Renderer {
@@ -530,6 +576,9 @@ impl Renderer {
                 rings_style: RingsStyle::Pool,
                 field: None,
                 part5: false,
+                dots: None,
+                part3: false,
+                part3_underlay: false,
             },
             format,
         ))
@@ -547,17 +596,25 @@ impl Renderer {
         self.modern_view = modern;
         self.part6 = false;
         self.part5 = false;
-        if let Some(field) = &clip.field {
-            if self.field.as_ref().is_none_or(|r| !r.holds(field)) {
-                self.field = Some(FieldRenderer::new(
+        self.part3 = false;
+        if let Some(dots) = &clip.dots {
+            if self.dots.as_ref().is_none_or(|r| !r.holds(dots)) {
+                self.dots = Some(DotsRenderer::new(
                     &self.device,
                     &self.queue,
                     &self.uniform,
                     &self.reference,
                     self.output_format,
-                    field,
+                    dots,
                 ));
             }
+            if dots.frame_at(time).is_some() {
+                self.prepare_dots(clip, dots, view);
+                return;
+            }
+        }
+        if let Some(field) = &clip.field {
+            self.hold_field(field);
             // Part 6's PSTART fade, when the frame author's modern view
             // takes it over (field::FRAME_TAKES_PART6_FADE).
             let fade = FRAME_TAKES_PART6_FADE
@@ -891,6 +948,122 @@ impl Renderer {
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
     }
 
+    /// Make part 5's renderer, unless it holds `field` already.
+    fn hold_field(&mut self, field: &FieldPreview) {
+        if self.field.as_ref().is_none_or(|r| !r.holds(field)) {
+            self.field = Some(FieldRenderer::new(
+                &self.device,
+                &self.queue,
+                &self.uniform,
+                &self.reference,
+                self.output_format,
+                field,
+            ));
+        }
+    }
+
+    /// Part 3: the shared controls for this moment, with the music's cues;
+    /// during the hold and the zoom, part 5's view of its last frame at the
+    /// zoom's magnification beneath it (its smoke brought to this moment as
+    /// in part 5); and the original frame when a comparison shows it,
+    /// replayed on demand ([`DotsPreview::original_rgba`]).
+    fn prepare_dots(&mut self, clip: &Clip, dots: &DotsPreview, view: View) {
+        let View {
+            time,
+            size,
+            comparison,
+            modern,
+            hud: _,
+        } = view;
+        self.part3 = true;
+        self.glyphs_active = false;
+        self.scroller = false;
+        self.tile_transition = false;
+        let j = dots.frame_at(time).unwrap_or(0);
+        let aspect = size.0 as f64 / size.1.max(1) as f64;
+        let mut block = dots.controls(time, aspect);
+        // The cues: the low band at the moment and each tick before, for the
+        // trails; and each order's first row: a base strength, and more
+        // with the onsets the PCM shows in the tenth of a second after it.
+        for k in 0..40 {
+            block.low[k / 4][k % 4] = clip.audio_at(time - k as f64 / 70.0).intro[2];
+        }
+        for h in 0..4 {
+            let since = block.hits[h] as f64;
+            if since > -50.0 {
+                let at = time - since;
+                let onset = (0..8)
+                    .map(|k| clip.audio_at(at + k as f64 / 70.0).intro[1])
+                    .fold(0.0_f32, f32::max);
+                block.hit_strength[h] = 0.55 + 0.45 * onset;
+            }
+        }
+        let phase = dots.frames[j].phase;
+        let underlay = if modern {
+            block.zoom[3] > 0.5 && phase <= super::dots::Phase::Shades
+        } else {
+            phase <= super::dots::Phase::Zoom
+        };
+        let mut field_block = FieldBlock::zeroed();
+        self.part3_underlay = false;
+        if let (true, Some(field)) = (underlay, &clip.field) {
+            self.hold_field(field);
+            let renderer = self.field.as_mut().unwrap();
+            if modern {
+                self.modern_renderer
+                    .resize(&self.device, &self.uniform, &self.reference, size);
+                renderer.resize(&self.device, size);
+            }
+            renderer.update(&self.queue, field, field.frames.len() - 1);
+            field_block = field.controls(time);
+            if modern {
+                field_block.fluid = renderer.advance_fluid(&self.device, &self.queue, field, time);
+                renderer.advance_zoom(&self.device, &self.queue, &field_block, size);
+            }
+            let magnification = if modern { block.zoom[1] } else { block.zoom[0] };
+            field_block.part3_view = [magnification, 0.0, 0.0, 0.0];
+            self.part3_underlay = true;
+        }
+        if modern {
+            self.modern_renderer
+                .resize(&self.device, &self.uniform, &self.reference, size);
+        }
+        self.dots.as_mut().unwrap().resize(&self.device, size);
+        let index = dots.start + j;
+        if comparison != 0 && self.reference_index != Some(index) {
+            self.queue.write_texture(
+                self.reference.as_image_copy(),
+                &dots.original_rgba(j),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(WIDTH as u32 * 4),
+                    rows_per_image: Some(HEIGHT as u32),
+                },
+                wgpu::Extent3d {
+                    width: WIDTH as u32,
+                    height: HEIGHT as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+            self.reference_index = Some(index);
+        }
+        let audio = clip.audio_at(time);
+        let mut u = Uniforms::zeroed();
+        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
+        u.state = [PART3_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
+        u.misc = [
+            4.0 / 3.0,
+            if self.srgb { 1.0 } else { 0.0 },
+            clip.logo_at as f32,
+            if modern { 1.0 } else { 0.0 },
+        ];
+        u.audio = audio.intro;
+        u.field = field_block;
+        u.dots = block;
+        self.queue
+            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+    }
+
     /// Part 5: the shared controls for this moment, its palette and zoom
     /// buffers, the fluid brought to this moment, and the original frame
     /// when a comparison shows it, replayed on demand
@@ -1035,6 +1208,23 @@ impl Renderer {
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        if let (true, Some(dots)) = (self.part3, &self.dots) {
+            let field = self.field.as_ref().filter(|_| self.part3_underlay);
+            if self.modern_view {
+                if let Some(field) = field {
+                    field.draw_style(encoder, dots.underlay_hdr());
+                }
+                dots.draw_style(encoder, self.modern_renderer.hdr_target());
+                self.modern_renderer.post(encoder, view);
+            } else {
+                if let Some(field) = field {
+                    field.draw_faithful(encoder, dots.underlay_out());
+                }
+                dots.draw_faithful(encoder, view);
+            }
+            self.draw_hud(encoder, view);
+            return;
+        }
         if let (true, Some(field)) = (self.part5, &self.field) {
             if self.modern_view {
                 field.draw_style(encoder, self.modern_renderer.hdr_target());
@@ -1439,6 +1629,14 @@ mod tests {
             "part 5 modern".into(),
             super::super::field_render::style_source(),
         ));
+        modules.push((
+            "part 3 faithful HD".into(),
+            super::super::dots_render::faithful_source(),
+        ));
+        modules.push((
+            "part 3 modern".into(),
+            super::super::dots_render::light_source(),
+        ));
         modules
     }
 
@@ -1475,6 +1673,9 @@ mod tests {
             "field_frame.wgsl",
             "field_zoom.wgsl",
             "field_mountain.wgsl",
+            "dots_common.wgsl",
+            "dots_faithful.wgsl",
+            "dots_light.wgsl",
         ] {
             assert!(
                 files.iter().any(|f| f.0 == expected),
@@ -1605,9 +1806,10 @@ mod tests {
             frame_style,
             zoom_style,
             mountain_style,
+            part3_view,
         ];
         assert_eq!(
-            expected.last().unwrap().1 + size_of::<[[f32; 4]; 4]>(),
+            expected.last().unwrap().1 + size_of::<[f32; 4]>(),
             size_of::<FieldBlock>()
         );
         let (module, _) = validated("part 5 modern", &super::super::field_render::style_source());
@@ -1685,6 +1887,177 @@ mod tests {
                         binding.binding
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn part3_blocks_match_their_wgsl_declarations() {
+        use super::super::dots::DotFrame;
+        macro_rules! fields {
+            ($ty:ty; $($field:ident),* $(,)?) => {
+                vec![$((stringify!($field).to_owned(), offset_of!($ty, $field))),*]
+            };
+        }
+        let expected = fields![DotsBlock;
+            part,
+            zoom,
+            shades,
+            dots,
+            focus,
+            end,
+            events,
+            events_late,
+            hits,
+            hit_strength,
+            low,
+            echo_levels,
+        ];
+        assert_eq!(
+            expected.last().unwrap().1 + size_of::<[[f32; 4]; 2]>(),
+            size_of::<DotsBlock>()
+        );
+        for (name, source) in [
+            ("part 3 modern", super::super::dots_render::light_source()),
+            (
+                "part 3 faithful HD",
+                super::super::dots_render::faithful_source(),
+            ),
+        ] {
+            let (module, _) = validated(name, &source);
+            let (members, span) = wgsl_members(&module, "DotsBlock");
+            assert_eq!(members, expected);
+            assert_eq!(span, size_of::<DotsBlock>());
+            let (members, span) = wgsl_members(&module, "DotFrame");
+            assert_eq!(members, fields![DotFrame; angles, translation]);
+            assert_eq!(span, size_of::<DotFrame>());
+        }
+    }
+
+    /// The constants the part-3 shaders repeat from hd/dots.rs,
+    /// dots_render.rs and the scene.
+    #[test]
+    fn part3_shaders_repeat_the_rust_constants() {
+        use super::super::dots::{ECHO_SPACING, ECHOES, POINTS, SHADE_DISCS, SHADE_KEPT};
+        use super::super::dots_render::{AFTER_SAMPLES, SHADE_SAMPLES, TRAIL_SAMPLES};
+        let common = include_str!("dots_common.wgsl");
+        let order = crate::scenes::dots::ORDER
+            .map(|o| format!("{o}u"))
+            .join(",");
+        for constant in [
+            format!("const POINTS={POINTS}u;"),
+            format!("const SHADE_DISCS={SHADE_DISCS}u;"),
+            format!("const SHADE_KEPT={SHADE_KEPT}.0;"),
+            format!("const ECHOES={ECHOES}u;"),
+            format!("const ECHO_SPACING={ECHO_SPACING}.0;"),
+            format!("const ORDER=array<u32,8>({order});"),
+        ] {
+            assert!(
+                common.contains(&constant),
+                "dots_common.wgsl lacks {constant}"
+            );
+        }
+        let light = include_str!("dots_light.wgsl");
+        for constant in [
+            format!("const TRAIL_SAMPLES={TRAIL_SAMPLES}u;"),
+            format!("const AFTER_SAMPLES={AFTER_SAMPLES}u;"),
+            format!("const SHADE_SAMPLES={SHADE_SAMPLES}u;"),
+        ] {
+            assert!(
+                light.contains(&constant),
+                "dots_light.wgsl lacks {constant}"
+            );
+        }
+        assert_eq!(super::super::clip::PIXEL_ASPECT, 5.0 / 6.0);
+        assert!(common.contains("const COLUMN=5.0/6.0;"));
+    }
+
+    /// Each part-3 entry point uses only the bindings its pipeline has
+    /// (dots_render.rs): group 0 everywhere; group 1 binding 1 (the samples,
+    /// written) for the samples step, binding 2 (read) for the painting,
+    /// the haze and the composite, and in faithful HD bindings 1 to 3 (its
+    /// images) for its composite; group 2 (the images) for the modern
+    /// composite.
+    #[test]
+    fn part3_entry_points_use_only_their_bindings() {
+        for (name, source) in [
+            (
+                "part 3 faithful HD",
+                super::super::dots_render::faithful_source(),
+            ),
+            ("part 3 modern", super::super::dots_render::light_source()),
+        ] {
+            let (module, info) = validated(name, &source);
+            for (index, entry) in module.entry_points.iter().enumerate() {
+                let allowed: &[(u32, u32)] = match entry.name.as_str() {
+                    "fullscreen"
+                    | "faithful_shade"
+                    | "faithful_dot"
+                    | "faithful_shade_mark"
+                    | "faithful_dot_mark" => &[],
+                    "faithful" => &[(1, 1), (1, 2), (1, 3)],
+                    "dots_samples" => &[(1, 1)],
+                    "dots_trail" | "shade_trail" | "swept" | "dots_haze" => &[(1, 2)],
+                    "dots_style" => &[(1, 2), (2, 1), (2, 2), (2, 3)],
+                    n => panic!("unexpected entry point {n}"),
+                };
+                let uses = info.get_entry_point(index);
+                for (handle, global) in module.global_variables.iter() {
+                    let (Some(binding), false) = (&global.binding, uses[handle].is_empty()) else {
+                        continue;
+                    };
+                    assert!(
+                        binding.group == 0 || allowed.contains(&(binding.group, binding.binding)),
+                        "{name}: {} uses {:?} (group {}, binding {})",
+                        entry.name,
+                        global.name,
+                        binding.group,
+                        binding.binding
+                    );
+                }
+            }
+        }
+    }
+
+    /// Part 3 is a function of the moment: a frame drawn after others is
+    /// the same, byte for byte, as one drawn by a new renderer, in both
+    /// views (after the hold and the zoom, which draw part 5's smoke, whose
+    /// own test covers it).
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
+    fn part3_frames_are_the_same_however_reached() {
+        let data = crate::test_support::data();
+        let clip = Clip::load_dots(&data, ScrollerLighting::Studio).unwrap();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let view = |time, modern| View {
+            time,
+            size: (480, 270),
+            comparison: 0,
+            modern,
+            hud: None,
+        };
+        let moments = [136.5, 141.8, 145.7, 151.43, 176.3, 179.6, 180.2];
+        for modern in [true, false] {
+            let (mut playing, format) = pollster::block_on(Renderer::new(&instance, None)).unwrap();
+            let mut played = Vec::new();
+            for &t in &moments {
+                // Draw a few frames before each, as playback would.
+                for k in (1..4).rev() {
+                    playing
+                        .render_rgba(&clip, view(t - k as f64 / 60.0, modern), format)
+                        .unwrap();
+                }
+                played.push(playing.render_rgba(&clip, view(t, modern), format).unwrap());
+            }
+            for (&t, played) in moments.iter().zip(&played).rev() {
+                let (mut fresh, _) = pollster::block_on(Renderer::new(&instance, None)).unwrap();
+                let pixels = fresh.render_rgba(&clip, view(t, modern), format).unwrap();
+                assert!(
+                    &pixels == played,
+                    "{t} s ({})",
+                    if modern { "modern" } else { "faithful" }
+                );
+                assert!(pixels.iter().any(|&p| p > 8), "{t} s is black");
             }
         }
     }
@@ -1774,9 +2147,10 @@ mod tests {
             neon_map,
             rings_style,
             field,
+            dots,
         ];
         // A field missing from this list leaves bytes unaccounted for.
-        let last = size_of::<FieldBlock>();
+        let last = size_of::<DotsBlock>();
         assert_eq!(fields.last().unwrap().1 + last, size_of::<Uniforms>());
         fields
     }

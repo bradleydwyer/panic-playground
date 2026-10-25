@@ -132,9 +132,13 @@ fn source_of_scene(q:vec2f)->vec2f {return vec2f(160.0+q.x/COLUMN,100.0-q.y);}
 fn scene_of_source(s:vec2f)->vec2f {return vec2f((s.x-160.0)*COLUMN,100.0-s.y);}
 // The default camera's ray through a screen point (unit length).
 fn camera_ray(xy:vec2f)->vec3f {return normalize(vec3f(xy*100.0,-EYE_Z));}
+// Part 3's hook (FieldBlock::part3_view): the magnification about the screen's
+// centre at which it shows part 5's last frame as it zooms into the window;
+// 1 (stored as 0) throughout part 5.
+fn field_view_zoom()->f32 {return select(1.0,fc.part3_view.x,fc.part3_view.x>0.0);}
 // Fragments only: the footprint takes a derivative.
 fn field_pixel(v:Vertex)->FieldPixel {
-    let xy=(v.uv-.5)*vec2f(2.0*screen_aspect(),-2.0);
+    let xy=(v.uv-.5)*vec2f(2.0*screen_aspect(),-2.0)/field_view_zoom();
     let scene=xy*100.0;
     let source=source_of_scene(scene);
     return FieldPixel(v.uv,xy,source,scene,max(fwidth(source.y),1e-4));

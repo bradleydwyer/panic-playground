@@ -8,8 +8,9 @@ Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
 So far this covers the opening through the PANIC logo, the square transition,
 experiments with the following double scroller, part 6's interference
-rings as a pool of liquid chrome under neon, and part 5's deep Mandelbrot
-zoom and molten Mandelbrot mountain. The idea is to keep the
+rings as a pool of liquid chrome under neon, part 5's deep Mandelbrot
+zoom and molten Mandelbrot mountain, and part 3's shade bobs and morphing
+dots as light painting. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
 letters that refract the stars behind them, a mirrored plate that reflects the
 warp, motion blur, a starfield that ramps into warp, a heated metal logo with
@@ -17,7 +18,7 @@ slowly moving surface reflections, and lighting that pulses and breathes with
 the music.
 
 This builds on the [Rust port of Panic](https://github.com/bradleydwyer/panic).
-It's a work in progress, with modern treatments for the intro, scroller, part 6 and part 5. The original
+It's a work in progress, with modern treatments for the intro, scroller, part 6, part 5 and part 3. The original
 player is included as a reference. The new letterforms and block motion are
 authored approximations, not recovered original 3D models.
 
@@ -250,6 +251,46 @@ mountain marched pixel by pixel through the original height map with the
 port's camera. The [renderer notes](rust/README.md#part-5-field) say what is
 read, what is interpreted and what is authored, and how the three parts plug
 in.
+
+### Part 3: Dots
+
+`--dots` carries on through part 3 and part 4's wait to the first frame
+part 4 draws, with the music unbroken:
+
+```sh
+cargo run --release --locked --features hires --bin panic-hd -- --dots --seek 130
+```
+
+Part 3 starts at 130.03 seconds holding part 5's last frame, then zooms into
+its dark window from 131.99. From 134.37 the shade bobs, 20 discs an
+iteration whose overlaps light up a blue ribbon, writhe for 4.7 seconds.
+From 139.11, 512 dots morph through eight objects, a sphere, a vase, a cube,
+a grid, two lattices, a pyramid and a box, each with eight echoes trailing
+it, until the box lands at 177.10. Part 4 waits until 179.93 and draws its
+logo slab in white where the box landed, at 179.96, where `--dots` ends. All
+of that is read from the port and checked against it frame by frame.
+
+The modern look is light painting, a long exposure in a dark, hazy space:
+
+- The camera flies through part 5's window, carrying on until the frame,
+  still drawn by part 5's own modern view, has left the screen.
+- The shade bobs become a fibre-optic brush: 20 glowing tips sweeping the
+  path, exposed as long as the original keeps its discs, so the overlaps
+  burn from blue to white as the original's palette does, each tip drawing
+  a fine fibre of its own.
+- The dots become 512 lights exposed continuously along their paths for as
+  long as the original's echoes last, then fading in a faint afterglow,
+  through a lens focused on the object, so near and far lights open into
+  discs. The haze glows round them, they breathe with the bass, and each
+  order of the tune sends a plane of light sweeping through the object.
+- The landed box's trails collapse into its lights, which flare up in the
+  second before part 4's white slab takes over.
+
+The lights, the brush, the lens, the haze and the music's effects are
+authored; the positions, motion and timing are the port's. Faithful HD
+(**M**) shows the original's discs and dots at display resolution. The
+[renderer notes](rust/README.md#part-3-dots) say what is read, what is
+interpreted and what is authored.
 
 ### Keys
 

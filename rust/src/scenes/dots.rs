@@ -5,7 +5,8 @@ use crate::{
     vga::Vga,
 };
 
-const ORDER: [usize; 8] = [0, 7, 1, 3, 4, 2, 5, 6];
+/// The objects' order through the stages (read from the code).
+pub(crate) const ORDER: [usize; 8] = [0, 7, 1, 3, 4, 2, 5, 6];
 const SCRIPT: [(i32, i32); 9] = [
     (500, 0),
     (300, 2500),
@@ -257,6 +258,9 @@ fn circle(buffer: &mut [u8], x: i32, y: i32, delta: i8) {
     }
 }
 
+// Clone lets the HD preview keep checkpoints and replay reference frames on
+// demand; nothing in the scene depends on it.
+#[derive(Clone)]
 pub struct Dots {
     sine: Vec<i32>,
     objects: Vec<Vec<Point>>,
@@ -279,7 +283,124 @@ pub struct Dots {
     d: i32,
     frame: usize,
     history: Vec<Vec<usize>>,
+    /// What the latest step drew, for the HD preview: 0 nothing (part 5's
+    /// last frame is held), 1 the zoom, 2 the shade bobs, 3 dots.
+    #[cfg(feature = "hires")]
+    hd_drawn: u8,
+    /// The camera-space points and the translation the latest dot frame drew
+    /// with, for the HD preview.
+    #[cfg(feature = "hires")]
+    hd_points: Vec<[i32; 3]>,
+    #[cfg(feature = "hires")]
+    hd_translation: [i32; 3],
 }
+
+/// What part 3's current scanout shows, for the HD preview, read from the
+/// scene's counters rather than the pixels. See [`Dots::hd_state`].
+#[cfg(feature = "hires")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HdDots {
+    /// What the latest step drew: 0 nothing yet (part 5's last frame is
+    /// held while the music waits for 1E00), 1 the zoom, 2 the shade bobs,
+    /// 3 dots.
+    pub drawn: u8,
+    /// The zoom scale the latest zoom step drew with, 16.16: one screen
+    /// pixel spans `scale / 65536` source pixels (65535 at first, falling by
+    /// 256 a step). The scene lowers it after drawing; this is the drawn one.
+    pub scale: i32,
+    /// Shade iterations drawn so far (`shade_frame`): the latest drew
+    /// iteration `shade_frame - 1`, adding its 20 discs unless it is at or
+    /// past `shade_stop`, and erasing iteration `shade_frame - 17`'s.
+    pub shade_frame: usize,
+    /// The first iteration that adds no discs (`shade_stop`): 366 until the
+    /// music passes 1E3C, then the iteration it passed at.
+    pub shade_stop: usize,
+    /// Dot frames drawn so far (`frame`); the latest is `frame - 1`.
+    pub frame: usize,
+    /// The object stage the latest dot frame drew (`script`, 0 to 7) and its
+    /// counters `a` (ticks into the stage, after the step's increment) and
+    /// `d` (the camera spline's parameter).
+    pub script: usize,
+    pub a: i32,
+    pub d: i32,
+    /// The rotation angles the latest dot frame drew with, 1024ths of a turn.
+    pub angles: [usize; 3],
+    /// The camera spline's translation the latest dot frame drew with.
+    pub translation: [i32; 3],
+}
+
+/// Part 3's tables, for the HD preview: read once, before the dots begin.
+#[cfg(feature = "hires")]
+pub struct HdDotsTables {
+    /// The eight generated objects, 512 points each in storage order (P3D1
+    /// to P3D8), as object-space coordinates (the high words), before any
+    /// morph moves them.
+    pub objects: Vec<Vec<[i32; 3]>>,
+    /// The order the stages show the objects in, and each stage's length in
+    /// dot frames and the spline parameter it starts from.
+    pub order: [usize; 8],
+    pub script: [(i32, i32); 9],
+    /// The camera spline's 92 control points and its four weight tables.
+    pub camera: Vec<[i32; 3]>,
+    pub weights: [Vec<i32>; 4],
+    /// The shade path, x and y source pixels (the disc's top-left corner).
+    pub path: Vec<[i32; 2]>,
+    /// The shade bobs' palette, 256 6-bit DAC triples.
+    pub shade_palette: Vec<u8>,
+    /// The dots' eight trail palettes, 256 6-bit DAC triples each.
+    pub dot_palettes: Vec<u8>,
+    /// The scene's sine table (amplitude 32767, 1024 a turn).
+    pub sine: Vec<i32>,
+}
+
+#[cfg(feature = "hires")]
+impl Dots {
+    /// Read-only state of the current scanout for the HD preview.
+    pub fn hd_state(&self) -> HdDots {
+        HdDots {
+            drawn: self.hd_drawn,
+            scale: if self.hd_drawn == 1 {
+                self.scale + 256
+            } else {
+                65535
+            },
+            shade_frame: self.shade_frame,
+            shade_stop: self.shade_stop,
+            frame: self.frame,
+            script: self.script,
+            a: self.a,
+            d: self.d,
+            angles: self.angles,
+            translation: self.hd_translation,
+        }
+    }
+
+    /// The camera-space points the latest dot frame drew, as `DRAW` computed
+    /// them (before the projection's division).
+    pub fn hd_points(&self) -> &[[i32; 3]] {
+        &self.hd_points
+    }
+
+    /// The scene's tables; the objects as they are before the first morph.
+    pub fn hd_tables(&self) -> HdDotsTables {
+        HdDotsTables {
+            objects: self
+                .objects
+                .iter()
+                .map(|o| o[..512].iter().map(|p| p.xyz.map(|v| v >> 16)).collect())
+                .collect(),
+            order: ORDER,
+            script: SCRIPT,
+            camera: self.camera.clone(),
+            weights: self.weights.clone(),
+            path: self.path.clone(),
+            shade_palette: self.shade_palette.clone(),
+            dot_palettes: self.palettes.clone(),
+            sine: self.sine.clone(),
+        }
+    }
+}
+
 impl Dots {
     pub fn new(data: &Data, vga: &mut Vga) -> Result<Self, String> {
         let m = data.memory(3)?;
@@ -321,6 +442,12 @@ impl Dots {
             d: 0,
             frame: 0,
             history: vec![vec![0; 512]; 32],
+            #[cfg(feature = "hires")]
+            hd_drawn: 0,
+            #[cfg(feature = "hires")]
+            hd_points: vec![[0; 3]; 512],
+            #[cfg(feature = "hires")]
+            hd_translation: [0; 3],
         })
     }
     fn dot_frame(&mut self, vga: &mut Vga) -> bool {
@@ -386,6 +513,15 @@ impl Dots {
                 }
             }
             self.history[page][i] = offset;
+            #[cfg(feature = "hires")]
+            {
+                self.hd_points[i] = transformed;
+            }
+        }
+        #[cfg(feature = "hires")]
+        {
+            self.hd_drawn = 3;
+            self.hd_translation = translation;
         }
         // The original publishes the preceding page and palette asynchronously.
         // This port presents each completed page once per deterministic timer step.
@@ -405,6 +541,10 @@ impl Dots {
                 false
             }
             1 => {
+                #[cfg(feature = "hires")]
+                {
+                    self.hd_drawn = 1;
+                }
                 vga.packed(&zoom(&self.source, self.scale as u16), 320, 200);
                 self.scale -= 256;
                 if self.scale <= 23000 {
@@ -414,6 +554,10 @@ impl Dots {
                 false
             }
             2 => {
+                #[cfg(feature = "hires")]
+                {
+                    self.hd_drawn = 2;
+                }
                 let f = self.shade_frame;
                 if f >= 16 && music != 0x7fff && music >= 0x1e3c {
                     self.shade_stop = self.shade_stop.min(f);

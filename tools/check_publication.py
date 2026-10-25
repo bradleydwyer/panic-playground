@@ -51,6 +51,11 @@ RESEARCH_FILES = {
     'rust/src/hd/field_frame_smoke/terrain.wgsl',
     'rust/src/hd/field_zoom.wgsl', 'rust/src/hd/field_zoom.rs',
     'rust/src/hd/field_mountain.wgsl', 'rust/src/hd/field_mountain.rs',
+    # Part 3: its state and tables, its GPU side, the shared shader code,
+    # faithful HD and the modern light painting.
+    'rust/src/hd/dots.rs', 'rust/src/hd/dots_render.rs',
+    'rust/src/hd/dots_common.wgsl', 'rust/src/hd/dots_faithful.wgsl',
+    'rust/src/hd/dots_light.wgsl',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
     'rust/src/scenes/scroller.rs', 'rust/src/scenes/field.rs',
     'rust/src/scenes/rings.rs', 'rust/src/scenes/dots.rs',

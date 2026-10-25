@@ -164,6 +164,13 @@ pub struct FieldBlock {
     pub frame_style: [[f32; 4]; 4],
     pub zoom_style: [[f32; 4]; 4],
     pub mountain_style: [[f32; 4]; 4],
+    /// Part 3's hook: the view it takes of part 5's last frame as it zooms
+    /// into the window. x is the magnification about the screen's centre,
+    /// applied to every pixel's position before anything is drawn (0, as
+    /// throughout part 5, or 1 for none); the rest is unused. Set by the
+    /// renderer during part 3, never by [`FieldPreview::controls`], so the
+    /// fluid's steps don't see it.
+    pub part3_view: [f32; 4],
 }
 
 /// One author's share of the modern view; see rust/README.md, "Adding to
