@@ -73,41 +73,46 @@ switched off. All of it is authored, on the port's pictures, palettes, stages
 and timing:
 
 - The close-up. Part 8's first frame is part 7's last, which part 7 draws.
-  The camera starts where the centre set's face fills the frame as part 7's
-  picture does and holds close, barely moving for the first second, while
-  over 0.64 seconds the picture becomes an old monitor's, strongly: the
-  original's 200 lines as scanlines with dark gaps between them (each
-  line's spot wider as it is brighter), an aperture grille of red, green and
-  blue stripes (a triad to each source column), the colour bleeding a
-  little along the lines, bloom and halation on bright parts, convergence
-  error, a bowed raster and darker corners, and everything graded toward a
-  green-yellow phosphor (yellow-green mids, green-black shadows, pale green
-  highlights), keeping enough of the picture's own colour for the monster to
-  be recognised.
+  Each set's picture is drawn smaller than its face, at 0.7 of it, centred,
+  the rest of the raster lit but empty. The camera starts where the centre
+  set's picture fills the frame's height as part 7's picture does (the
+  empty raster, still black, at its sides) and holds close, barely moving
+  for the first second, while over 0.64 seconds the picture becomes an old
+  monitor's, strongly: the original's 200 lines as scanlines with dark gaps
+  between them (each line's spot wider as it is brighter), an aperture
+  grille of red, green and blue stripes (a triad to each source column), the
+  colour bleeding a little along the lines, bloom and halation on bright
+  parts, convergence error, a bowed raster and darker corners, and
+  everything graded toward a green-yellow phosphor (yellow-green mids,
+  green-black shadows, pale green highlights), keeping enough of the
+  picture's own colour for the monster to be recognised. The empty raster
+  round the picture glows faintly, its scanlines and stripes carrying on
+  across it, so it reads as dark, lit glass.
 - The scroll out. The camera then draws back and never stops, eased in on
   the logarithm of its distance: that speed rises from rest over the first
-  240 frames (a smootherstep) and keeps rising gently to the end, so the
+  220 frames (a smootherstep) and keeps rising gently to the end, so the
   zoom out starts softly out of the centre screen and keeps accelerating,
-  with its momentum through the switch-off. About 1 set fills the frame's
-  width for the first second and a half, 4 at 245.2 s, 9 at 245.9 s and 17
-  across (some 200 sets in view) at the switch-off at 246.36 s; the dots
-  appear with some 57 across and the pulse ends with nearly 200. The face
-  becomes a tube's, its glass bulging into bowed sides and deep corners, set
-  deep into a thick chamfered bezel with a row of buttons and a knob below
-  it, and more and more sets come into view in every direction; the wall
-  has no edge (the sets are ray-marched, one every 376 by 300 rows). Where a
-  tube is too small for its 200 lines or its stripes, coarser lines (2, 4,
-  8 ... rows a line) and stripes take over, the stripes easing back so the
-  lines lead, and far pictures are taken from a filtered copy on each
-  frame's palette, so it still reads as a CRT, never aliasing. Where the
-  sets are small, the controls sink into the bezel and the glass stops
-  showing the rim, smoothly.
+  with its momentum through the switch-off. It shows the empty glass round
+  the picture first, then the bezel, then the wall: about 1.5 sets across
+  the frame at 244.4 s, 3.5 at 245.2 s, 9 at 245.9 s and 16 across (some
+  190 sets in view) at the switch-off at 246.36 s; the dots appear with
+  some 57 across and the pulse ends with about 185. The face becomes a
+  tube's, its glass bulging into bowed sides and deep corners, set deep into
+  a thick chamfered bezel with a row of buttons and a knob below it, and
+  more and more sets come into view in every direction; the wall has no
+  edge (the sets are ray-marched, one every 376 by 300 rows). Where a tube
+  is too small for its 200 lines or its stripes, coarser lines (2, 4, 8 ...
+  rows a line) and stripes take over, the stripes easing back so the lines
+  lead, and far pictures are taken from a filtered copy on each frame's
+  palette, so it still reads as a CRT, never aliasing. Where the sets are
+  small, the controls sink into the bezel and the glass stops showing the
+  rim, smoothly.
 - The sets. Every set shows the whole picture, centred and upright in its
-  screen. They differ only a little, fixed per set: a little brighter or
-  dimmer (88 to 100 percent) and a little warmer or cooler green. (The
-  previous version also shifted, turned and sized each set's picture and
-  gave some a rolled, skewed, tinted or dimmed picture; these read as
-  mistakes and are gone.)
+  screen, with the same margin of empty glass round it. They differ only a
+  little, fixed per set: a little brighter or dimmer (88 to 100 percent) and
+  a little warmer or cooler green. (The previous version also shifted,
+  turned and sized each set's picture and gave some a rolled, skewed,
+  tinted or dimmed picture; these read as mistakes and are gone.)
 - The light. There is no room: the screens are the only light. Each set is
   lit in green by its own screen (twelve patches, from the original
   picture's mean colours), its eight neighbours' and their dots, and the
@@ -115,8 +120,9 @@ and timing:
   glass shows the lit rim in its curve, a faint glare and a little
   scattered light. As the screens go dark, so does the wall.
 - The switch-off, on every set at once, on the original's stages and
-  timing. The white behind the monster and the white frame flash the
-  faces in pale green and light the wall. The pictures squeeze with the
+  timing, within each set's smaller picture, centred on its screen. The
+  white behind the monster and the white frame flash the pictures in pale
+  green and light the wall. The pictures squeeze with the
   original's compression and palettes, so they lift toward white, their
   light rising with the compression to the power 0.35 as the beam's lines
   crowd together. The lines keep the original's row and erased ends,

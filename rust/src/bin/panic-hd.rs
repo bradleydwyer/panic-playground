@@ -301,7 +301,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings), as a liquid-chrome pool, to part 5's first frame\n  --field          Continue through part 5 (Field), the zoom and the mountain, to part 3's first frame\n  --dots           Continue through part 3 (Dots), as light painting, and part 4's wait to its first frame\n  --plasma         Continue through part 4 (Plasma), as light on stone, to part 7's first frame\n  --greetings      Continue through part 7 (Greetings), as a lighthouse in the dust, to part 8's first frame\n  --ending         Continue through part 8 (the ending), an endless wall of green monitors switched off, to the demo's end\n  --original-symbols  Part 6 with the original symbols throughout, not the new sets in its middle\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --bench N        Headless: draw N frames from --seek at 60 a second and print the time each takes\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: step 1s, hold to scrub · Cmd+Left/Right: previous/next section\nHome/R: replay · End: logo · Tab: original/HD · C: split comparison · M: faithful/modern\nF: fullscreen · S: save PNG · L: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light · N: part 6's new or original symbols · D: part 4's water or polished floor\n1/2: part 4's water mirror weaker/stronger · 3/4: its swell lower/higher · 5/6: slower/faster · 7/8: shorter/longer · 9/0: fewer/more drops\nJ/K: part 7's beam faster/slower · U/I: its tilt toward the camera less/more · G/H: its brightness down/up · Z/X: its width narrower/wider\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6, --field through part 5, --dots through part 3, --plasma through part 4, --greetings through part 7, --ending through part 8."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings), as a liquid-chrome pool, to part 5's first frame\n  --field          Continue through part 5 (Field), the zoom and the mountain, to part 3's first frame\n  --dots           Continue through part 3 (Dots), as light painting, and part 4's wait to its first frame\n  --plasma         Continue through part 4 (Plasma), as light on stone, to part 7's first frame\n  --greetings      Continue through part 7 (Greetings), as a lighthouse in the dust, to part 8's first frame\n  --ending         Continue through part 8 (the ending), an endless wall of green monitors switched off, to the demo's end\n  --original-symbols  Part 6 with the original symbols throughout, not the new sets in its middle\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --bench N        Headless: draw N frames from --seek at 60 a second and print the time each takes\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: step 1s, hold to scrub · Cmd+Left/Right: previous/next section\nHome/R: replay · End: logo · Tab: original/HD · C: split comparison · M: faithful/modern\nF: fullscreen · S: save PNG · L: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light · N: part 6's new or original symbols · D: part 4's water or polished floor\n1/2: part 4's water mirror weaker/stronger · 3/4: its swell lower/higher · 5/6: slower/faster · 7/8: shorter/longer · 9/0: fewer/more drops\nJ/K: part 7's beam faster/slower · U/I: its tilt toward the camera less/more · G/H: its brightness down/up · Z/X: its width narrower/wider\nT/Y: part 8's grille coarser/finer (its moiré later/earlier) · Q/E: part 8's pull-back slower/faster\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6, --field through part 5, --dots through part 3, --plasma through part 4, --greetings through part 7, --ending through part 8."
                     );
                     std::process::exit(0);
                 }
@@ -357,6 +357,15 @@ fn set_audio(
         device.resume();
     }
     Ok(samples.len())
+}
+
+/// When part 8's first moiré band pass reaches the middle of the centre
+/// set's face, for the window title and the keys' messages.
+fn band_pass(ending: &panic_demo::hd::ending::EndingPreview) -> String {
+    match ending.first_band_pass() {
+        Some(time) => format!("first band pass mid-face {time:.2} s"),
+        None => "first band pass after the white".to_owned(),
+    }
 }
 
 /// With vsync the rate is capped at the display's refresh rate; without it
@@ -531,7 +540,7 @@ fn run() -> Result<(), String> {
     let (mut renderer, format) = pollster::block_on(Renderer::new(&instance, Some(&surface)))?;
     println!("GPU: {}", renderer.adapter_name);
     println!(
-        "Space pause · arrows step, hold to scrub · Cmd+arrows section · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength · W wall waves · ,/. wave depth · ;/' wave light · N part 6 symbols · D part 4 water/floor · 1/2 3/4 5/6 7/8 9/0 part 4 water · J/K U/I G/H Z/X part 7 beam"
+        "Space pause · arrows step, hold to scrub · Cmd+arrows section · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength · W wall waves · ,/. wave depth · ;/' wave light · N part 6 symbols · D part 4 water/floor · 1/2 3/4 5/6 7/8 9/0 part 4 water · J/K U/I G/H Z/X part 7 beam · T/Y part 8 grille · Q/E part 8 pull-back"
     );
     let (width, height) = window.drawable_size();
     let mut config = wgpu::SurfaceConfiguration {
@@ -818,6 +827,32 @@ fn run() -> Result<(), String> {
                             );
                         }
                     }
+                    // Part 8, tuned live: the grille's pitch, which sets when
+                    // its moiré's bands pass, and the camera's pull-back.
+                    Keycode::T | Keycode::Y => {
+                        if let Some(e) = &mut clip.ending {
+                            let step = if key == Keycode::T { 1.1 } else { 1.0 / 1.1 };
+                            e.triad_pitch = (e.triad_pitch * step).clamp(0.25, 16.0);
+                            println!(
+                                "Part 8 grille: a triad every {:.2} rows, {}",
+                                e.triad_pitch,
+                                band_pass(e)
+                            );
+                        }
+                    }
+                    Keycode::Q | Keycode::E => {
+                        if let Some(e) = &mut clip.ending {
+                            let step = if key == Keycode::Q { 1.0 / 1.1 } else { 1.1 };
+                            e.pull_speed = (e.pull_speed * step).clamp(0.002, 0.05);
+                            println!(
+                                "Part 8 pull-back: speed {:.5} (x{:.2}), {:.1} sets across at the white, {}",
+                                e.pull_speed,
+                                e.pull_speed / panic_demo::hd::ending::SPEED,
+                                e.sets_across_at_white(config.width as f64 / config.height as f64),
+                                band_pass(e)
+                            );
+                        }
+                    }
                     Keycode::N => {
                         if let Some(rings) = &mut clip.rings {
                             rings.original_symbols = !rings.original_symbols;
@@ -929,8 +964,14 @@ fn run() -> Result<(), String> {
             };
             // Parts 8, 7, 4, 3, 5 and 6 show their own; the scroller's settings
             // before them.
-            let part5 = if clip.ending_frame(time).is_some() {
-                Some(" · part 8 (the ending)".to_owned())
+            let part5 = if let (Some(e), Some(_)) = (&clip.ending, clip.ending_frame(time)) {
+                Some(format!(
+                    " · part 8 (the ending) · grille {:.2} rows, {} · pull-back x{:.2}, {:.1} sets across at the white",
+                    e.triad_pitch,
+                    band_pass(e),
+                    e.pull_speed / panic_demo::hd::ending::SPEED,
+                    e.sets_across_at_white(w as f64 / h as f64)
+                ))
             } else if let (Some(g), Some(_)) = (&clip.greetings, clip.greetings_frame(time)) {
                 // The turn and brightness as they are now.
                 let beam = g.controls(time).beam;

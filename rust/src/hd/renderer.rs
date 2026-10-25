@@ -251,9 +251,14 @@ struct EndingBlock {
     // Part-8 seconds: white, collapse, line, dot; end, last.
     events: vec4f,
     events_late: vec4f,
-    // The camera: its position and tan(half its field of view); its aim.
+    // The camera: its position and tan(half its field of view); its aim and
+    // its draw back over a sixtieth of a second.
     eye: vec4f,
     aim: vec4f,
+    // The look's ramps: grade, grille, the screen's edge, the bezel's light.
+    look: vec4f,
+    // The grille as filmed: triad pitch (rows), the sensor's lines; unused.
+    moire: vec4f,
 }
 struct Controls {
     screen: vec4f, // drawable width/height, audio-clock seconds, comparison mode

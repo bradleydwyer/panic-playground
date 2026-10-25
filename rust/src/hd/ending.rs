@@ -22,7 +22,7 @@
 //! - Authored: everything the modern view adds (ending_crt.wgsl,
 //!   ending_set.wgsl and the values marked authored here): the endless wall
 //!   of monitors and the camera's eased-in pull back from the centre one's
-//!   face, the tubes' shape and scanlines on the original's 200 lines, the
+//!   face, the picture drawn smaller than each face, the tubes' shape and scanlines on the original's 200 lines, the
 //!   green phosphor's tint, glow and persistence, the gains that brighten
 //!   the picture as it squeezes, the light the screens throw on the sets,
 //!   the CRT coming on over the hold and the fade to black over the last
@@ -55,7 +55,16 @@ pub const LINE_COMPRESSION: f64 = 200.0;
 /// one for the white (gone, as in the original, by the squeeze's second
 /// frame) and a slow one (the spot's lingering glow); the ages of the
 /// trail's taps; the fade to black over the last END_FADE frames.
-pub const CRT_RAMP: f64 = 45.0;
+pub const CRT_RAMP: f64 = 35.0;
+/// The order the modern view's look comes on in over the hold (authored,
+/// after the owner's reference, a filmed wall of monitors): the picture's
+/// green grade over the first CRT_RAMP frames, then the tube's grille (from
+/// and to these part-8 frames), then the screen's edge (its bulge, darker
+/// corners and glowing lip, as the camera brings its corners into view),
+/// then the light on the bezels and cabinets.
+pub const GRILLE_RAMP: (f64, f64) = (25.0, 95.0);
+pub const EDGE_RAMP: (f64, f64) = (70.0, 140.0);
+pub const BEZEL_RAMP: (f64, f64) = (85.0, 155.0);
 pub const PERSISTENCE: f64 = 1.6;
 pub const WHITE_PERSISTENCE: f64 = 0.5;
 pub const AFTERGLOW: f64 = 24.0;
@@ -67,33 +76,44 @@ pub const HALATION_SIGMA: f64 = 2.5;
 /// columns and rows of the picture (authored).
 pub const CELLS: (usize, usize) = (4, 3);
 
-/// The camera (authored), in scene units (source rows on the 4:3 display,
-/// the centre set's face at the origin, its front toward +z). Its vertical
-/// field of view (degrees): from 100 / tan(half of it) the face's 200 rows
-/// fill the frame's height, as part 7's picture does, which is where it
-/// starts. It draws back from there and never stops, eased in on the
+/// The picture's size within each set's screen (authored): the screen's face
+/// is the picture's 4:3 rectangle at full size, and the picture is drawn in
+/// its middle at this scale, the glass round it dark and softly lit
+/// (ending_crt.wgsl).
+pub const PICTURE_SCALE: f64 = 0.7;
+
+/// The camera (authored), in scene units (source rows on the 4:3 display at
+/// the face's full size, the centre set's face at the origin, its front
+/// toward +z). Its vertical field of view (degrees): from 100 PICTURE_SCALE
+/// / tan(half of it) the picture's 200 rows fill the frame's height, as part
+/// 7's picture does, which is where it starts. It draws back from there and never stops, eased in on the
 /// logarithm of its distance: its speed there (a 70 Hz frame) rises from
 /// rest as a smootherstep over the first EASE frames to SPEED, gently at
 /// first so the centre set still fills the frame while the CRT comes on, and
 /// keeps rising, by GAIN of SPEED over SPAN frames, so the zoom out
 /// accelerates through the hold and keeps its momentum through the
-/// switch-off to the end. By the switch-off (frame 284) a field of about 17
-/// sets across the frame is in view; by the end, hundreds. It turns a little
-/// as it draws back (TURN, degrees across and down, approached as the
-/// logarithm grows past TURN_LOG). The wall (ending_set.wgsl) has a set
-/// every SET_PITCH rows up.
+/// switch-off to the end. By the white flash (frame 284) a field of about
+/// 5 sets across is in view, about 10 when the dots appear (frame 350),
+/// about 20 as the pulse ends and about 50 at the end. The player tunes the
+/// speed live (Q and E, [`EndingPreview::pull_speed`]), the ease keeping
+/// its shape.
+/// It turns a little as it draws back (TURN, degrees across and down,
+/// approached as the logarithm grows past TURN_LOG). The wall
+/// (ending_set.wgsl) has a set every SET_PITCH rows up.
 pub const FIELD_OF_VIEW: f64 = 30.0;
-pub const EASE: f64 = 240.0;
-pub const SPEED: f64 = 0.0153;
-pub const GAIN: f64 = 0.3;
+pub const EASE: f64 = 220.0;
+pub const SPEED: f64 = 0.0105;
+pub const GAIN: f64 = 0.15;
 pub const SPAN: f64 = 481.0;
 pub const TURN: (f64, f64) = (2.0, 3.0);
 pub const TURN_LOG: f64 = 2.0;
 pub const SET_PITCH: f64 = 300.0;
+pub const SET_PITCH_ACROSS: f64 = 376.0;
 
 /// How far the camera has drawn back at part-8 frame position `tau`, as the
-/// logarithm of its distance over its first (the integral of its speed).
-pub fn pull_back(tau: f64) -> f64 {
+/// logarithm of its distance over its first (the integral of its speed),
+/// at `speed` (SPEED by default).
+pub fn pull_back(tau: f64, speed: f64) -> f64 {
     let tau = tau.max(0.0);
     let x = tau / EASE;
     let eased = if x < 1.0 {
@@ -102,16 +122,16 @@ pub fn pull_back(tau: f64) -> f64 {
     } else {
         tau - EASE / 2.0
     };
-    SPEED * (eased + GAIN * tau * tau / (2.0 * SPAN))
+    speed * (eased + GAIN * tau * tau / (2.0 * SPAN))
 }
 
 /// Where the camera is and what it looks at, at part-8 frame position
-/// `tau` (continuous): its position, the point it looks at, and the
-/// tangent of half its field of view.
-pub fn camera(tau: f64) -> ([f64; 3], [f64; 3], f64) {
+/// `tau` (continuous), drawing back at `speed`: its position, the point it
+/// looks at, and the tangent of half its field of view.
+pub fn camera(tau: f64, speed: f64) -> ([f64; 3], [f64; 3], f64) {
     let tan_half = (FIELD_OF_VIEW / 2.0).to_radians().tan();
-    let first = 100.0 / tan_half;
-    let back = pull_back(tau);
+    let first = 100.0 * PICTURE_SCALE / tan_half;
+    let back = pull_back(tau, speed);
     let distance = first * back.exp();
     let turned = 1.0 - (-back / TURN_LOG).exp();
     let (across, down) = (TURN.0.to_radians() * turned, TURN.1.to_radians() * turned);
@@ -122,6 +142,30 @@ pub fn camera(tau: f64) -> ([f64; 3], [f64; 3], f64) {
     ];
     (direction.map(|d| d * distance), [0.0; 3], tan_half)
 }
+
+/// The sets across a frame `aspect` wide to its height, at part-8 frame
+/// position `tau`, the camera drawing back at `speed` (the sets stand
+/// SET_PITCH_ACROSS rows apart across).
+pub fn sets_across(tau: f64, speed: f64, aspect: f64) -> f64 {
+    let (eye, _, tan_half) = camera(tau, speed);
+    let distance = (eye[0] * eye[0] + eye[1] * eye[1] + eye[2] * eye[2]).sqrt();
+    2.0 * distance * tan_half * aspect / SET_PITCH_ACROSS
+}
+
+/// The grille as the virtual camera films it (authored; a model of the
+/// reference's filmed tubes, not of anything in the original;
+/// ending_crt.wgsl): a triad of phosphor stripes every TRIAD_PITCH rows of
+/// the face, and the camera's sensor SENSOR_LINES pixels high. Their ratio
+/// sets when the moiré's bands pass: the bands are broadest where a sensor
+/// pixel spans a whole number of triads, the first time where the frame's
+/// height covers SENSOR_LINES x TRIAD_PITCH rows. The sensor is coarse, so
+/// the first pass comes close up, while the grille fades in; the triad is
+/// kept coarse too, so that as the camera draws back the bands do not race
+/// across the face (they move with the triads from the middle) and stay in
+/// view through the later passes. The player tunes the pitch live (T and
+/// Y, [`EndingPreview::triad_pitch`]).
+pub const TRIAD_PITCH: f64 = 2.0;
+pub const SENSOR_LINES: f64 = 85.0;
 
 /// What a part-8 frame shows, by the scene's step (read from the code).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -239,9 +283,17 @@ pub struct EndingBlock {
     pub events: [f32; 4],
     pub events_late: [f32; 4],
     /// The camera ([`camera`]): its position and the tangent of half its
-    /// field of view; the point it looks at, unused.
+    /// field of view; the point it looks at, and how far it draws back (in
+    /// the logarithm of its distance) over a sixtieth of a second, the
+    /// virtual camera's exposure (ending_crt.wgsl).
     pub eye: [f32; 4],
     pub aim: [f32; 4],
+    /// The look's ramps, 0 to 1 (authored): the grade (as `tube.x`), the
+    /// grille, the screen's edge, the bezel's light.
+    pub look: [f32; 4],
+    /// The grille as the camera films it: the triads' pitch (rows) and the
+    /// sensor's pixels across the frame's height; unused, unused.
+    pub moire: [f32; 4],
 }
 
 /// Part 8 of the HD clip: from its first frame to the demo's last.
@@ -275,6 +327,10 @@ pub struct EndingPreview {
     /// [`CELLS`], left to right and top to bottom: the light each screen
     /// throws on the sets.
     pub cells: Vec<[f32; 4]>,
+    /// Tuned live by the player (authored): the camera's pull-back speed
+    /// ([`SPEED`] by default) and the grille's triad pitch ([`TRIAD_PITCH`]).
+    pub pull_speed: f64,
+    pub triad_pitch: f64,
 }
 
 impl EndingPreview {
@@ -356,6 +412,8 @@ impl EndingPreview {
             profile: Vec::new(),
             phosphor: Vec::new(),
             cells: Vec::new(),
+            pull_speed: SPEED,
+            triad_pitch: TRIAD_PITCH,
         };
         let at = |stage: Stage| {
             let j = preview.frames.iter().position(|f| f.stage >= stage);
@@ -462,6 +520,40 @@ impl EndingPreview {
     /// Clip time of part-8 frame `j`.
     pub fn seconds(&self, j: usize) -> f64 {
         (self.start + j) as f64 / FRAME_RATE as f64
+    }
+
+    /// The sets across a frame `aspect` wide to its height at the white
+    /// flash, the camera drawing back at the current speed.
+    pub fn sets_across_at_white(&self, aspect: f64) -> f64 {
+        sets_across(
+            self.events.white * FRAME_RATE as f64,
+            self.pull_speed,
+            aspect,
+        )
+    }
+
+    /// About when the moiré's first band pass (a triad to each of the
+    /// sensor's pixels) reaches the middle of the centre set's face, as a
+    /// clip time, at the current speed and pitch; None if it comes after the
+    /// white, when the grille has gone. The frame's height covers 200
+    /// PICTURE_SCALE rows of the face at first, and more as the camera draws
+    /// back (the glass's slight magnification left out).
+    pub fn first_band_pass(&self) -> Option<f64> {
+        let target = (SENSOR_LINES * self.triad_pitch / (200.0 * PICTURE_SCALE)).ln();
+        let white = self.events.white * FRAME_RATE as f64;
+        if pull_back(white, self.pull_speed) < target {
+            return None;
+        }
+        let (mut low, mut high) = (0.0, white);
+        for _ in 0..50 {
+            let middle = 0.5 * (low + high);
+            if pull_back(middle, self.pull_speed) < target {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        Some((self.start as f64 + high) / FRAME_RATE as f64)
     }
 
     fn moment(&self, time: f64) -> (usize, f64) {
@@ -574,7 +666,8 @@ impl EndingPreview {
         }
         let e = &self.events;
         let c = self.line_colour;
-        let (eye, aim, tan_half) = camera(tau);
+        let speed = self.pull_speed;
+        let (eye, aim, tan_half) = camera(tau, speed);
         EndingBlock {
             part: [
                 1.0,
@@ -616,7 +709,20 @@ impl EndingPreview {
             events: [e.white, e.collapse, e.line, e.dot].map(|v| v as f32),
             events_late: [e.end, e.last, 0.0, 0.0].map(|v| v as f32),
             eye: [eye[0] as f32, eye[1] as f32, eye[2] as f32, tan_half as f32],
-            aim: [aim[0] as f32, aim[1] as f32, aim[2] as f32, 0.0],
+            aim: [
+                aim[0] as f32,
+                aim[1] as f32,
+                aim[2] as f32,
+                ((pull_back(tau + 0.5, speed) - pull_back(tau - 0.5, speed)) * FRAME_RATE as f64
+                    / 60.0) as f32,
+            ],
+            look: [
+                smoothstep(0.0, CRT_RAMP, tau) as f32,
+                smoothstep(GRILLE_RAMP.0, GRILLE_RAMP.1, tau) as f32,
+                smoothstep(EDGE_RAMP.0, EDGE_RAMP.1, tau) as f32,
+                smoothstep(BEZEL_RAMP.0, BEZEL_RAMP.1, tau) as f32,
+            ],
+            moire: [self.triad_pitch as f32, SENSOR_LINES as f32, 0.0, 0.0],
         }
     }
 }
@@ -776,15 +882,15 @@ mod tests {
     /// switch-off shows a field of sets, many dozens of them.
     #[test]
     fn camera_starts_on_the_face_and_accelerates_away() {
-        let (eye, aim, tan_half) = camera(0.0);
+        let (eye, aim, tan_half) = camera(0.0, SPEED);
         assert_eq!(aim, [0.0; 3]);
         assert_eq!(&eye[..2], &[0.0, 0.0]);
         assert!((eye[2] * tan_half - 100.0).abs() < 1e-9);
         let length = |e: [f64; 3]| (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]).sqrt();
         // Sets across a 16:9 frame (the pitch across is 376 rows), and the
         // frame's height a set takes.
-        let across = |tau: f64| 2.0 * length(camera(tau).0) * tan_half * 16.0 / 9.0 / 376.0;
-        let share = |tau: f64| SET_PITCH / (2.0 * length(camera(tau).0) * tan_half);
+        let across = |tau: f64| 2.0 * length(camera(tau, SPEED).0) * tan_half * 16.0 / 9.0 / 376.0;
+        let share = |tau: f64| SET_PITCH / (2.0 * length(camera(tau, SPEED).0) * tan_half);
         assert!(share(CRT_RAMP) > 1.4, "{}", share(CRT_RAMP));
         assert!((15.0..22.0).contains(&across(284.0)), "{}", across(284.0));
         assert!(across(284.0) * 9.0 / 16.0 * 376.0 / 300.0 > 8.0);
@@ -796,7 +902,7 @@ mod tests {
         // Tenths of a frame: the logarithm of the distance always rising,
         // its speed never falling and never changing suddenly, each step
         // small against the distance.
-        let log = |tau: f64| length(camera(tau).0).ln();
+        let log = |tau: f64| length(camera(tau, SPEED).0).ln();
         let mut speed = 0.0;
         for k in 1..=4810 {
             let tau = k as f64 / 10.0;

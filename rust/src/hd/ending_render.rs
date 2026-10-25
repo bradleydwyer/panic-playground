@@ -472,7 +472,7 @@ mod tests {
     use super::super::clip::{Clip, ScrollerLighting};
     use super::super::ending::{
         DOT_COLUMN, EndingBlock, EndingEvents, EndingFrame, EndingPreview, LINE_ROW, PERSISTENCE,
-        SET_PITCH, Stage, TRAIL_AGES,
+        SET_PITCH, SPEED, Stage, TRAIL_AGES, TRIAD_PITCH,
     };
     use super::super::renderer::{Renderer, View};
     use std::mem::{offset_of, size_of};
@@ -512,7 +512,9 @@ mod tests {
             events,
             events_late,
             eye,
-            aim
+            aim,
+            look,
+            moire
         ];
         assert_eq!(
             expected.last().unwrap().1 + size_of::<[f32; 4]>(),
@@ -639,6 +641,8 @@ mod tests {
             profile: Vec::new(),
             phosphor: Vec::new(),
             cells: Vec::new(),
+            pull_speed: SPEED,
+            triad_pitch: TRIAD_PITCH,
         };
         let (shown, layer_of) = super::picture_layers(&preview);
         assert_eq!(shown, [0, 3, 5, 6, 8, 9]);
