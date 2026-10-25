@@ -1,7 +1,13 @@
-//! Part 7's letterforms for the modern view, derived when the preview loads
-//! from the TRUG maps the user's data supplies. No glyph or font data is
-//! stored in the repository.
+//! Part 7's letterforms for the modern view: each letter's outline as a
+//! signed distance over a face of its block, with its gradient, for the
+//! crystal's cut. Behind a small interface ([`LetterSource`]): the modern
+//! view uses the authored outlines in greetings_letters.txt (drawn for this
+//! remake in the original's spirit, not recovered: see that file's header);
+//! the original's letters, derived when the preview loads from the TRUG
+//! maps the user's data supplies, remain for comparison. No glyph or font
+//! data from the demo is stored in the repository.
 //!
+//! The original's letters, as read:
 //! - Read from the bytes: glyph `g` (A = 0) starts at plane offset 0x3e90 +
 //!   g * 0x700, 16 rows of 112 bytes, each row 16 views of 7 bytes (28
 //!   pixels); the scene copies rows 0 to 14. The colours 1 to 6 run from
@@ -19,9 +25,7 @@
 //!   strokes), with enclosed specks of colour 0 of up to two pixels filled
 //!   (G's broken slit; the counters, of A and O, are 8 and 14 pixels),
 //!   upsampled, softened a little and cut at half, then measured as a
-//!   signed distance, so its edge stays sharp at any size; the relief is
-//!   that distance rounded into a bevel and tilted by the original's
-//!   shading.
+//!   signed distance, so its edge stays sharp at any size.
 
 use half::f16;
 
@@ -42,15 +46,134 @@ pub const GLYPH_ROW: usize = 112;
 const FACE_FIRST_COLUMN: usize = 5;
 const FACE_COLUMNS: usize = 18;
 const FACE_ROWS: usize = 15;
-/// Authored: the softening of the outline and of the shading, in source
-/// columns; the bevel's width in rows.
+/// Authored: the softening of the outline, in source columns.
 const OUTLINE_SOFT: f64 = 0.22;
-const SHADING_SOFT: f64 = 0.6;
-const BEVEL: f64 = 0.8;
+/// The farthest the distances reach either side of the outline (rows).
+const REACH: f64 = 8.0;
 
-/// The letters' atlas: per texel the signed distance to the outline (rows,
-/// positive outside), the relief (0 to 1), and the relief's slope across
-/// and up the face (per row).
+/// Where the letters' outlines come from.
+pub enum LetterSource<'a> {
+    /// The authored outlines, in greetings_letters.txt's format.
+    Outlines(&'a str),
+    /// The front views of TRUG's glyphs: the user's TRUG maps, 4 planes of
+    /// 65536 bytes as video memory holds them (the earlier placeholder,
+    /// kept for comparison).
+    #[cfg_attr(not(test), allow(dead_code))]
+    Trug(&'a [u8]),
+}
+
+/// The authored outlines, as the repository holds them.
+pub const LETTERS: &str = include_str!("greetings_letters.txt");
+
+/// One letter's closed contours in the file's units (y up), outer
+/// counter-clockwise and holes clockwise.
+pub struct Outline {
+    pub letter: char,
+    pub contours: Vec<Vec<(f64, f64)>>,
+}
+
+/// The letters file: its box (units) and each letter's contours.
+pub struct Outlines {
+    pub box_size: (f64, f64),
+    pub letters: Vec<Outline>,
+}
+
+/// Read greetings_letters.txt's format (described in its header).
+pub fn parse_outlines(text: &str) -> Result<Outlines, String> {
+    let mut box_size = None;
+    let mut letters: Vec<Outline> = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        if line.trim().is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields: Vec<&str> = line.split('\t').collect();
+        let bad = || format!("greetings_letters.txt line {}: not understood", number + 1);
+        match fields.as_slice() {
+            ["box", w, h] => {
+                box_size = Some((
+                    w.parse::<f64>().map_err(|_| bad())?,
+                    h.parse::<f64>().map_err(|_| bad())?,
+                ))
+            }
+            ["advance" | "pitch", _] | ["minimum", "ink", _, "counter", _] => {}
+            [key, kind @ ("outer" | "hole"), points] if key.len() == 1 => {
+                let letter = key.chars().next().unwrap();
+                if !letter.is_ascii_uppercase() {
+                    return Err(bad());
+                }
+                let mut contour = Vec::new();
+                for pair in points.split(' ') {
+                    let (x, y) = pair.split_once(',').ok_or_else(bad)?;
+                    contour.push((
+                        x.parse::<f64>().map_err(|_| bad())?,
+                        y.parse::<f64>().map_err(|_| bad())?,
+                    ));
+                }
+                if contour.len() < 3 {
+                    return Err(bad());
+                }
+                // Outer contours wind counter-clockwise, holes clockwise.
+                let area: f64 = (0..contour.len())
+                    .map(|i| {
+                        let (a, b) = (contour[i], contour[(i + 1) % contour.len()]);
+                        a.0 * b.1 - b.0 * a.1
+                    })
+                    .sum();
+                if (area > 0.0) != (*kind == "outer") {
+                    return Err(format!("{}: winds the wrong way", bad()));
+                }
+                match letters.iter_mut().find(|o| o.letter == letter) {
+                    Some(o) => o.contours.push(contour),
+                    None => letters.push(Outline {
+                        letter,
+                        contours: vec![contour],
+                    }),
+                }
+            }
+            _ => return Err(bad()),
+        }
+    }
+    Ok(Outlines {
+        box_size: box_size.ok_or("greetings_letters.txt has no box")?,
+        letters,
+    })
+}
+
+/// A letter's signed distance over a face, CELL x CELL texels (rows of the
+/// face, positive outside): the letter's box fills the face, its distance
+/// to the nearest edge, negative inside (an odd number of crossings).
+fn outline_distances(outline: &Outline, box_size: (f64, f64)) -> Vec<f64> {
+    let rows_per_unit = FACE / box_size.1;
+    let edges: Vec<((f64, f64), (f64, f64))> = outline
+        .contours
+        .iter()
+        .flat_map(|c| (0..c.len()).map(move |i| (c[i], c[(i + 1) % c.len()])))
+        .collect();
+    (0..CELL * CELL)
+        .map(|i| {
+            let (tx, ty) = ((i % CELL) as f64 + 0.5, (i / CELL) as f64 + 0.5);
+            let x = tx / CELL as f64 * box_size.0;
+            let y = box_size.1 - ty / CELL as f64 * box_size.1;
+            let mut nearest = f64::INFINITY;
+            let mut inside = false;
+            for &((ax, ay), (bx, by)) in &edges {
+                let (ex, ey) = (bx - ax, by - ay);
+                let t = (((x - ax) * ex + (y - ay) * ey) / (ex * ex + ey * ey)).clamp(0.0, 1.0);
+                let (dx, dy) = (x - ax - ex * t, y - ay - ey * t);
+                nearest = nearest.min((dx * dx + dy * dy).sqrt());
+                if (ay > y) != (by > y) && x < ax + (y - ay) / (by - ay) * ex {
+                    inside = !inside;
+                }
+            }
+            let d = nearest * rows_per_unit;
+            (if inside { -d } else { d }).clamp(-REACH, REACH)
+        })
+        .collect()
+}
+
+/// The letters' atlas: per texel the signed distance to the outline (rows
+/// of the face, positive outside), unused, and the distance's gradient
+/// across and up the face.
 pub struct Letterforms {
     pub texels: Vec<[f16; 4]>,
 }
@@ -229,64 +352,81 @@ fn distance_to(mask: &[bool]) -> Vec<f64> {
     grid.into_iter().map(f64::sqrt).collect()
 }
 
-/// One letter's face: signed distance (rows), relief and its slopes.
-pub fn letter(planes: &[u8], g: usize) -> Vec<[f64; 4]> {
+/// Glyph `g`'s coverage over a face from TRUG's front view, CELL x CELL
+/// texels, softened (0 to 1).
+fn trug_coverage(planes: &[u8], g: usize) -> Vec<f64> {
     let view = front_view(planes, g);
     let mask = outline(&view);
     let (w, h) = (FACE_COLUMNS, FACE_ROWS);
     let coverage: Vec<f64> = mask.iter().map(|&m| m as u8 as f64).collect();
     let texels_per_column = CELL as f64 / w as f64;
-    let soft = blur(&upsample(&coverage, w, h), OUTLINE_SOFT * texels_per_column);
-    let inside: Vec<bool> = soft.iter().map(|&v| v > 0.5).collect();
+    blur(&upsample(&coverage, w, h), OUTLINE_SOFT * texels_per_column)
+}
+
+/// A face from its coverage: per texel the signed distance to the outline
+/// (rows, positive outside; the outline where the coverage crosses a half),
+/// 0, and the distance's gradient across and up the face.
+pub fn face_of(coverage: &[f64]) -> Vec<[f64; 4]> {
+    let inside: Vec<bool> = coverage.iter().map(|&v| v > 0.5).collect();
     let outside: Vec<bool> = inside.iter().map(|&v| !v).collect();
     let row_per_texel = FACE / CELL as f64;
     let to_inside = distance_to(&inside);
     let to_outside = distance_to(&outside);
     let sd: Vec<f64> = (0..CELL * CELL)
-        .map(|i| ((to_inside[i] - to_outside[i]) * row_per_texel).clamp(-8.0, 8.0))
+        .map(|i| ((to_inside[i] - to_outside[i]) * row_per_texel).clamp(-REACH, REACH))
         .collect();
-    // The original's shading as height: white 1 high, teal 6 low.
-    let shading: Vec<f64> = (0..w * h)
-        .map(|i| {
-            let c = view[i / w][i % w];
-            if c == 0 || c > 6 {
-                0.0
-            } else {
-                (7.0 - c as f64) / 6.0
-            }
-        })
-        .collect();
-    let shading = blur(&upsample(&shading, w, h), SHADING_SOFT * texels_per_column);
-    let top = shading.iter().cloned().fold(1e-6, f64::max);
-    let relief: Vec<f64> = (0..CELL * CELL)
-        .map(|i| (-sd[i] / BEVEL).clamp(0.0, 1.0).powf(0.6) * (0.75 + 0.25 * shading[i] / top))
-        .collect();
-    let relief = blur(&relief, 0.12 * texels_per_column);
+    face_from(&sd)
+}
+
+/// A face from its signed distances: with their gradient.
+fn face_from(sd: &[f64]) -> Vec<[f64; 4]> {
+    let row_per_texel = FACE / CELL as f64;
     (0..CELL * CELL)
         .map(|i| {
             let (x, y) = (i % CELL, i / CELL);
-            let at = |x: usize, y: usize| relief[y.min(CELL - 1) * CELL + x.min(CELL - 1)];
-            let across = (at(x + 1, y) - at(x.saturating_sub(1), y)) / (2.0 * row_per_texel);
+            let at = |x: usize, y: usize| sd[y.min(CELL - 1) * CELL + x.min(CELL - 1)];
+            let (x0, x1) = (x.saturating_sub(1), (x + 1).min(CELL - 1));
+            let (y0, y1) = (y.saturating_sub(1), (y + 1).min(CELL - 1));
+            let across = (at(x1, y) - at(x0, y)) / ((x1 - x0).max(1) as f64 * row_per_texel);
             // Up the face is up the texture's rows backwards.
-            let up = (at(x, y.saturating_sub(1)) - at(x, y + 1)) / (2.0 * row_per_texel);
-            [sd[i], relief[i], across, up]
+            let up = (at(x, y0) - at(x, y1)) / ((y1 - y0).max(1) as f64 * row_per_texel);
+            [sd[i], 0.0, across, up]
         })
         .collect()
 }
 
-/// All 26 letters in the atlas.
-pub fn letterforms(planes: &[u8]) -> Letterforms {
+/// One letter's face from TRUG: signed distance (rows), 0, its gradient.
+pub fn letter(planes: &[u8], g: usize) -> Vec<[f64; 4]> {
+    face_of(&trug_coverage(planes, g))
+}
+
+/// The letters in the atlas, from `source` (those it has; the rest
+/// empty).
+pub fn letterforms(source: LetterSource) -> Result<Letterforms, String> {
     let (width, height) = (ATLAS_SIZE.0 as usize, ATLAS_SIZE.1 as usize);
-    let mut texels = vec![[f16::from_f32(8.0), f16::ZERO, f16::ZERO, f16::ZERO]; width * height];
-    for g in 0..26 {
-        let face = letter(planes, g);
+    let mut texels = vec![[f16::from_f64(REACH), f16::ZERO, f16::ZERO, f16::ZERO]; width * height];
+    let mut place = |g: usize, face: Vec<[f64; 4]>| {
         let (cx, cy) = ((g % ATLAS_COLUMNS) * CELL, (g / ATLAS_COLUMNS) * CELL);
         for (i, t) in face.iter().enumerate() {
             let (x, y) = (cx + i % CELL, cy + i / CELL);
             texels[y * width + x] = t.map(f16::from_f64);
         }
+    };
+    match source {
+        LetterSource::Outlines(text) => {
+            let outlines = parse_outlines(text)?;
+            for outline in &outlines.letters {
+                let g = (outline.letter as u8 - b'A') as usize;
+                place(g, face_from(&outline_distances(outline, outlines.box_size)));
+            }
+        }
+        LetterSource::Trug(planes) => {
+            for g in 0..26 {
+                place(g, letter(planes, g));
+            }
+        }
     }
-    Letterforms { texels }
+    Ok(Letterforms { texels })
 }
 
 #[cfg(test)]
@@ -335,7 +475,42 @@ mod tests {
         assert!(at(15.0 - 5.0 + 0.5, 7.5)[0] > 0.0, "counter kept");
         assert!(at(10.5 - 5.0, 10.0)[0] < -0.4, "inside");
         assert!(at(0.5, 0.5)[0] > 1.0, "outside");
-        assert!(at(10.5 - 5.0, 10.0)[1] > 0.5, "relief inside");
+        // The gradient points out of the stroke: at the block's left edge,
+        // across is negative (outside lies to the left).
+        let edge = at(7.0 - 5.0 + 0.3, 7.0);
+        assert!(edge[2] < -0.5 && edge[3].abs() < 0.3, "gradient {edge:?}");
+    }
+
+    /// The authored outlines parse: the ten letters the words use, each
+    /// with its contours; and a square's distances come out right.
+    #[test]
+    fn the_authored_outlines_parse() {
+        let outlines = parse_outlines(LETTERS).unwrap();
+        assert_eq!(outlines.box_size, (180.0, 180.0));
+        let mut letters: Vec<char> = outlines.letters.iter().map(|o| o.letter).collect();
+        letters.sort();
+        assert_eq!(letters.iter().collect::<String>(), "ACEGINORST");
+        for word in ["GREETINGS", "GOTO", "RENAISSANCE", "TRITON", "SONIC"] {
+            assert!(word.chars().all(|c| letters.contains(&c)));
+        }
+        assert!(parse_outlines("box\t10\t10\nA\touter\t0,0 0,10 10,10 10,0\n").is_err());
+        let square = Outline {
+            letter: 'X',
+            contours: vec![vec![
+                (30.0, 30.0),
+                (150.0, 30.0),
+                (150.0, 150.0),
+                (30.0, 150.0),
+            ]],
+        };
+        let sd = outline_distances(&square, (180.0, 180.0));
+        let middle = sd[(CELL / 2) * CELL + CELL / 2];
+        assert!((middle + 60.0 * FACE / 180.0).abs() < 0.2, "{middle}");
+        assert!(sd[0] > 2.0);
+        // All ten letters build into the atlas.
+        let atlas = letterforms(LetterSource::Outlines(LETTERS)).unwrap();
+        let inside = atlas.texels.iter().filter(|t| t[0].to_f64() < 0.0).count();
+        assert!(inside > 10 * CELL * CELL / 4, "{inside}");
     }
 
     #[test]

@@ -1,10 +1,12 @@
 //! GPU side of part 7: its tables, the letters' faces, the dust, the air's
 //! density, and the pipelines. Faithful HD draws straight into the output
-//! from the tables. The modern view maps what the strips let through as the
-//! lamp sees it, marches the cubes (their colour, depth and where their
-//! polish mirrors the picture), draws the dust in front of them, marches the
-//! lit air at half size, and composites into the modern renderer's HDR
-//! target, which then takes the shared bloom and tonemap.
+//! from the tables. The modern view traces the beam's photons through the
+//! crystal blocks and gathers them into a map of what the strips let
+//! through as the lamp sees it, marches the blocks (their coverage and
+//! depth), draws the dust and marches the lit air at half size (each in
+//! front of the blocks and in all), and composites, the crystal shaded
+//! there, into the modern renderer's HDR target, which then takes the
+//! shared bloom and tonemap.
 use super::greetings::{GreetingsPreview, ROWS, SLOTS, STRIPS};
 use super::greetings_type::ATLAS_SIZE;
 use super::renderer::wgsl_parts;
@@ -27,23 +29,24 @@ pub(super) fn light_source() -> String {
     wgsl_parts(&[COMMON, LIGHT])
 }
 
-/// The strips' transmission seen from the lamp: the map's size, and its
-/// half extent on the strips' plane (source rows; greetings_light.wgsl's
-/// TRANSMISSION_EXTENT).
-pub const TRANSMISSION_SIZE: (u32, u32) = (1024, 768);
-#[cfg_attr(not(test), allow(dead_code))]
-pub const TRANSMISSION_EXTENT: (f64, f64) = (240.0, 180.0);
+/// What the blocks let through, seen from the lamp: the map's size (a map
+/// of directions round the beam's axis; greetings_light.wgsl's MAP_SPREAD).
+pub const TRANSMISSION_SIZE: (u32, u32) = (1024, 1024);
 /// The air's density noise: its size (texels a side) and lattices.
 pub const NOISE_SIZE: u32 = 64;
+/// The photons: one lamp ray for each cell of this grid over the map, at
+/// each of three wavelengths (greetings_light.wgsl's PHOTON_GRID).
+pub const PHOTON_GRID: (u32, u32) = (560, 560);
+const PHOTONS: u32 = PHOTON_GRID.0 * PHOTON_GRID.1 * 3;
 
 /// The images the modern view's passes hand on, for one drawable size.
 struct Targets {
     size: (u32, u32),
-    dust: TextureView,
-    cubes: TextureView,
-    depth: TextureView,
-    mirror: TextureView,
-    air: TextureView,
+    geometry: TextureView,
+    dust_front: TextureView,
+    dust_full: TextureView,
+    air_front: TextureView,
+    air_full: TextureView,
     scene_inputs: BindGroup,
     style_inputs: BindGroup,
 }
@@ -57,12 +60,15 @@ pub(super) struct GreetingsRenderer {
     original_frame: Option<usize>,
     motes: u32,
     transmission: TextureView,
+    photons_out: BindGroup,
+    photons_in: BindGroup,
     scene_layout: BindGroupLayout,
     style_layout: BindGroupLayout,
     targets: Option<Targets>,
     faithful: RenderPipeline,
-    strips_transmission: RenderPipeline,
-    cubes: RenderPipeline,
+    trace: ComputePipeline,
+    caustics: RenderPipeline,
+    blocks: RenderPipeline,
     dust: RenderPipeline,
     air: RenderPipeline,
     style: RenderPipeline,
@@ -318,7 +324,7 @@ impl GreetingsRenderer {
             TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
         )
         .create_view(&Default::default());
-        let all = ShaderStages::VERTEX | ShaderStages::FRAGMENT;
+        let all = ShaderStages::VERTEX | ShaderStages::FRAGMENT | ShaderStages::COMPUTE;
         let storage = BindingType::Buffer {
             ty: BufferBindingType::Storage { read_only: true },
             has_dynamic_offset: false,
@@ -382,21 +388,53 @@ impl GreetingsRenderer {
                 },
             ],
         });
-        let depth_type = sampled(TextureSampleType::Float { filterable: false });
+        let unfiltered = sampled(TextureSampleType::Float { filterable: false });
         let scene_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("Part 7 scene's inputs"),
-            entries: &[entry(2, all, depth_type), entry(3, all, sampled(FLOAT))],
+            entries: &[entry(2, all, unfiltered), entry(3, all, sampled(FLOAT))],
         });
         let fragment = ShaderStages::FRAGMENT;
         let style_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("Part 7 picture's inputs"),
             entries: &[
                 entry(1, fragment, sampled(FLOAT)),
-                entry(2, fragment, depth_type),
+                entry(2, fragment, unfiltered),
                 entry(4, fragment, sampled(FLOAT)),
                 entry(5, fragment, sampled(FLOAT)),
                 entry(6, fragment, sampled(FLOAT)),
             ],
+        });
+        let photons = device.create_buffer(&BufferDescriptor {
+            label: Some("Part 7 photons"),
+            size: PHOTONS as u64 * 16,
+            usage: BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let photons_out_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("Part 7 photons traced"),
+            entries: &[entry(
+                7,
+                ShaderStages::COMPUTE,
+                BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+            )],
+        });
+        let photons_in_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("Part 7 photons gathered"),
+            entries: &[entry(8, ShaderStages::VERTEX, storage)],
+        });
+        let photons_out = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Part 7 photons traced"),
+            layout: &photons_out_layout,
+            entries: &[resource(7, &photons)],
+        });
+        let photons_in = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Part 7 photons gathered"),
+            layout: &photons_in_layout,
+            entries: &[resource(8, &photons)],
         });
         let layout = |groups: &[&BindGroupLayout]| {
             let groups: Vec<Option<&BindGroupLayout>> = groups.iter().map(|&g| Some(g)).collect();
@@ -458,25 +496,29 @@ impl GreetingsRenderer {
             &[target(output, None)],
         );
         let scene = layout(&[&data_layout, &scene_layout]);
-        let strips_transmission = pipeline(
-            "Part 7 strips' transmission",
-            &layout(&[&data_layout]),
+        let trace = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: Some("Part 7 photons"),
+            layout: Some(&layout(&[&data_layout, &photons_out_layout])),
+            module: &light_module,
+            entry_point: Some("trace_photons"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let caustics = pipeline(
+            "Part 7 caustics",
+            &layout(&[&data_layout, &photons_in_layout]),
             &light_module,
-            "fullscreen",
-            "strips_transmission",
-            &[target(HDR, None)],
+            "photon_vertex",
+            "photon_fragment",
+            &[target(HDR, Some(ADD))],
         );
-        let cubes = pipeline(
-            "Part 7 cubes",
+        let blocks = pipeline(
+            "Part 7 blocks",
             &layout(&[&data_layout]),
             &light_module,
             "fullscreen",
-            "cubes",
-            &[
-                target(HDR, None),
-                target(TextureFormat::R32Float, None),
-                target(HDR, None),
-            ],
+            "blocks",
+            &[target(TextureFormat::Rgba32Float, None)],
         );
         let dust = pipeline(
             "Part 7 dust",
@@ -484,7 +526,7 @@ impl GreetingsRenderer {
             &light_module,
             "dust_vertex",
             "dust_fragment",
-            &[target(HDR, Some(ADD))],
+            &[target(HDR, Some(ADD)), target(HDR, Some(ADD))],
         );
         let air = pipeline(
             "Part 7 air",
@@ -492,7 +534,7 @@ impl GreetingsRenderer {
             &light_module,
             "fullscreen",
             "air",
-            &[target(HDR, None)],
+            &[target(HDR, None), target(HDR, None)],
         );
         let style = pipeline(
             "Part 7 modern",
@@ -509,12 +551,15 @@ impl GreetingsRenderer {
             original_frame: None,
             motes: preview.motes.len() as u32,
             transmission,
+            photons_out,
+            photons_in,
             scene_layout,
             style_layout,
             targets: None,
             faithful,
-            strips_transmission,
-            cubes,
+            trace,
+            caustics,
+            blocks,
             dust,
             air,
             style,
@@ -550,35 +595,35 @@ impl GreetingsRenderer {
         let make = |label, size, format| {
             texture(device, label, size, format, usage).create_view(&Default::default())
         };
-        let dust = make("Part 7 dust image", size, HDR);
-        let cubes = make("Part 7 cubes image", size, HDR);
-        let depth = make("Part 7 cubes' depth", size, TextureFormat::R32Float);
-        let mirror = make("Part 7 cubes' mirror", size, HDR);
+        let geometry = make("Part 7 blocks", size, TextureFormat::Rgba32Float);
+        let dust_front = make("Part 7 dust in front", size, HDR);
+        let dust_full = make("Part 7 dust", size, HDR);
         let half = (size.0.div_ceil(2).max(1), size.1.div_ceil(2).max(1));
-        let air = make("Part 7 lit air", half, HDR);
+        let air_front = make("Part 7 lit air in front", half, HDR);
+        let air_full = make("Part 7 lit air", half, HDR);
         let scene_inputs = device.create_bind_group(&BindGroupDescriptor {
             label: Some("Part 7 scene's inputs"),
             layout: &self.scene_layout,
-            entries: &[view(2, &depth), view(3, &self.transmission)],
+            entries: &[view(2, &geometry), view(3, &self.transmission)],
         });
         let style_inputs = device.create_bind_group(&BindGroupDescriptor {
             label: Some("Part 7 picture's inputs"),
             layout: &self.style_layout,
             entries: &[
-                view(1, &dust),
-                view(2, &depth),
-                view(4, &cubes),
-                view(5, &air),
-                view(6, &mirror),
+                view(1, &dust_front),
+                view(2, &geometry),
+                view(4, &dust_full),
+                view(5, &air_front),
+                view(6, &air_full),
             ],
         });
         self.targets = Some(Targets {
             size,
-            dust,
-            cubes,
-            depth,
-            mirror,
-            air,
+            geometry,
+            dust_front,
+            dust_full,
+            air_front,
+            air_full,
             scene_inputs,
             style_inputs,
         });
@@ -610,37 +655,44 @@ impl GreetingsRenderer {
         })
     }
 
-    /// The modern view into the HDR target: what the strips let through,
-    /// seen from the lamp; the cubes, their depth and where they mirror the
-    /// picture; the dust; the lit air; then the picture. Call
-    /// [`GreetingsRenderer::resize`] first.
+    /// The modern view into the HDR target: the beam's photons traced
+    /// through the blocks and gathered into the transmission map; the
+    /// blocks' coverage and depth; the dust; the lit air; then the picture.
+    /// Call [`GreetingsRenderer::resize`] first.
     pub fn draw_style(&self, encoder: &mut CommandEncoder, hdr: &TextureView) {
         let t = self.targets.as_ref().unwrap();
         {
-            let mut pass = Self::pass(
-                encoder,
-                "Part 7 strips' transmission",
-                &[&self.transmission],
-            );
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: Some("Part 7 photons"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.trace);
             pass.set_bind_group(0, &self.data, &[]);
-            pass.set_pipeline(&self.strips_transmission);
+            pass.set_bind_group(1, &self.photons_out, &[]);
+            pass.dispatch_workgroups(PHOTONS.div_ceil(64), 1, 1);
+        }
+        {
+            let mut pass = Self::pass(encoder, "Part 7 caustics", &[&self.transmission]);
+            pass.set_bind_group(0, &self.data, &[]);
+            pass.set_bind_group(1, &self.photons_in, &[]);
+            pass.set_pipeline(&self.caustics);
+            pass.draw(0..6, 0..PHOTONS * 2);
+        }
+        {
+            let mut pass = Self::pass(encoder, "Part 7 blocks", &[&t.geometry]);
+            pass.set_bind_group(0, &self.data, &[]);
+            pass.set_pipeline(&self.blocks);
             pass.draw(0..3, 0..1);
         }
         {
-            let mut pass = Self::pass(encoder, "Part 7 cubes", &[&t.cubes, &t.depth, &t.mirror]);
-            pass.set_bind_group(0, &self.data, &[]);
-            pass.set_pipeline(&self.cubes);
-            pass.draw(0..3, 0..1);
-        }
-        {
-            let mut pass = Self::pass(encoder, "Part 7 dust", &[&t.dust]);
+            let mut pass = Self::pass(encoder, "Part 7 dust", &[&t.dust_front, &t.dust_full]);
             pass.set_bind_group(0, &self.data, &[]);
             pass.set_bind_group(1, &t.scene_inputs, &[]);
             pass.set_pipeline(&self.dust);
             pass.draw(0..6, 0..self.motes);
         }
         {
-            let mut pass = Self::pass(encoder, "Part 7 air", &[&t.air]);
+            let mut pass = Self::pass(encoder, "Part 7 air", &[&t.air_front, &t.air_full]);
             pass.set_bind_group(0, &self.data, &[]);
             pass.set_bind_group(1, &t.scene_inputs, &[]);
             pass.set_pipeline(&self.air);
@@ -745,11 +797,6 @@ mod tests {
         let (w, h) = ATLAS_SIZE;
         for constant in [
             format!("const CAMERA_DISTANCE={CAMERA_DISTANCE:.1};"),
-            format!(
-                "const TRANSMISSION_EXTENT=vec2f({:.1},{:.1});",
-                super::TRANSMISSION_EXTENT.0,
-                super::TRANSMISSION_EXTENT.1
-            ),
             format!("const HALF={};", FACE / 2.0),
             format!("const SLOT_ROWS={SLOT_ROWS}.0;"),
             format!("const SLOTS={SLOTS}u;"),
@@ -768,10 +815,11 @@ mod tests {
         }
         assert!((ATLAS_COLUMNS * (ATLAS_SIZE.1 as usize / CELL)) >= 26);
         assert_eq!(ATLAS_COLUMNS * CELL, ATLAS_SIZE.0 as usize);
-        // The map's texels are square on the plane.
+        let (gx, gy) = super::PHOTON_GRID;
+        assert!(light.contains(&format!("const PHOTON_GRID=vec2u({gx}u,{gy}u);")));
+        // The map is square, as its spread is the same both ways.
         let (w, h) = super::TRANSMISSION_SIZE;
-        let (ex, ey) = super::TRANSMISSION_EXTENT;
-        assert!((ex / w as f64 - ey / h as f64).abs() < 1e-9);
+        assert_eq!(w, h);
     }
 
     /// The air's density tiles: its opposite faces meet without a seam, and

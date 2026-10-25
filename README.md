@@ -11,7 +11,7 @@ experiments with the following double scroller, part 6's interference
 rings as a pool of liquid chrome under neon, part 5's deep Mandelbrot
 zoom and molten Mandelbrot mountain, part 3's shade bobs and morphing
 dots as light painting, part 4's plasma as the light on a carved stone
-slab, and part 7's greetings as a lighthouse in the dust. The idea is to keep the
+slab, and part 7's greetings as crystal letters in a lighthouse's beam. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
 letters that refract the stars behind them, a mirrored plate that reflects the
 warp, motion blur, a starfield that ramps into warp, a heated metal logo with
@@ -375,18 +375,21 @@ The modern look is a lighthouse in dusty air:
 - The original's stars become dust in the air at all depths, drifting on
   that wind, lit only where the beam passes: near motes are soft discs out
   of focus, far ones fine points.
-- The 16 views read as a square column turning, so each letter is a cube
-  of polished black with rounded edges, the letter inset on its four faces
-  as a panel of light in the original's white-to-teal, turned row by row by
-  the original's sine. The letterforms are derived from your data when the
-  preview loads; none are stored here.
+- The 16 views read as a square column turning, so each letter is a
+  block of clear crystal, like a lighthouse's lens, the letter cut into its
+  four faces as in an engraved crystal award, turned by the original's
+  sine. The cut glows softly so the words always read; when the beam
+  passes through, the glass refracts it with dispersion and throws the
+  letters' shadows and rainbow caustics into the dust. The letters are new
+  outlines drawn in the original's spirit; none of the original's are
+  stored here.
 - At the end the beam swings into the lens, from a little before the
   original's fade to white, and the monster develops out of the white at
   the original's levels.
 
-The air, the dust's depth and drift, the beam, the cubes and their
-material, and the swing into the lens are authored; the positions,
-motion, letters and timing are the port's. Faithful HD (**M**) shows the original's pixels at display
+The air, the dust's depth and drift, the beam, the crystal, the
+letters' outlines and the swing into the lens are authored; the
+positions, motion, words and timing are the port's. Faithful HD (**M**) shows the original's pixels at display
 resolution. The [renderer notes](rust/README.md#part-7-greetings) say what
 is read, what is interpreted and what is authored.
 

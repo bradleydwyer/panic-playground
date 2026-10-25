@@ -1710,9 +1710,8 @@ copied sky included), the stars drawn as round dots, the letters' colours
 interpolated, the palette turning between frames; the monster is
 upscaled smoothly. With **Tab** or **C** the original is shown.
 
-The modern view is a lighthouse in dusty air. All of it is authored, on
-the port's timing, positions and motion, with the letters derived from the
-user's data:
+The modern view is crystal letters in a lighthouse's beam, in dusty air.
+All of it is authored, on the port's timing, positions and motion:
 
 - The sweep is one hard cream spotlight, turning once every 64 frames
   (about 1.1 turns a second): its direction on the screen is the peak of
@@ -1721,7 +1720,7 @@ user's data:
   behind the strips, where it projects on the sweep's centre: a bright core
   with a halo, the beam leaving an aperture of finite size.
 - The air is a participating medium, marched in 3D at half resolution
-  within the cone (36 samples a pixel, up to the cubes), lit only by the
+  within the cone (36 samples a pixel), lit only by the
   beam: its light falls off with the square of the distance, its profile
   is brighter on the axis and soft at the edge (a penumbra that grows with
   distance, as from an aperture), and it scatters toward the camera by a
@@ -1731,12 +1730,6 @@ user's data:
   of a few rows a second; nothing changes quickly. Each sample is at its own
   instant over a shutter of one 70 Hz frame, so the beam sweeps rather than
   steps.
-- The cubes shadow the air and the dust through a map of what the strips
-  let through, seen from the lamp: for each point of the strips' plane the
-  lamp's ray through the cubes' slab, with how far it gets, softened over
-  the aperture's penumbra. It holds colour, so later letters can tint or
-  shape the light. The shafts and the shadow wedges between the cubes are
-  3D.
 - The dust is motes in the air, seeded from the original's stars: each
   star's screen position, six motes at depths along its ray from in front
   of the strips to behind them, filling the air evenly, so at rest they
@@ -1746,26 +1739,45 @@ user's data:
   and all but invisible outside it (a trace of the original's band is
   left); the camera is focused on the strips, so near motes are soft discs
   and far ones fine points, of varied sizes.
-- Each letter is a polished black cube with rounded edges, the letter
-  inset on its four faces (at 80% of the face, a border of the black round
-  it) as a panel of frosted light in the original's letter colours (white
-  crowns, teal edges), always readable. The lamp lights the cubes all round
-  and the beam more, so their edges and the faces turned toward it catch
-  highlights and glints as they turn; the beam behind a cube brightens its
-  panels; the polish mirrors the dust, the lit air and the lamp (toward the
-  camera, the picture behind the strips mirrored about their plane, as if
-  it surrounded them). Each row of a cube is turned by the original's
-  sine, so the letters twist as the original's do, and the panels are
-  taken over half a frame as the cubes turn and rise. The gaps between the
-  cubes stay open; faithful HD keeps the smear.
-- The letterforms are derived when the preview loads from the TRUG maps:
-  each letter's front view (columns 5 to 22 of view 0, rows 0 to 14),
-  every pixel the letter colours (1 to 6: the darkest, 5 and 6, shade the
-  strokes, and leaving them out cut notches and holes into them), with
-  enclosed specks of colour 0 of up to two pixels filled (G's broken slit;
-  the counters of A and O are 8 and 14 pixels), upsampled, softened, cut
-  at half and measured as a signed distance, with a bevel tilted by the
-  original's shading. No glyph data is stored in the repository.
+- Each letter is a block of clear cut crystal, like a lighthouse's lens,
+  the letter cut into its four faces as a V-groove (walls sloping two rows
+  deep a row in, down to 2.4), frosted, as in an engraved crystal award:
+  the original's reading of its 16 views, the same letter on each face of
+  a turning column. The blocks are rigid, each turned at its centre by the
+  original's sine there (5.625 degrees a step of its view index,
+  continuous). The original turns each row by its own step, up to 53
+  degrees across one letter; as a solid that would shear the letter and
+  warp its faces, so rigid blocks keep the letters whole and the faces
+  flat, which reads and refracts cleanly, and the stack still ripples as
+  the original's does. The cut glows softly by the lamp's light carried in
+  the glass all the time, its walls brighter than its floor, so the words
+  read in the dark; the clear glass is dark, reflecting the lamp in glints
+  and the room in its faces, and refracting what lies behind with
+  dispersion at three wavelengths (a dense flint's, a little exaggerated),
+  out through the faces or reflected inside where it must be, so the lamp
+  seen through a block splits into colours. Its edges and its cut flare
+  when the beam passes through. The original's white-to-teal tints the
+  glass and the cut faintly. The gaps between the blocks stay open;
+  faithful HD keeps the smear.
+- The beam is traced through the blocks: a photon for each of 560 by 560
+  directions round its axis, at each of three wavelengths, refracted at
+  each face and at the cut's facets (from the letter's distance field),
+  internally reflected where it must be, the frosted cut scattering most of
+  what meets it. Each photon that meets a block takes its light away where
+  its straight ray would have gone and puts it where it lands, in a map of
+  directions from the lamp, as a spotlight's shadow map is, in colour. The
+  air and the dust read their light from the beam's profile plus that map,
+  softened over the aperture's penumbra: the blocks' shadows and the
+  letters' shadows in the beam, and coloured caustics, in it and sprayed
+  out of it (a second, sparser march outside the cone gathers those).
+  Where the photons gather, the light is shown 8 times brighter (authored:
+  the true spray is too thin to see).
+- The letterforms are authored outlines, drawn for this remake in the
+  original's spirit (greetings_letters.txt and tools/letters/; they are not
+  the original's glyphs): each letter's signed distance is computed from
+  its contours when the preview loads, its box filling 80% of a face. The
+  original's letters, derived from the TRUG maps, remain in
+  greetings_type.rs for comparison; faithful HD reads TRUG as before.
 - The end: the beam swings to the lens from 0.45 s before the original's
   feedback fade (authored motion), its forward scattering and the lamp's
   flare flooding the picture, which the fade then blends toward white at

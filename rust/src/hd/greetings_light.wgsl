@@ -1,6 +1,6 @@
-// The modern part 7: a lighthouse in dusty air. Authored throughout, on the
-// port's timing, positions and motion (greetings_common.wgsl), its letters
-// derived from the user's data (greetings_type.rs).
+// The modern part 7: a lighthouse in dusty air, its letters cut crystal.
+// Authored throughout, on the port's timing, positions and motion
+// (greetings_common.wgsl), its letters' outlines from greetings_type.rs.
 //
 // The original turns 64 colours over a field of stars that never move, so
 // a broad band of light sweeps round (160, 85) once every 64 frames; five
@@ -18,25 +18,34 @@
 //   off with the square of the distance, softer toward its edge (a
 //   penumbra that grows with distance, as from an aperture), and scattered
 //   toward the camera by a Henyey-Greenstein phase function, so the beam
-//   brightens as it turns toward the lens. The cubes shadow it through a
-//   map of what the strips let through, seen from the lamp (a colour
-//   transmission, so letters could tint or shape the light), so the shafts
-//   and shadow wedges are real 3D. The beam's motion is integrated over
-//   the shutter along each march.
+//   brightens as it turns toward the lens. The beam's motion is integrated
+//   over the shutter along each march.
 // - The dust is motes in the air, seeded from the original's stars (each
 //   star's screen position, a few motes at depths along it, around and in
-//   front of the strips) and drifting slowly on the same authored wind
-//   (the original's stars never move): lit by the beam, forward scattering
+//   front of the strips) and drifting slowly on the same authored wind (the
+//   original's stars never move): lit by the beam, forward scattering
 //   strongly, and all but invisible outside it; the near ones soft discs out
 //   of focus, the far ones fine points.
-// - Each letter is a cube of polished black with rounded edges, the letter
-//   inset on each of its four faces as a panel of frosted light with a
-//   border of the black round it, coloured as the original shades its
-//   letters (white crowns, teal edges) and always readable. The lamp lights
-//   the cubes all round and the beam more; the polish mirrors the dust, the
-//   lit air and the lamp. The cubes turn as the original's sine turns each
-//   row of a letter (5.625 degrees a step of its view index, continuous),
-//   and the gaps between them stay open (faithful HD keeps the smear).
+// - Each letter is a block of clear cut crystal, like a lighthouse's lens,
+//   the letter cut deep into its four faces as a V-groove, frosted, like an
+//   engraved crystal award (the original's reading of the 16 views: the same
+//   letter on each face of a turning column). The blocks are rigid, each
+//   turned at its centre by the original's sine there (5.625 degrees a step
+//   of the view index, continuous): the original turns each row by its own
+//   step, up to 53 degrees across one letter, which as a solid would shear
+//   the letter and warp its faces; rigid blocks keep the letters whole and
+//   the faces flat, so they read and refract cleanly, and the stack still
+//   ripples as the original's does. The cut glows softly by the lamp all the
+//   time, so the words read in the dark; the clear glass is dark, reflecting
+//   the lamp in glints, and refracting what lies behind with dispersion
+//   (three wavelengths), the lamp seen through it split into colours.
+// - When the beam passes through a block, its light is traced through the
+//   crystal, each ray at one of three wavelengths, refracted by the faces
+//   and the cut's facets (internally reflected where it must be), and where
+//   it lands is gathered in a map of what the strips let through as the
+//   lamp sees it: the block's shadow, and bright, coloured caustics shaped
+//   by the cut, which light the dust and the air beyond. The cut and the
+//   block's edges flare.
 // - The end: the beam swings to the lens (authored motion, from a little
 //   before the original's feedback fade), its forward scattering flooding
 //   the picture, which the fade then blends toward white at the original's
@@ -67,22 +76,37 @@ const CORE_BIAS=.45;
 // carries the dust).
 const SCATTER=.07;
 const PHASE_G=.62;
-const THINNEST=.3;
-const THICKEST=2.0;
-const THICKENS=vec2f(.3,.75);
+const THINNEST=.4;
+const THICKEST=1.8;
+const THICKENS=vec2f(.15,.85);
 const DENSITY_SCALE=170.0;
 const WIND=vec3f(3.2,1.1,-2.4);
 // The march: samples within the cone, the near and far depths it covers
 // (scene z), and the shutter (70 Hz frames) its samples spread over.
 const MARCH_SAMPLES=36u;
+// The samples for the light the blocks throw out of the beam.
+const SPRAY_SAMPLES=20u;
 const AIR_NEAR=-420.0;
 const AIR_FAR=240.0;
 const SHUTTER=1.0;
-// The strips' transmission seen from the lamp: the half extent of the map
-// on the strips' plane (rows; greetings_render::TRANSMISSION_EXTENT) and
-// the cubes' depth either side of it.
-const TRANSMISSION_EXTENT=vec2f(240.0,180.0);
+// What the blocks let through, seen from the lamp: a map of directions
+// round the beam's axis, as a spotlight's shadow map is, out to this half
+// angle's tangent (the beam, its penumbra and its turn over the shutter);
+// the blocks' depth either side of the strips' plane; the photons' grid
+// (greetings_render::PHOTON_GRID); how far along the beam each photon's
+// landing is taken (rows); and the brightest a caustic is let be.
+const MAP_SPREAD=.5;
 const SLAB=11.5;
+const PHOTON_GRID=vec2u(560u,560u);
+// Each photon's splat: a tent SPLAT cells of the grid either way, weighted
+// so a grid of them sums to one.
+const SPLAT=3.0;
+const LANDING=110.0;
+const CAUSTIC_MAX=8.0;
+// Where the blocks gather light (the photons landing more thickly than
+// they left), it is shown this much brighter (authored: the true spray is
+// spread so thin over the room's dust as to vanish).
+const CAUSTIC_GAIN=8.0;
 // The lamp seen directly: its core and halo (rows) and their gains; the
 // flare of its aperture when the beam turns toward the camera.
 const CORE=1.6;
@@ -104,54 +128,53 @@ const MOTE_BAND=.008;
 // The air's swirl round the wind (rows), and its period (seconds).
 const SWIRL=4.0;
 const SWIRL_PERIOD=9.0;
-// The cubes: half a side (greetings_type::FACE / 2), the edges' rounding,
+// The blocks: half a side (greetings_type::FACE / 2), the edges' rounding,
 // the slots (greetings::SLOT_ROWS, SLOTS), and the turn per step of the
 // sine's view index (90 degrees over 16, read as a turn of the column).
 const HALF=7.5;
-const ROUNDING=1.15;
+const ROUNDING=.7;
 const SLOT_ROWS=18.0;
 const SLOTS=16u;
 const TWIST_STEP=.09817477;
 const MARCH_STEPS=64u;
-const LIPSCHITZ=.8;
+const LIPSCHITZ=.7;
 // The letters' atlas (greetings_type::CELL, ATLAS_COLUMNS, ATLAS_SIZE).
 const CELL=128.0;
 const ATLAS_COLUMNS=8u;
 const ATLAS_SIZE=vec2f(1024.0,512.0);
-// The panels: inset in each face (the letter's square is this share of
-// the face's side, leaving a border of polished black), their glow at rest
-// and with the beam behind, the bevel's bump.
-const PANEL_SCALE=.8;
-const PANEL_REST=.55;
-const PANEL_BEAM=1.3;
-const BUMP=.35;
-// The black: its albedo; the polish: reflectance at normal incidence,
-// roughness (GGX alpha) of the black and of the panels, and the glints'
-// strength; a broader sheen, so the faces catch the light as they turn
-// toward it. The lamp lights the cubes all round with BULB_LIGHT and in the
-// beam with BEAM_LIGHT more.
-const BLACK=.02;
-const SHEEN=.04;
-const BLACK_ROUGH=.07;
-const PANEL_ROUGH=.16;
-const GLINT=30.0;
-const SHEEN_ROUGH=.35;
-const SHEEN_GLINT=6.0;
-const BULB_LIGHT=.6;
-const BEAM_LIGHT=2.0;
-// What the polish mirrors: the picture behind the strips (the dust, the
-// lit air and the lamp), and toward the camera the same picture mirrored
-// about the strips' plane, as if it surrounded them (authored), dimmer;
-// the mirror's strength, the depth it is taken at, and the rim where the
-// beam passes behind.
-const MIRROR=2.5;
+// The cut: the letter's square as a share of the face's side, the
+// V-groove's slope (depth per row in from the outline) and deepest (rows).
+const LETTER_SCALE=.8;
+const CUT_SLOPE=2.0;
+const CUT_DEPTH=2.4;
+// The crystal: its refractive index at the three wavelengths (red, green,
+// blue; a dense flint's dispersion, a little exaggerated), its absorption
+// per row (a faint teal, from the original's letters), the reflectance at
+// normal incidence, the polish (GGX alpha), and how far behind a block the
+// refracted view is taken (rows).
+const IOR=vec3f(1.6,1.63,1.68);
+const ABSORPTION=vec3f(.012,.0035,.0045);
+const F0=.05;
+const POLISH=.025;
+const BEHIND=160.0;
+// The cut's frosting (how much of it scatters rather than refracts), its
+// glow by the lamp at rest and with the beam through the block, the lamp's
+// glints, the edges' and the cut's flare in the beam.
+const FROST=.55;
+// How much of the beam the frosted cut scatters away (so the letters cast
+// their shapes into the beam).
+const FROST_SCATTER=.85;
+const CUT_REST=.42;
+const CUT_BEAM=2.2;
+const GLINT=24.0;
+const EDGE_REST=.06;
+const EDGE_FLARE=1.6;
+const CUT_FLARE=1.2;
+// What the polish mirrors: the picture behind the strips, and toward the
+// camera the same picture mirrored about the strips' plane, as if it
+// surrounded them (authored), dimmer; at this depth.
 const FRONT_MIRROR=.5;
 const MIRROR_DEPTH=220.0;
-const RIM=.6;
-// The cubes' motion over their shutter (70 Hz frames; shorter than the
-// beam's, so the letters stay sharp where they turn fastest): taps along it.
-const CUBE_SHUTTER=.5;
-const CUBE_TAPS=3u;
 // The swing to the lens: it starts this many seconds before the original's
 // fade to white (authored motion; the fade keeps its timing and levels),
 // and the brightest the monster shows through the tonemap once developed
@@ -160,8 +183,8 @@ const SWING_LEAD=.45;
 const MONSTER_WHITE=.9;
 
 // ---- Bindings -----------------------------------------------------------------------
-// The letters' faces (greetings_type.rs): signed distance (rows), relief,
-// its slopes across and up.
+// The letters' faces (greetings_type.rs): signed distance (rows of the
+// face), unused, its gradient across and up.
 @group(0) @binding(8) var glyphs:texture_2d<f32>;
 // The dust motes (greetings::motes): across, up, depth (scene); the star's
 // colour index plus its size (0 to 1).
@@ -170,16 +193,23 @@ const MONSTER_WHITE=.9;
 // a sampler that repeats it.
 @group(0) @binding(10) var density_noise:texture_3d<f32>;
 @group(0) @binding(11) var repeat:sampler;
-// The passes' images: the dust; the cubes' depth along each ray (camera
-// rows; 1e9 where none); the strips' transmission seen from the lamp; the
-// cubes (colour and coverage); the lit air (half size; its depth in a);
-// where the cubes' polish mirrors the picture (its uv, and the weight).
-@group(1) @binding(1) var dust_image:texture_2d<f32>;
-@group(1) @binding(2) var depth_image:texture_2d<f32>;
+// The passes' images: the dust in front of the blocks and all of it; the
+// blocks' geometry (coverage, strip * 16 + slot, the ray's distance to
+// them, and to them where they are solid, else 1e9); the strips'
+// transmission seen from the lamp (1 plus what the photons add); the lit
+// air in front of the blocks (its depth in a) and all of it (half size).
+@group(1) @binding(1) var dust_front:texture_2d<f32>;
+@group(1) @binding(2) var geometry:texture_2d<f32>;
 @group(1) @binding(3) var transmission:texture_2d<f32>;
-@group(1) @binding(4) var cubes_image:texture_2d<f32>;
-@group(1) @binding(5) var air_image:texture_2d<f32>;
-@group(1) @binding(6) var mirror_image:texture_2d<f32>;
+@group(1) @binding(4) var dust_full:texture_2d<f32>;
+@group(1) @binding(5) var air_front:texture_2d<f32>;
+@group(1) @binding(6) var air_full:texture_2d<f32>;
+// The photons: per photon its landing in the map (uv), the light it
+// brings there, and the light it carried (0 where it met no block), in the
+// beam's units at its axis. Written by trace_photons, read by
+// photon_vertex.
+@group(1) @binding(7) var<storage,read_write> photons_out:array<vec4f>;
+@group(1) @binding(8) var<storage,read> photons_in:array<vec4f>;
 
 // ---- The beam -----------------------------------------------------------------------
 // The stars' colour, (v, 8v/9, 7v/9) as the scanout shows it, in linear
@@ -216,9 +246,9 @@ fn beam_axis(back:f32)->vec3f {
     // Source y runs down, the scene's up.
     return vec3f(cos(angle)*cos(tilt),-sin(angle)*cos(tilt),-sin(tilt));
 }
-// The beam's light at x (0 outside the cone): the cone's profile across,
-// brighter on its axis and soft at its edge, and the falloff along it.
-fn beam_at(x:vec3f,axis:vec3f)->f32 {
+// The beam's profile at x (0 outside the cone): brighter on its axis and
+// soft at its edge, 1 on the axis; and its falloff with the distance.
+fn beam_profile(x:vec3f,axis:vec3f)->f32 {
     let v=x-lamp();
     let along=dot(v,axis);
     if along<=0.0 {return 0.0;}
@@ -226,39 +256,73 @@ fn beam_at(x:vec3f,axis:vec3f)->f32 {
     let radius=APERTURE+along*tan(BEAM_HALF);
     let soft=PENUMBRA+along*PENUMBRA_GROWTH;
     let edge=1.0-smoothstep(radius-soft,radius+soft,across);
-    let core=1.0-CORE_BIAS+CORE_BIAS*exp(-2.0*(across/radius)*(across/radius));
-    return edge*core*BEAM_POWER*FALLOFF*FALLOFF/(FALLOFF*FALLOFF+along*along);
+    return edge*(1.0-CORE_BIAS+CORE_BIAS*exp(-2.0*(across/radius)*(across/radius)));
 }
+fn beam_falloff(x:vec3f)->f32 {
+    let r2=dot(x-lamp(),x-lamp());
+    return BEAM_POWER*FALLOFF*FALLOFF/(FALLOFF*FALLOFF+r2);
+}
+// The beam's light at x, the blocks ignored.
+fn beam_at(x:vec3f,axis:vec3f)->f32 {return beam_profile(x,axis)*beam_falloff(x);}
 // Henyey-Greenstein, for light travelling along `light` scattered toward
 // `view` (both unit vectors), normalised to 1 for an even scatter.
 fn phase(light:vec3f,view:vec3f,g:f32)->f32 {
     let c=dot(light,view);
     return (1.0-g*g)/pow(1.0+g*g-2.0*g*c,1.5);
 }
-// What the strips let through toward x, from the lamp: x's direction from
-// the lamp picks the map's texel (where that ray crosses the strips'
-// plane); the light is cut there only if x lies beyond the first thing the
-// ray meets. Softened over the aperture's penumbra, four taps turned by
-// `blur`.
-fn transmitted(x:vec3f,blur:f32)->vec3f {
+// The map's frame: the beam's axis at the moment and two directions
+// across it.
+struct MapFrame { axis:vec3f, across:vec3f, up:vec3f }
+fn map_frame()->MapFrame {
+    let axis=beam_axis(0.0);
+    var helper=vec3f(0,0,1);
+    if abs(axis.z)>.9 {helper=vec3f(0,1,0);}
+    let across=normalize(cross(helper,axis));
+    return MapFrame(axis,across,cross(axis,across));
+}
+// The map's uv of the direction from the lamp to x (outside [0, 1] where x
+// is off the map or behind the lamp).
+fn map_uv(x:vec3f)->vec2f {
+    let f=map_frame();
+    let w=x-lamp();
+    let along=dot(w,f.axis);
+    if along<=1e-3 {return vec2f(-1);}
+    return vec2f(dot(w,f.across),-dot(w,f.up))/(along*2.0*MAP_SPREAD)+.5;
+}
+// The direction from the lamp for a map uv.
+fn map_direction(uv:vec2f)->vec3f {
+    let f=map_frame();
+    let t=(uv-.5)*2.0*MAP_SPREAD;
+    return normalize(f.axis+f.across*t.x-f.up*t.y);
+}
+// The light the blocks move, toward x, by wavelength, in the beam's units
+// at its axis (0 where they move none; less in their shadows, more in their
+// caustics); only beyond the blocks. Softened over the aperture's penumbra
+// (the aperture's radius over the blocks' distance, less over x's), four
+// taps turned by `blur`.
+fn moved(x:vec3f,blur:f32)->vec3f {
     let l=lamp();
-    let v=x-l;
-    if v.z>=-1e-3 {return vec3f(1);}
-    let at=l.xy+v.xy*(l.z/(-v.z));
-    let uv=vec2f(at.x,-at.y)/(2.0*TRANSMISSION_EXTENT)+.5;
-    if any(uv<vec2f(0)) || any(uv>vec2f(1)) {return vec3f(1);}
-    let s=length(v);
-    // The aperture's penumbra: an aperture of radius APERTURE, the
-    // occluders near the plane, x past them.
-    let spread=APERTURE*max(-x.z,0.0)/max(l.z-x.z,1.0)/(2.0*TRANSMISSION_EXTENT);
+    if x.z>-SLAB || l.z-x.z<1.0 {return vec3f(0);}
+    let uv=map_uv(x);
+    if any(uv<vec2f(0)) || any(uv>vec2f(1)) {return vec3f(0);}
+    let w=x-l;
+    let blocks=length(w)*l.z/(l.z-x.z);
+    let spread=APERTURE*max(1.0/max(blocks,1.0)-1.0/length(w),0.0)/(2.0*MAP_SPREAD);
     let o=vec2f(cos(blur),sin(blur))*spread;
     let taps=array<vec2f,4>(o,-o,vec2f(-o.y,o.x),vec2f(o.y,-o.x));
     var t=vec3f(0);
     for(var i=0;i<4;i++) {
-        let m=textureSampleLevel(transmission,linear,uv+taps[i],0.0);
-        t+=select(vec3f(1),m.rgb,s>m.a);
+        t+=textureSampleLevel(transmission,linear,uv+taps[i],0.0).rgb;
     }
     return t*.25;
+}
+// The beam's light at x through the blocks, by wavelength: its profile
+// (along `axis`, the shutter's instant) and what the blocks move, never
+// below nothing nor above CAUSTIC_MAX, times its falloff.
+fn light_at(x:vec3f,axis:vec3f,blur:f32)->vec3f {
+    let m=moved(x,blur);
+    let lit=vec3f(beam_profile(x,axis))+min(m,vec3f(0))+max(m,vec3f(0))*CAUSTIC_GAIN;
+    return clamp(lit,vec3f(0),vec3f(CAUSTIC_MAX))*beam_falloff(x);
 }
 
 // ---- The air ----------------------------------------------------------------------------
@@ -277,8 +341,11 @@ fn pattern(p:vec2f)->f32 {return fract(52.9829189*fract(dot(p,vec2f(.06711056,.0
 // edge's outer bound), between t0 and t1, or (1, 0). The cone's apex is
 // behind the lamp so its radius there is the aperture's.
 fn cone_span(d:vec3f,axis:vec3f,t0:f32,t1:f32)->vec2f {
-    let slope=tan(BEAM_HALF)+PENUMBRA_GROWTH*1.2;
-    let reach=APERTURE+PENUMBRA*1.2;
+    return cone_span_at(d,axis,t0,t1,tan(BEAM_HALF)+PENUMBRA_GROWTH*1.2,APERTURE+PENUMBRA*1.2);
+}
+// The same for a cone of this slope (its radius per row along) and radius
+// at the lamp.
+fn cone_span_at(d:vec3f,axis:vec3f,t0:f32,t1:f32,slope:f32,reach:f32)->vec2f {
     let apex=lamp()-axis*(reach/slope);
     let c2=1.0/(1.0+slope*slope);
     let co=CAMERA-apex;
@@ -311,56 +378,290 @@ fn cone_span(d:vec3f,axis:vec3f,t0:f32,t1:f32)->vec2f {
     return vec2f(t0,min(r0,t1));
 }
 
-// ---- The transmission map ------------------------------------------------------------------
-// What the strips let through, seen from the lamp: for each point of the
-// strips' plane, the lamp's ray through it across the cubes' slab, 0 where a
-// cube stands in its way, softened at their edges, and in alpha how far from
-// the lamp the ray first meets a cube (far where it meets none). White
-// elsewhere.
-@fragment fn strips_transmission(v:Vertex)->@location(0) vec4f {
-    greetings_begin();
-    let at=(vec2f(v.uv.x,1.0-v.uv.y)-.5)*2.0*TRANSMISSION_EXTENT;
-    let l=lamp();
-    let d=normalize(vec3f(at,0.0)-l);
-    var lit=1.0;
-    var first=1e4;
-    if stage()>=STAGE_WORDS-.5 && stage()<STAGE_MONSTER-.5 && d.z<0.0 {
-        let enter=(l.z-SLAB)/(-d.z);
-        let leave=(l.z+SLAB)/(-d.z);
-        for(var s=0u;s<STRIPS;s++) {
-            let span=column_span(s,l,d);
-            let a=max(span.x,enter);
-            let b=min(span.y,leave);
-            if a>=b {continue;}
-            var t=a;
-            for(var i=0u;i<24u;i++) {
-                let h=stack_distance(s,l+d*t);
-                let here=clamp(h/.35,0.0,1.0);
-                if here<1.0 {first=min(first,t);}
-                lit=min(lit,here);
-                if lit<=0.0 {break;}
-                t+=max(h,.15);
-                if t>b {break;}
-            }
+// ---- The blocks ------------------------------------------------------------------------
+fn strip_x(s:u32)->f32 {return (f32(8u+64u*s)+14.0-160.0)*COLUMN;}
+// Slot k's letter in strip s (frame shown), or 255.
+fn letter_in(s:u32,k:u32)->u32 {
+    let w=letters[frame_now()*6u+1u+s];
+    return (w[k/4u]>>(8u*(k%4u)))&255u;
+}
+fn first_top()->f32 {return gc.twist_late.y;}
+fn position_of(s:u32)->f32 {return select(gc.twist[s],gc.twist_late.x,s==4u);}
+// Slot k's block in strip s: its centre's source row, its centre, and its
+// turn (the original's sine at its centre row).
+fn centre_row(k:f32)->f32 {return first_top()+SLOT_ROWS*k+HALF;}
+fn block_centre(s:u32,k:f32)->vec3f {return vec3f(strip_x(s),100.0-centre_row(k),0.0);}
+fn block_turn(s:u32,k:f32)->f32 {
+    return TWIST_STEP*(40.0*sin(PI*(position_of(s)+centre_row(k))/200.0)+60.0);
+}
+// A point or direction in slot k's block's frame (across, up, back), and
+// back again.
+fn to_block(s:u32,k:f32,p:vec3f)->vec3f {
+    let q=p-block_centre(s,k);
+    let a=block_turn(s,k);
+    return vec3f(cos(a)*q.x+sin(a)*q.z,q.y,-sin(a)*q.x+cos(a)*q.z);
+}
+fn turn_to_block(s:u32,k:f32,v:vec3f)->vec3f {
+    let a=block_turn(s,k);
+    return vec3f(cos(a)*v.x+sin(a)*v.z,v.y,-sin(a)*v.x+cos(a)*v.z);
+}
+fn turn_from_block(s:u32,k:f32,v:vec3f)->vec3f {
+    let a=block_turn(s,k);
+    return vec3f(cos(a)*v.x-sin(a)*v.z,v.y,sin(a)*v.x+cos(a)*v.z);
+}
+fn box_distance(l:vec3f)->f32 {
+    let q=abs(l)-vec3f(HALF-ROUNDING);
+    return length(max(q,vec3f(0)))+min(max(q.x,max(q.y,q.z)),0.0)-ROUNDING;
+}
+// The face a block-frame point lies on (its outward normal, a side face)
+// and the point's place on it: across as seen from outside, and up.
+struct Face { normal:vec3f, across:vec3f, at:vec2f }
+fn face_of(l:vec3f)->Face {
+    var n=vec3f(0,0,sign(l.z));
+    if abs(l.x)>=abs(l.z) {n=vec3f(sign(l.x),0,0);}
+    let r=vec3f(-n.z,0,n.x);
+    return Face(n,r,vec2f(dot(l,r),l.y));
+}
+// The letter at a place on a face: its signed distance (rows, negative
+// inside) and the distance's gradient.
+fn letter_at(g:u32,at:vec2f)->vec3f {
+    let t=vec2f(at.x,-at.y)/(2.0*HALF*LETTER_SCALE)+.5;
+    if g==255u || any(t<vec2f(.5/CELL)) || any(t>vec2f(1.0-.5/CELL)) {return vec3f(4,0,0);}
+    let cell=vec2f(f32(g%ATLAS_COLUMNS),f32(g/ATLAS_COLUMNS))*CELL;
+    let face=textureSampleLevel(glyphs,linear,(cell+t*CELL)/ATLAS_SIZE,0.0);
+    return vec3f(face.r*LETTER_SCALE,face.ba);
+}
+// The cut's depth at a place on a face, from the letter's distance.
+fn cut_depth(d:f32)->f32 {return clamp(-d*CUT_SLOPE,0.0,CUT_DEPTH);}
+// Slot k's block, cut: the rounded block, less the V-groove on the side
+// face the point is nearest.
+fn block_distance(s:u32,k:f32,p:vec3f)->f32 {
+    let l=to_block(s,k,p);
+    let b=box_distance(l);
+    if b>2.0 {return b;}
+    let f=face_of(l);
+    let depth=cut_depth(letter_at(letter_in(s,u32(k)),f.at).x);
+    // The groove's walls are steeper than one: a safer step there.
+    let cut=(dot(l,f.normal)-(HALF-depth))/sqrt(1.0+CUT_SLOPE*CUT_SLOPE);
+    return max(b,cut);
+}
+struct Near { distance:f32, slot:f32 }
+// The nearest block in strip s (by its uncut box), and the distance to it
+// cut.
+fn stack_near(s:u32,p:vec3f)->Near {
+    let k0=floor((100.0-p.y-first_top())/SLOT_ROWS);
+    var best=Near(1e5,-1.0);
+    for(var dk=-1.0;dk<=1.0;dk+=1.0) {
+        let k=k0+dk;
+        if k<0.0 || k>=f32(SLOTS) || letter_in(s,u32(k))==255u {continue;}
+        let d=box_distance(to_block(s,k,p));
+        if d<best.distance {best=Near(d,k);}
+    }
+    if best.slot>=0.0 {best.distance=block_distance(s,best.slot,p);}
+    return best;
+}
+fn stack_distance(s:u32,p:vec3f)->f32 {return stack_near(s,p).distance;}
+fn block_normal(s:u32,k:f32,p:vec3f)->vec3f {
+    let e=vec2f(.02,-.02);
+    return normalize(e.xyy*block_distance(s,k,p+e.xyy)+e.yyx*block_distance(s,k,p+e.yyx)
+        +e.yxy*block_distance(s,k,p+e.yxy)+e.xxx*block_distance(s,k,p+e.xxx));
+}
+// The ray's span inside strip s's column (radius: a block's half
+// diagonal), or (1, 0).
+fn column_span(s:u32,o:vec3f,d:vec3f)->vec2f {
+    let r=HALF*1.4143+.2;
+    let ox=o.x-strip_x(s);
+    let a=d.x*d.x+d.z*d.z;
+    let b=2.0*(ox*d.x+o.z*d.z);
+    let c=ox*ox+o.z*o.z-r*r;
+    let disc=b*b-4.0*a*c;
+    if disc<=0.0 || a<1e-9 {return vec2f(1,0);}
+    let h=sqrt(disc);
+    return vec2f((-b-h)/(2.0*a),(-b+h)/(2.0*a));
+}
+// The first block the ray from o along d meets between t0 and t1: (t,
+// strip, slot), or t = -1.
+fn first_block(o:vec3f,d:vec3f,t0:f32,t1:f32)->vec3f {
+    var best=vec3f(-1,0,0);
+    for(var s=0u;s<STRIPS;s++) {
+        let span=column_span(s,o,d);
+        let a=max(span.x,t0);
+        var b=min(span.y,t1);
+        if best.x>=0.0 {b=min(b,best.x);}
+        if a>=b {continue;}
+        var t=a;
+        for(var i=0u;i<40u;i++) {
+            let near=stack_near(s,o+d*t);
+            if near.distance<.01 {best=vec3f(t,f32(s),near.slot);break;}
+            t+=max(near.distance,.02);
+            if t>b {break;}
         }
     }
-    return vec4f(vec3f(lit),first);
+    return best;
+}
+// The normal (block frame, outward) of slot k's block's surface near the
+// block-frame point l: a side face's, tilted by the cut's facet where the
+// letter is cut (the groove's walls slope CUT_SLOPE rows deep a row in,
+// down to CUT_DEPTH); the top's or the bottom's.
+fn face_normal(s:u32,k:f32,l:vec3f)->vec3f {
+    let a=abs(l);
+    if a.y>=max(a.x,a.z) {return vec3f(0,sign(l.y),0);}
+    let f=face_of(l);
+    let letter=letter_at(letter_in(s,u32(k)),f.at);
+    let depth=-letter.x*CUT_SLOPE;
+    if depth<=0.0 || depth>=CUT_DEPTH {return f.normal;}
+    let du=f.across+f.normal*CUT_SLOPE*letter.y;
+    let dv=vec3f(0,1,0)+f.normal*CUT_SLOPE*letter.z;
+    let n=normalize(cross(du,dv));
+    return select(-n,n,dot(n,f.normal)>0.0);
+}
+// How much of a block-frame point on slot k's block's side faces lies in
+// the cut (0 to 1, soft over a tenth of a row).
+fn frost_at(s:u32,k:f32,l:vec3f)->f32 {
+    let a=abs(l);
+    if a.y>=max(a.x,a.z) {return 0.0;}
+    let f=face_of(l);
+    return 1.0-smoothstep(-.1,.1,letter_at(letter_in(s,u32(k)),f.at).x);
+}
+// From a block-frame point inside the block along d (block frame): how far
+// to its faces (its rounding and the cut's depth ignored), and which face.
+struct Exit { distance:f32, axis:vec3f }
+fn box_exit(l:vec3f,d:vec3f)->Exit {
+    let t=(sign(d)*HALF-l)/d;
+    if t.x<=min(t.y,t.z) {return Exit(max(t.x,0.0),vec3f(sign(d.x),0,0));}
+    if t.y<=t.z {return Exit(max(t.y,0.0),vec3f(0,sign(d.y),0));}
+    return Exit(max(t.z,0.0),vec3f(0,0,sign(d.z)));
+}
+// Light inside slot k's block from the block-frame point l along d (block
+// frame), at refractive index eta: across the block to a face, out through
+// it (its facet's normal there), or reflected inside where it must be and
+// on, up to three times. Where it leaves (block frame), its direction out
+// (zero if it never does) and the path inside.
+struct Passage { at:vec3f, out:vec3f, path:f32 }
+fn pass_through(s:u32,k:f32,l:vec3f,d:vec3f,eta:f32)->Passage {
+    var at=l;
+    var dir=d;
+    var path=0.0;
+    for(var bounce=0u;bounce<4u;bounce++) {
+        let e=box_exit(at,dir);
+        at+=dir*e.distance;
+        path+=e.distance;
+        let n=face_normal(s,k,at);
+        let o=refract(dir,-n,eta);
+        if dot(o,o)>0.0 {return Passage(at,o,path);}
+        dir=reflect(dir,n);
+        at-=e.axis*.01;
+    }
+    return Passage(at,vec3f(0),path);
+}
+
+// ---- The photons -----------------------------------------------------------------------
+// One ray from the lamp for each cell of the photon grid over the map, at
+// each of the three wavelengths (photon n's wavelength is n mod 3): traced
+// through the blocks it meets, refracting at each face and facet,
+// internally reflected where it must be (twice at most, else lost), and
+// where it is LANDING rows along the beam is put back on the map as the
+// lamp's straight ray there. Rays meeting no block are left alone.
+@compute @workgroup_size(64) fn trace_photons(@builtin(global_invocation_id) id:vec3u) {
+    greetings_begin();
+    let n=id.x;
+    let count=PHOTON_GRID.x*PHOTON_GRID.y*3u;
+    if n>=count {return;}
+    photons_out[n]=vec4f(0);
+    if stage()<STAGE_WORDS-.5 || stage()>STAGE_WHITE+.5 || intensity()<=0.0 {return;}
+    let cell=n/3u;
+    let c=n%3u;
+    let uv=(vec2f(f32(cell%PHOTON_GRID.x),f32(cell/PHOTON_GRID.x))+.5)/vec2f(PHOTON_GRID);
+    let l=lamp();
+    let d=map_direction(uv);
+    if d.z>=0.0 {return;}
+    let enter=(l.z-SLAB)/(-d.z);
+    let leave=(l.z+SLAB)/(-d.z);
+    let hit=first_block(l,d,enter,leave);
+    if hit.x<0.0 {return;}
+    let s=u32(hit.y);
+    let k=hit.z;
+    let iors=IOR;
+    let eta=iors[c];
+    // The beam's profile in this direction: the light the photon carries.
+    let axis=map_frame().axis;
+    let carried=beam_profile(l+d*(LANDING/max(dot(d,axis),.05)),axis);
+    if carried<=0.0 {return;}
+    let at=to_block(s,k,l+d*hit.x);
+    let n_in=face_normal(s,k,at);
+    // The frosted cut scatters what meets it: little of it goes on.
+    var frosted=frost_at(s,k,at);
+    let d_in=turn_to_block(s,k,d);
+    let inside=refract(d_in,n_in,1.0/eta);
+    var weight=1.0-(F0+(1.0-F0)*pow(1.0-clamp(dot(-d_in,n_in),0.0,1.0),5.0));
+    let passage=pass_through(s,k,at-n_in*.01,inside,eta);
+    if dot(passage.out,passage.out)==0.0 {
+        // Trapped: lost here.
+        photons_out[n]=vec4f(-1,-1,0,carried);
+        return;
+    }
+    let out=turn_from_block(s,k,passage.out);
+    let p=turn_from_block(s,k,passage.at)+block_centre(s,k);
+    let absorption=ABSORPTION;
+    frosted=max(frosted,frost_at(s,k,passage.at));
+    weight*=exp(-passage.path*absorption[c])*.96*(1.0-FROST_SCATTER*frosted);
+    if out.z>=-1e-3 {
+        // Out behind the strips, where the map does not reach: lost here.
+        photons_out[n]=vec4f(-1,-1,0,carried);
+        return;
+    }
+    let along=dot(p-l,axis);
+    let landing=p+out*(max(LANDING-along,1.0)/max(dot(out,axis),.05));
+    photons_out[n]=vec4f(map_uv(landing),weight*carried,carried);
+}
+// Each photon that met a block moves its light: it takes what it carried
+// away where its straight ray would have gone and puts what reached through
+// where it landed (a tent, see SPLAT), in its wavelength's channel; the
+// map is cleared to 0 and added to the beam's profile.
+struct PhotonVertex {
+    @builtin(position) position:vec4f,
+    @location(0) offset:vec2f,
+    @location(1) @interpolate(flat) colour:vec3f,
+}
+@vertex fn photon_vertex(@builtin(vertex_index) corner:u32,@builtin(instance_index) i:u32)->PhotonVertex {
+    var out:PhotonVertex;
+    out.position=vec4f(2,2,2,1);
+    let n=i/2u;
+    let landing=(i%2u)==1u;
+    let ph=photons_in[n];
+    if ph.w<=0.0 || (landing && ph.z<=0.0) {return out;}
+    let cell=n/3u;
+    let home=(vec2f(f32(cell%PHOTON_GRID.x),f32(cell/PHOTON_GRID.x))+.5)/vec2f(PHOTON_GRID);
+    let centre=select(home,ph.xy,landing);
+    let channel=array<vec3f,3>(vec3f(1,0,0),vec3f(0,1,0),vec3f(0,0,1))[n%3u];
+    let c=array<vec2f,6>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(-1,1),vec2f(1,-1),vec2f(1,1))[corner];
+    let uv=centre+c*SPLAT/vec2f(PHOTON_GRID);
+    out.position=vec4f(uv.x*2.0-1.0,1.0-uv.y*2.0,0,1);
+    out.offset=c;
+    out.colour=channel*select(-ph.w,ph.z,landing)/(SPLAT*SPLAT);
+    return out;
+}
+@fragment fn photon_fragment(v:PhotonVertex)->@location(0) vec4f {
+    let w=max(1.0-abs(v.offset.x),0.0)*max(1.0-abs(v.offset.y),0.0);
+    return vec4f(v.colour*w,0);
 }
 
 // ---- The lit air ------------------------------------------------------------------------------
-// The air's light along each ray, at half size: marched within the cone up
-// to the cubes, each sample at its own instant of the shutter (the beam
-// turns about 400 degrees a second). Its depth goes in alpha for the
-// picture's upsampling.
-@fragment fn air(v:Vertex)->@location(0) vec4f {
+// The air's light along each ray, at half size: marched within the cone,
+// each sample at its own instant of the shutter (the beam turns about 400
+// degrees a second), the light in front of the blocks kept apart (its depth
+// goes in alpha for the picture's upsampling) from all of it (seen through
+// the crystal).
+struct AirOut { @location(0) front:vec4f, @location(1) full:vec4f }
+@fragment fn air(v:Vertex)->AirOut {
     greetings_begin();
     let pixel=vec2i(v.position.xy);
     let full=min(pixel*2,vec2i(u.screen.xy)-1);
-    let depth=textureLoad(depth_image,full,0).r;
+    let depth=textureLoad(geometry,full,0).w;
     let q=scene_of_uv(v.uv);
     let d=normalize(vec3f(q,CAMERA_DISTANCE));
     let near=(AIR_NEAR+CAMERA_DISTANCE)/d.z;
-    let far=min((AIR_FAR+CAMERA_DISTANCE)/d.z,depth);
+    let far=(AIR_FAR+CAMERA_DISTANCE)/d.z;
     let jitter=pattern(v.position.xy);
     // The span over the shutter: the union of the cone at its two ends.
     let a0=cone_span(d,beam_axis(0.0),near,far);
@@ -368,7 +669,8 @@ fn cone_span(d:vec3f,axis:vec3f,t0:f32,t1:f32)->vec2f {
     var span=vec2f(min(a0.x,a1.x),max(a0.y,a1.y));
     if a0.x>=a0.y {span=a1;}
     if a1.x>=a1.y {span=a0;}
-    var light=0.0;
+    var front=vec3f(0);
+    var all=vec3f(0);
     if span.x<span.y && intensity()>0.0 {
         let step=(span.y-span.x)/f32(MARCH_SAMPLES);
         for(var k=0u;k<MARCH_SAMPLES;k++) {
@@ -376,14 +678,33 @@ fn cone_span(d:vec3f,axis:vec3f,t0:f32,t1:f32)->vec2f {
             let t=span.x+(f32(k)+f)*step;
             let x=CAMERA+d*t;
             let axis=beam_axis(SHUTTER*fract(jitter*7.31+f32(k)*.38197));
-            let b=beam_at(x,axis);
-            if b<=0.0 {continue;}
+            let b=light_at(x,axis,jitter*6.283+f32(k));
+            if max(b.r,max(b.g,b.b))<=0.0 {continue;}
             let towards=normalize(x-lamp());
-            let lit=b*phase(towards,-d,PHASE_G)*density(x)*transmitted(x,jitter*6.283+f32(k)).r;
-            light+=lit*step;
+            let lit=b*phase(towards,-d,PHASE_G)*density(x)*step;
+            all+=lit;
+            if t<depth {front+=lit;}
         }
     }
-    return vec4f(star_colour()*light*SCATTER*intensity(),depth);
+    // The light the blocks throw out of the cone, over the map's wider cone
+    // but outside the beam's.
+    let axis=beam_axis(0.0);
+    let wide=cone_span_at(d,axis,near,far,MAP_SPREAD,APERTURE);
+    if wide.x<wide.y && intensity()>0.0 {
+        let step=(wide.y-wide.x)/f32(SPRAY_SAMPLES);
+        for(var k=0u;k<SPRAY_SAMPLES;k++) {
+            let t=wide.x+(f32(k)+fract(jitter*3.17+f32(k)*.618034))*step;
+            let x=CAMERA+d*t;
+            if beam_profile(x,axis)>0.0 {continue;}
+            let m=max(moved(x,jitter*6.283+f32(k)),vec3f(0));
+            if max(m.r,max(m.g,m.b))<=0.0 {continue;}
+            let lit=min(m*CAUSTIC_GAIN,vec3f(CAUSTIC_MAX))*beam_falloff(x)*phase(normalize(x-lamp()),-d,PHASE_G)*density(x)*step;
+            all+=lit;
+            if t<depth {front+=lit;}
+        }
+    }
+    let k=star_colour()*SCATTER*intensity();
+    return AirOut(vec4f(front*k,depth),vec4f(all*k,1));
 }
 
 // ---- The dust ------------------------------------------------------------------------
@@ -415,23 +736,23 @@ struct DustVertex {
     let to_camera=CAMERA-x;
     let distance=length(to_camera);
     if x.z<=-CAMERA_DISTANCE+40.0 {return out;}
-    // Lit by the beam over the shutter, forward scattering; outside it, a
-    // trace of the original's band.
-    var lit=0.0;
+    // Lit by the beam over the shutter, forward scattering, through what
+    // the blocks let through; outside it, a trace of the original's band.
+    var lit=vec3f(0);
     for(var k=0u;k<3u;k++) {
-        lit+=beam_at(x,beam_axis(SHUTTER*f32(k)*.5));
+        lit+=light_at(x,beam_axis(SHUTTER*f32(k)*.5),f32(n)+f32(k)*2.1);
     }
-    lit*=phase(normalize(x-lamp()),to_camera/distance,MOTE_G)*transmitted(x,f32(n)).r/3.0;
-    lit=lit*MOTE_GAIN+MOTE_BAND*star_light(index,gc.sweep.x);
-    lit*=(.3+2.2*size*size)*intensity();
+    let beam=lit*phase(normalize(x-lamp()),to_camera/distance,MOTE_G)/3.0*MOTE_GAIN;
+    var colour=star_colour()*(beam+MOTE_BAND*star_light(index,gc.sweep.x));
+    colour*=(.3+2.2*size*size)*intensity();
     // In focus at the strips' plane; the near ones soft discs, the far ones
     // points; a disc's light spread over its area.
     let px=u.screen.y/1080.0;
     let coc=min(BOKEH*abs(1.0-CAMERA_DISTANCE/distance),BOKEH_MAX)*px;
     let core=MOTE_RADIUS*(.7+1.6*size)*px;
     let radius=max(core,coc);
-    lit*=(core*core)/(radius*radius);
-    if lit<1e-4 {return out;}
+    colour*=(core*core)/(radius*radius);
+    if max(colour.r,max(colour.g,colour.b))<1e-4 {return out;}
     let q=project(x);
     let c=array<vec2f,6>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(-1,1),vec2f(1,-1),vec2f(1,1))[corner];
     let extent=radius*1.6+1.0;
@@ -439,219 +760,55 @@ struct DustVertex {
     let ndc=vec2f(uv.x*2.0-1.0,1.0-uv.y*2.0)+c*extent*2.0/u.screen.xy;
     out.position=vec4f(ndc,0,1);
     out.offset=c*extent;
-    out.colour=star_colour()*lit;
+    out.colour=colour;
     out.radius=radius;
     out.distance=distance;
     return out;
 }
-@fragment fn dust_fragment(v:DustVertex)->@location(0) vec4f {
-    // Hidden behind a cube.
-    if textureLoad(depth_image,vec2i(v.position.xy),0).r<v.distance {discard;}
+struct DustOut { @location(0) front:vec4f, @location(1) full:vec4f }
+@fragment fn dust_fragment(v:DustVertex)->DustOut {
     let r=length(v.offset)/v.radius;
     // A soft disc, its edge a little brighter, as out of focus light is.
     let disc=(1.0-smoothstep(.75,1.05,r))*(.85+.25*smoothstep(.4,.95,r));
-    return vec4f(v.colour*disc,1);
+    let c=v.colour*disc;
+    // In front of the blocks, or behind them (seen through the crystal).
+    let hidden=textureLoad(geometry,vec2i(v.position.xy),0).w<v.distance;
+    return DustOut(vec4f(select(c,vec3f(0),hidden),1),vec4f(c,1));
 }
 
-// ---- The cubes -------------------------------------------------------------------------
-fn strip_x(s:u32)->f32 {return (f32(8u+64u*s)+14.0-160.0)*COLUMN;}
-// Slot k's letter in strip s (frame shown), or 255.
-fn letter_in(s:u32,k:u32)->u32 {
-    let w=letters[frame_now()*6u+1u+s];
-    return (w[k/4u]>>(8u*(k%4u)))&255u;
-}
-fn first_top()->f32 {return gc.twist_late.y;}
-fn position_of(s:u32)->f32 {return select(gc.twist[s],gc.twist_late.x,s==4u);}
-// The turn at source row y in strip s.
-fn twist(s:u32,row:f32)->f32 {
-    return TWIST_STEP*(40.0*sin(PI*(position_of(s)+row)/200.0)+60.0);
-}
-// A point in slot k's cube's frame: across, up from its centre, toward the
-// back; the turn is the row's, so the letter twists as the original's does.
-fn cube_local(s:u32,k:f32,p:vec3f)->vec3f {return cube_local_at(s,k,p,0.0);}
-// The same with the cube's pose `tau` frames earlier, when it was tau rows
-// lower and its sine position tau further on (both fall one a frame).
-fn cube_local_at(s:u32,k:f32,p:vec3f,tau:f32)->vec3f {
-    let x=p.x-strip_x(s);
-    let row=100.0-p.y;
-    let a=TWIST_STEP*(40.0*sin(PI*(position_of(s)+tau+row)/200.0)+60.0);
-    let centre=100.0-(first_top()+tau+SLOT_ROWS*k+HALF);
-    return vec3f(cos(a)*x+sin(a)*p.z,p.y-centre,-sin(a)*x+cos(a)*p.z);
-}
-fn box_distance(l:vec3f)->f32 {
-    let q=abs(l)-vec3f(HALF-ROUNDING);
-    return length(max(q,vec3f(0)))+min(max(q.x,max(q.y,q.z)),0.0)-ROUNDING;
-}
-struct Near { distance:f32, slot:f32 }
-fn stack_near(s:u32,p:vec3f)->Near {
-    let k0=floor((100.0-p.y-first_top())/SLOT_ROWS);
-    var best=Near(1e5,-1.0);
-    for(var dk=-1.0;dk<=1.0;dk+=1.0) {
-        let k=k0+dk;
-        if k<0.0 || k>=f32(SLOTS) || letter_in(s,u32(k))==255u {continue;}
-        let d=box_distance(cube_local(s,k,p))*LIPSCHITZ;
-        if d<best.distance {best=Near(d,k);}
-    }
-    return best;
-}
-fn stack_distance(s:u32,p:vec3f)->f32 {return stack_near(s,p).distance;}
-fn stack_normal(s:u32,p:vec3f)->vec3f {
-    let e=vec2f(.03,-.03);
-    return normalize(e.xyy*stack_distance(s,p+e.xyy)+e.yyx*stack_distance(s,p+e.yyx)
-        +e.yxy*stack_distance(s,p+e.yxy)+e.xxx*stack_distance(s,p+e.xxx));
-}
-// The ray's span inside strip s's column (radius: a cube's half diagonal),
-// or (1, 0).
-fn column_span(s:u32,o:vec3f,d:vec3f)->vec2f {
-    let r=HALF*1.4143+.2;
-    let ox=o.x-strip_x(s);
-    let a=d.x*d.x+d.z*d.z;
-    let b=2.0*(ox*d.x+o.z*d.z);
-    let c=ox*ox+o.z*o.z-r*r;
-    let disc=b*b-4.0*a*c;
-    if disc<=0.0 || a<1e-9 {return vec2f(1,0);}
-    let h=sqrt(disc);
-    return vec2f((-b-h)/(2.0*a),(-b+h)/(2.0*a));
-}
-// The original's letter colours 1 to 6 (white to teal), along the relief.
-fn letter_ramp(relief:f32)->vec3f {
-    let ramp=array<vec3f,6>(vec3f(60,60,60),vec3f(44,52,52),vec3f(32,44,44),
-        vec3f(20,36,36),vec3f(12,32,32),vec3f(4,24,24));
-    let x=clamp(1.0-relief,0.0,1.0)*5.0;
-    let i=min(u32(x),4u);
-    return srgb_decode(mix(ramp[i],ramp[i+1u],x-f32(i))/63.0);
-}
-fn ggx(n:vec3f,h:vec3f,alpha:f32)->f32 {
-    let nh=max(dot(n,h),0.0);
-    let a2=alpha*alpha;
-    let den=nh*nh*(a2-1.0)+1.0;
-    return a2/(PI*den*den);
-}
-fn fresnel(cosine:f32)->f32 {return SHEEN+(1.0-SHEEN)*pow(1.0-clamp(cosine,0.0,1.0),5.0);}
-// The letter panel on the face of slot k's cube that point p lies on, with
-// the cube's pose tau frames earlier: coverage, relief and its slopes
-// across and up, and the face's across in the cube's frame (x, z).
-struct Panel { cover:f32, relief:f32, slope:vec2f, across:vec2f }
-fn panel_at(s:u32,k:f32,p:vec3f,tau:f32,footprint:f32)->Panel {
-    let l=cube_local_at(s,k,p,tau);
-    var nl=vec3f(0,0,sign(l.z));
-    if abs(l.x)>=abs(l.z) {nl=vec3f(sign(l.x),0,0);}
-    let r=vec3f(-nl.z,0,nl.x);
-    var out=Panel(0.0,0.0,vec2f(0),r.xz);
-    if abs(l.y)>=max(abs(l.x),abs(l.z))+.3 {return out;}
-    let t=vec2f(dot(l,r),-l.y)/(2.0*HALF*PANEL_SCALE)+.5;
-    if any(t<vec2f(.5/CELL)) || any(t>vec2f(1.0-.5/CELL)) {return out;}
-    let g=letter_in(s,u32(k));
-    let cell=vec2f(f32(g%ATLAS_COLUMNS),f32(g/ATLAS_COLUMNS))*CELL;
-    let face=textureSampleLevel(glyphs,linear,(cell+t*CELL)/ATLAS_SIZE,0.0);
-    // The atlas's distances are in rows of the face; the panel is smaller.
-    let d=face.r*PANEL_SCALE;
-    let aa=max(footprint*.7,.02);
-    out.cover=1.0-smoothstep(-aa,aa,d);
-    out.relief=face.g;
-    out.slope=face.ba/PANEL_SCALE;
-    return out;
-}
-struct Shade { colour:vec3f, mirror:vec3f }
-// A point on strip s's cubes, seen along d, `footprint` rows a pixel
-// there: its colour, and where its polish mirrors the picture (uv) with the
-// mirror's weight.
-fn shade_cube(s:u32,p:vec3f,d:vec3f,footprint:f32)->Shade {
-    let near=stack_near(s,p);
-    let k=max(near.slot,0.0);
-    var n=stack_normal(s,p);
-    // The panel over the shutter: its coverage and relief averaged as the
-    // cube turns and rises; its bevel from the moment itself.
-    let now=panel_at(s,k,p,0.0,footprint);
-    var panel=0.0;
-    var relief=0.0;
-    let span=CUBE_SHUTTER*gc.frame.w;
-    for(var i=0u;i<CUBE_TAPS;i++) {
-        let tap=panel_at(s,k,p,span*f32(i)/f32(CUBE_TAPS-1u),footprint);
-        panel+=tap.cover;
-        relief+=tap.relief*tap.cover;
-    }
-    relief/=max(panel,1e-4);
-    panel/=f32(CUBE_TAPS);
-    // The panel's bevel tilts the normal; across is the face's turned to
-    // the world.
-    let a=twist(s,100.0-p.y);
-    let rw=vec3f(cos(a)*now.across.x-sin(a)*now.across.y,0,sin(a)*now.across.x+cos(a)*now.across.y);
-    n=normalize(n-BUMP*now.cover*(now.slope.x*rw+now.slope.y*vec3f(0,1,0)));
-    let v=-d;
-    let L=normalize(lamp()-p);
-    let h=normalize(L+v);
-    let axis=beam_axis(0.0);
-    let at=min(beam_at(p,axis),2.0);
-    // The lamp lights the cube all round, and the beam more.
-    let light=BULB_LIGHT+BEAM_LIGHT*at;
-    let nl=max(dot(n,L),0.0);
-    let rough=mix(BLACK_ROUGH,PANEL_ROUGH,panel);
-    let spec=(ggx(n,h,rough)*GLINT+ggx(n,h,SHEEN_ROUGH)*SHEEN_GLINT)*fresnel(dot(h,v))*nl*light;
-    let diffuse=BLACK*nl*light*(1.0-panel);
-    // The beam on the cube's far side, shining through its panels.
-    let centre=vec3f(strip_x(s),100.0-(first_top()+SLOT_ROWS*k+HALF),0.0);
-    let behind=min(beam_at(centre,axis),1.5);
-    let rim=pow(1.0-max(dot(n,v),0.0),3.0)*RIM*at*(1.0-panel);
-    let ramp=letter_ramp(relief);
-    let glow=(ramp*PANEL_REST+mix(ramp,star_colour(),.5)*PANEL_BEAM*behind)*panel;
-    // Where the polish mirrors the picture (see MIRROR).
-    let rd=reflect(d,n);
-    let toward=vec3f(rd.xy,abs(rd.z)+.05);
-    let q=p+toward*((MIRROR_DEPTH-p.z)/toward.z);
-    let uvq=uv_of_scene(project(q));
-    let weight=fresnel(dot(n,v))*MIRROR*select(FRONT_MIRROR,1.0,rd.z>.05)*(1.0-.5*panel);
-    let colour=((spec+rim+diffuse)*star_colour()+glow)*intensity();
-    return Shade(colour,vec3f(uvq,weight));
-}
-
-struct CubesOut {
-    @location(0) colour:vec4f,
-    @location(1) depth:vec4f,
-    @location(2) mirror:vec4f,
-}
-// The cubes, their depth along each ray, and where their polish mirrors the
-// picture.
-@fragment fn cubes(v:Vertex)->CubesOut {
+// ---- The blocks seen ------------------------------------------------------------------------
+// The blocks along each ray: coverage (soft at their silhouettes), strip
+// * 16 + slot, the distance to them, and the distance where they are solid
+// (else 1e9), for the air and the dust to stop at.
+@fragment fn blocks(v:Vertex)->@location(0) vec4f {
     greetings_begin();
     let q=scene_of_uv(v.uv);
     let d=normalize(vec3f(q,CAMERA_DISTANCE));
     let row_per_pixel=200.0/u.screen.y;
-    var colour=vec3f(0);
-    var mirror=vec3f(0);
-    var cover=0.0;
-    var depth=1e9;
-    if stage()>=STAGE_WORDS-.5 && stage()<STAGE_MONSTER-.5 {
-        for(var s=0u;s<STRIPS;s++) {
-            let span=column_span(s,CAMERA,d);
-            if span.x>=span.y {continue;}
-            var t=max(span.x,0.0);
-            var closest=1e5;
-            var closest_t=t;
-            var hit=false;
-            for(var i=0u;i<MARCH_STEPS;i++) {
-                let h=stack_distance(s,CAMERA+d*t);
-                let footprint=row_per_pixel*t/CAMERA_DISTANCE;
-                if h/footprint<closest {closest=h/footprint;closest_t=t;}
-                if h<.002*t*row_per_pixel {hit=true;break;}
-                t+=max(h,.01);
-                if t>span.y {break;}
-            }
-            // A soft silhouette: the nearest approach within a pixel.
-            let c=select(clamp(1.0-closest,0.0,1.0),1.0,hit);
-            if c>0.0 {
-                let at=select(closest_t,t,hit);
-                let shade=shade_cube(s,CAMERA+d*at,d,row_per_pixel*at/CAMERA_DISTANCE);
-                colour=shade.colour*c;
-                mirror=vec3f(shade.mirror.xy,shade.mirror.z*c);
-                cover=c;
-                // The air and dust stop at it where it is solid.
-                if c>.5 {depth=at;}
-                break;
-            }
+    if stage()<STAGE_WORDS-.5 || stage()>STAGE_WHITE+.5 {return vec4f(0,0,0,1e9);}
+    for(var s=0u;s<STRIPS;s++) {
+        let span=column_span(s,CAMERA,d);
+        if span.x>=span.y {continue;}
+        var t=max(span.x,0.0);
+        var closest=1e5;
+        var closest_t=t;
+        var slot=-1.0;
+        var hit=false;
+        for(var i=0u;i<MARCH_STEPS;i++) {
+            let near=stack_near(s,CAMERA+d*t);
+            let footprint=row_per_pixel*t/CAMERA_DISTANCE;
+            if near.distance/footprint<closest {closest=near.distance/footprint;closest_t=t;slot=near.slot;}
+            if near.distance<.002*t*row_per_pixel {hit=true;break;}
+            t+=max(near.distance,.01);
+            if t>span.y {break;}
+        }
+        let c=select(clamp(1.0-closest,0.0,1.0),1.0,hit);
+        if c>0.0 && slot>=0.0 {
+            let at=select(closest_t,t,hit);
+            return vec4f(c,f32(s)*16.0+slot,at,select(1e9,at,c>.5));
         }
     }
-    return CubesOut(vec4f(colour,cover),vec4f(depth,0,0,1),vec4f(mirror,1));
+    return vec4f(0,0,0,1e9);
 }
 
 // ---- The picture ----------------------------------------------------------------------------
@@ -679,11 +836,18 @@ fn monster_picture(s:vec2f)->vec3f {
     }
     return clamp(c,vec3f(0),vec3f(1));
 }
-// The lit air at a full-size pixel from the half-size image: the four
-// nearest samples, each weighted by how near its depth is to the pixel's,
-// so the air stops cleanly at the cubes' edges.
-fn air_at(pixel:vec2i,depth:f32)->vec3f {
-    let size=vec2i(textureDimensions(air_image));
+// The lamp seen directly at r rows from it: the core and halo, and its
+// aperture's flare as the beam turns toward the camera.
+fn lamp_glow(r:f32)->f32 {
+    let facing=max(-beam_axis(0.0).z,0.0);
+    let flare=FLARE*pow(facing,8.0);
+    return exp(-(r/CORE)*(r/CORE))*CORE_GAIN*(1.0+flare)+exp(-r/HALO)*HALO_GAIN*(1.0+flare*.5);
+}
+// The lit air in front of the blocks at a full-size pixel from the
+// half-size image: the four nearest samples, each weighted by how near its
+// depth is to the pixel's, so the air stops cleanly at the blocks' edges.
+fn air_in_front(pixel:vec2i,depth:f32)->vec3f {
+    let size=vec2i(textureDimensions(air_front));
     let h=(vec2f(pixel)+.5)*.5-.5;
     let base=vec2i(floor(h));
     let f=h-floor(h);
@@ -692,7 +856,7 @@ fn air_at(pixel:vec2i,depth:f32)->vec3f {
     for(var y=0;y<2;y++) {
         for(var x=0;x<2;x++) {
             let at=clamp(base+vec2i(x,y),vec2i(0),size-1);
-            let s=textureLoad(air_image,at,0);
+            let s=textureLoad(air_front,at,0);
             let w=select(1.0-f.x,f.x,x==1)*select(1.0-f.y,f.y,y==1)
                 *exp(-abs(min(s.a,1e4)-min(depth,1e4))/8.0)+1e-5;
             sum+=s.rgb*w;
@@ -701,12 +865,92 @@ fn air_at(pixel:vec2i,depth:f32)->vec3f {
     }
     return sum/weights;
 }
-// The lamp seen directly at r rows from it: the core and halo, and its
-// aperture's flare as the beam turns toward the camera.
-fn lamp_glow(r:f32)->f32 {
-    let facing=max(-beam_axis(0.0).z,0.0);
-    let flare=FLARE*pow(facing,8.0);
-    return exp(-(r/CORE)*(r/CORE))*CORE_GAIN*(1.0+flare)+exp(-r/HALO)*HALO_GAIN*(1.0+flare*.5);
+// Everything behind the blocks seen along the ray from p along d: the dust,
+// the lit air and the lamp, from the images (taken where the ray reaches
+// BEHIND rows on) and the lamp's glow round the ray.
+fn behind(p:vec3f,d:vec3f)->vec3f {
+    var reach=BEHIND;
+    if d.z<0.0 {reach=min(reach,(p.z+CAMERA_DISTANCE-60.0)/(-d.z));}
+    let q=p+d*reach;
+    let uv=uv_of_scene(project(q));
+    var c=vec3f(0);
+    if all(uv>vec2f(0)) && all(uv<vec2f(1)) {
+        c=textureLoad(dust_full,vec2i(uv*u.screen.xy),0).rgb+textureSampleLevel(air_full,linear,uv,0.0).rgb;
+    }
+    // The lamp: how near the ray passes it, in rows.
+    let to=lamp()-p;
+    let along=dot(to,d);
+    if along>0.0 {c+=lamp_glow(length(to-d*along))*star_colour()*intensity();}
+    return c;
+}
+// A block seen at p along d, `footprint` rows a pixel there.
+fn crystal(s:u32,k:f32,p:vec3f,d:vec3f,footprint:f32)->vec3f {
+    let n=block_normal(s,k,p);
+    let l=to_block(s,k,p);
+    let v=-d;
+    // The letter on this face: how much of the point is cut, and how deep.
+    let f=face_of(l);
+    let side=abs(l.y)<max(abs(l.x),abs(l.z))+.2;
+    let letter=letter_at(letter_in(s,u32(k)),f.at);
+    let aa=max(footprint*.8,.03);
+    let cut=select(0.0,1.0-smoothstep(-aa,aa,letter.x),side);
+    let depth=cut_depth(letter.x)/CUT_DEPTH;
+    let cosine=clamp(dot(n,v),0.0,1.0);
+    let fresnel=F0+(1.0-F0)*pow(1.0-cosine,5.0);
+    // The beam through the block, and the lamp's light on it.
+    let axis=beam_axis(0.0);
+    let through=min(beam_at(block_centre(s,k),axis),2.0);
+    let L=normalize(lamp()-p);
+    let h=normalize(L+v);
+    let nh=max(dot(n,h),0.0);
+    let a2=POLISH*POLISH;
+    let ggx=a2/(PI*(nh*nh*(a2-1.0)+1.0)*(nh*nh*(a2-1.0)+1.0));
+    let glint=ggx*fresnel*max(dot(n,L),0.0)*GLINT*(.25+through);
+    // The polish mirrors the picture (see FRONT_MIRROR).
+    let rd=reflect(d,n);
+    let toward=vec3f(rd.xy,abs(rd.z)+.05);
+    let mq=p+toward*((MIRROR_DEPTH-p.z)/toward.z);
+    let muv=uv_of_scene(project(mq));
+    var mirrored=vec3f(0);
+    if all(muv>vec2f(0)) && all(muv<vec2f(1)) {
+        mirrored=textureLoad(dust_full,vec2i(muv*u.screen.xy),0).rgb+textureSampleLevel(air_full,linear,muv,0.0).rgb;
+    }
+    mirrored*=select(FRONT_MIRROR,1.0,rd.z>.05);
+    // Through the crystal, a wavelength at a time: refracted in, across the
+    // block (absorbing a little), out (or reflected inside, then out).
+    var seen=vec3f(0);
+    let iors=IOR;
+    let absorption=ABSORPTION;
+    let d_in=turn_to_block(s,k,d);
+    let n_in=turn_to_block(s,k,n);
+    for(var c=0u;c<3u;c++) {
+        let eta=iors[c];
+        let passage=pass_through(s,k,l-n_in*.01,refract(d_in,n_in,1.0/eta),eta);
+        var out=passage.out;
+        if dot(out,out)==0.0 {out=reflect(d_in,n_in);}
+        let exit=turn_from_block(s,k,passage.at)+block_centre(s,k);
+        let light=behind(exit,turn_from_block(s,k,normalize(out)));
+        seen[c]=light[c]*exp(-passage.path*absorption[c]);
+    }
+    // The cut, frosted, glows by the lamp's light carried in the glass and
+    // flares with the beam through it; its walls, steeper to the eye,
+    // brighter than the groove's floor and the crease, as a cut catches the
+    // light inside the glass. Tinted faintly as the original tints its
+    // letters (white crowns, teal edges: the walls whiter, the floor
+    // teal), and cooled from the lamp's cream toward white.
+    let wall=clamp((1.0-dot(n,turn_from_block(s,k,f.normal)))*3.0,0.0,1.0);
+    let teal=srgb_decode(vec3f(12.0,32.0,32.0)/63.0)/srgb_decode(vec3f(32.0/63.0));
+    let tint=mix(mix(vec3f(1),teal,.22),vec3f(1),wall)*mix(star_colour(),vec3f(1),.6);
+    let glow=tint*(CUT_REST+CUT_BEAM*through)*(.75+.5*wall);
+    // The edges: light caught in the block leaves where its faces meet.
+    let a=abs(l);
+    let mid=max(min(a.x,a.y),min(max(a.x,a.y),a.z));
+    let edge=smoothstep(HALF-1.4,HALF-.15,mid);
+    let flare=edge*(EDGE_REST+EDGE_FLARE*through)+cut*wall*CUT_FLARE*through;
+    let clear=(1.0-fresnel)*seen*(1.0-FROST*cut);
+    // The glass's own light is the lamp's, cooled a little as the cut's is.
+    let light=mix(star_colour(),vec3f(1),.5);
+    return clear+(fresnel*mirrored)+((glint+flare)*light+glow*FROST*cut)*intensity();
 }
 @fragment fn style(v:Vertex)->@location(0) vec4f {
     greetings_begin();
@@ -719,24 +963,21 @@ fn lamp_glow(r:f32)->f32 {
         let top=mix(.999,MONSTER_WHITE,clamp(gc.sweep.w,0.0,1.0));
         return vec4f(tonemap_inverse(min(monster_picture(source_of_scene(q)),vec3f(top))),1);
     }
-    let cubes=textureLoad(cubes_image,pixel,0);
-    let depth=textureLoad(depth_image,pixel,0).r;
-    let dust=textureLoad(dust_image,pixel,0).rgb;
-    let air=air_at(pixel,depth);
+    let g=textureLoad(geometry,pixel,0);
     let lq=project(lamp());
     let lamp_light=star_colour()*intensity();
-    // The lamp where no cube stands in front of it; the dust and the air,
-    // both already stopped at the cubes.
-    var c=cubes.rgb+dust+air+lamp_glow(length(q-lq))*lamp_light*(1.0-cubes.a);
-    // The polish mirrors the dust, the lit air and the lamp.
-    let mirror=textureLoad(mirror_image,pixel,0);
-    if mirror.z>0.0 {
-        let mq=scene_of_uv(mirror.xy);
-        let at=clamp(vec2i(mirror.xy*u.screen.xy),vec2i(0),vec2i(u.screen.xy)-1);
-        let half=clamp(vec2i(mirror.xy*u.screen.xy*.5),vec2i(0),vec2i(textureDimensions(air_image))-1);
-        let mirrored=textureLoad(dust_image,at,0).rgb+textureLoad(air_image,half,0).rgb
-            +lamp_glow(length(mq-lq))*lamp_light;
-        c+=mirrored*mirror.z;
+    // Without the blocks: all the dust and the air, and the lamp.
+    let open=textureLoad(dust_full,pixel,0).rgb+textureSampleLevel(air_full,linear,v.uv,0.0).rgb
+        +lamp_glow(length(q-lq))*lamp_light;
+    var c=open;
+    if g.x>0.0 {
+        let s=u32(g.y/16.0);
+        let k=g.y-f32(s)*16.0;
+        let d=normalize(vec3f(q,CAMERA_DISTANCE));
+        let p=CAMERA+d*g.z;
+        let footprint=200.0/u.screen.y*g.z/CAMERA_DISTANCE;
+        let front=textureLoad(dust_front,pixel,0).rgb+air_in_front(pixel,g.w);
+        c=mix(open,front+crystal(s,k,p,d,footprint),g.x);
     }
     // The fade to white, at the original's levels.
     let w=clamp(gc.sweep.z,0.0,1.0);

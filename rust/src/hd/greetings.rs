@@ -31,7 +31,9 @@
 //!   depths and drift and the sky beyond the original's 320 columns, the
 //!   beam and the air, the cubes' material, the gaps the modern view leaves
 //!   open.
-use super::greetings_type::{GLYPH_BASE, GLYPH_ROW, GLYPH_STRIDE, Letterforms, letterforms};
+use super::greetings_type::{
+    GLYPH_BASE, GLYPH_ROW, GLYPH_STRIDE, LETTERS, LetterSource, Letterforms, letterforms,
+};
 use super::plasma::PlasmaPreview;
 use crate::{
     data::Data,
@@ -184,7 +186,8 @@ pub struct GreetingsPreview {
     /// follows it read it.
     pub music: Vec<u16>,
     pub events: GreetingsEvents,
-    /// The letters' faces for the modern view (greetings_type.rs).
+    /// The letters' faces for the modern view, from the authored outlines
+    /// (greetings_type.rs).
     pub letterforms: Letterforms,
     /// The modern view's dust; see [`motes`].
     pub motes: Vec<[f32; 4]>,
@@ -327,7 +330,7 @@ impl GreetingsPreview {
         let events = GreetingsEvents::observe(&frames, &slots);
         Ok(Self {
             start,
-            letterforms: letterforms(&planes),
+            letterforms: letterforms(LetterSource::Outlines(LETTERS))?,
             motes: motes(&planes),
             frames,
             palettes,
