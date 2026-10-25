@@ -102,30 +102,32 @@ RESEARCH_FILES = {
     'tools/letters/export_letters.py', 'tests/test_letters.py',
 }
 # The only binary files allowed: the README's screenshots of the modern
-# view, at the owner's request, each pinned by SHA-256 so none can be added or
-# swapped without review. They show this project's rendering, which draws on
-# the original's pictures and text.
+# view, at the owner's request, each pinned by the SHA-256 of every version
+# committed, so none can be added or swapped without review. They show this
+# project's rendering, which draws on the original's pictures and text.
 BINARY_FILES = {
     'docs/images/hero-plasma.jpg':
-        '74c44f42ec028fc5aed2602bc606fccb3afa6ea85b1599ae8f8def3cf71516e6',
+        {'74c44f42ec028fc5aed2602bc606fccb3afa6ea85b1599ae8f8def3cf71516e6'},
     'docs/images/intro.jpg':
-        '7bdd61aae86406be18769a9a72b0854720bace759dc4b0376938883ebae49888',
+        {'7bdd61aae86406be18769a9a72b0854720bace759dc4b0376938883ebae49888'},
     'docs/images/part3-dots.jpg':
-        '4e7100686f604550292f58992724da9c7f49d09b080ffa85dc90e27bd2f06b5c',
+        {'4e7100686f604550292f58992724da9c7f49d09b080ffa85dc90e27bd2f06b5c'},
     'docs/images/part4-plasma.jpg':
-        '6ed909f6578243fc3b50ac818db8496142a6c1905bd3661d9ed2f189041b0951',
+        {'6ed909f6578243fc3b50ac818db8496142a6c1905bd3661d9ed2f189041b0951'},
     'docs/images/part5-field.jpg':
-        '3ab628d7ff300317ec5659606dc573520e3532d70179a98bd34a762e7acfb106',
-    'docs/images/part6-rings.jpg':
+        {'3ab628d7ff300317ec5659606dc573520e3532d70179a98bd34a762e7acfb106'},
+    'docs/images/part6-rings.jpg': {
         '51f872e16c05e4daccb3f953ec2f5f3eb02ebb72fc57ad36fbec32ececb0f346',
+        '4da8e71d34b09ab7e1881bd3005419ae096d5c3f5dbe027166644a3ba596cfad',
+    },
     'docs/images/part7-greetings.jpg':
-        'c798e648cbdb89449a2b6fd4a0d94ba704eba50fd71b2dd1f3ffe86738945571',
+        {'c798e648cbdb89449a2b6fd4a0d94ba704eba50fd71b2dd1f3ffe86738945571'},
     'docs/images/part8-ending.jpg':
-        'b10109b3bab2c08fe8d3d8509ae4bb8ade3079bd252d2a0bf47b9ea6bb050f31',
+        {'b10109b3bab2c08fe8d3d8509ae4bb8ade3079bd252d2a0bf47b9ea6bb050f31'},
     'docs/images/scroller.jpg':
-        'd3236926d5a0f2bb9a20923d89b7c05f715c0cc71450c934315b16ffed4c0dc0',
+        {'d3236926d5a0f2bb9a20923d89b7c05f715c0cc71450c934315b16ffed4c0dc0'},
     'docs/images/transition.jpg':
-        'c1e292018082f0e478a75b1158e7318b304a7602be01770f56adc90393809560',
+        {'c1e292018082f0e478a75b1158e7318b304a7602be01770f56adc90393809560'},
 }
 RESEARCH_FILES |= BINARY_FILES.keys()
 # Research files since removed from the tree: earlier commits may hold them,
@@ -192,7 +194,7 @@ def main():
             seen.add(oid)
             if name in BINARY_FILES:
                 data = git('cat-file', 'blob', oid)
-                if hashlib.sha256(data).hexdigest() != BINARY_FILES[name]:
+                if hashlib.sha256(data).hexdigest() not in BINARY_FILES[name]:
                     raise ValueError(f'Binary file does not match its pinned hash: {name}')
                 continue
             if int(git('cat-file', '-s', oid)) > 128 * 1024:

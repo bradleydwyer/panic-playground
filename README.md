@@ -162,7 +162,7 @@ time, so seeking and captures show the same waves.
 
 ### Part 6: Rings
 
-![Part 6: a neon symbol over the liquid-chrome pool of interference rings](docs/images/part6-rings.jpg)
+![Part 6: the original's radiation symbol in neon over the liquid-chrome pool of interference rings](docs/images/part6-rings.jpg)
 
 `--rings` carries on past the scroller through part 6, the interference rings
 and flashing symbols, to the picture that opens part 5, with the music
