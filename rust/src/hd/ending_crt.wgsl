@@ -50,7 +50,7 @@ const HALATION=.05;
 const CONVERGENCE=.4;
 const VIGNETTE=.22;
 const GLASS=vec3f(.0016,.0019,.0021);
-// As part 7 ends (greetings_light.wgsl): the brightest the monster shows
+// As part 7 ends (greetings_monster.wgsl): the brightest the monster shows
 // through the tonemap (its inverse, as part 7's). Light the scanlines put
 // above it goes on into HDR.
 const MONSTER_WHITE=.9;
