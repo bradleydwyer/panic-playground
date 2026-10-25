@@ -2,7 +2,7 @@
 
 Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
-[![Part 4: the FUTURE CREW slab standing in water under the plasma](docs/images/hero-plasma.jpg)](https://youtu.be/-nAwvG7XNOE)
+[![Watch the whole demo, as it stands, on YouTube](https://img.youtube.com/vi/-nAwvG7XNOE/maxresdefault.jpg)](https://youtu.be/-nAwvG7XNOE)
 
 [▶ Watch the whole demo, as it stands, on YouTube](https://youtu.be/-nAwvG7XNOE)
 

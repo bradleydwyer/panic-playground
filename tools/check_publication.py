@@ -129,13 +129,15 @@ BINARY_FILES = {
     'docs/images/transition.jpg':
         {'c1e292018082f0e478a75b1158e7318b304a7602be01770f56adc90393809560'},
 }
-RESEARCH_FILES |= BINARY_FILES.keys()
 # Research files since removed from the tree: earlier commits may hold them,
-# the index may not. Part 6's other four styles, tried and dropped.
+# the index may not. Part 6's other four styles, tried and dropped, and the
+# README's first top image, replaced by the video's thumbnail.
 RETIRED_FILES = {
     'rust/src/hd/rings_plus.wgsl', 'rust/src/hd/rings_glass.wgsl',
     'rust/src/hd/rings_room.wgsl', 'rust/src/hd/rings_volume.wgsl',
+    'docs/images/hero-plasma.jpg',
 }
+RESEARCH_FILES |= BINARY_FILES.keys() - RETIRED_FILES
 
 
 def git(*args):
