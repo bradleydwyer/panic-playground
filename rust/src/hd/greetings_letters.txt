@@ -1,0 +1,85 @@
+# Part 7's greetings letters: authored for this remake, not recovered from
+# the demo.
+#
+# These are new outlines of the ten letters part 7's five words use (A C E
+# G I N O R S T), drawn from scratch in the spirit of the original's 18 by
+# 15 pixel letters: very heavy, nearly square blocks, cut by narrow slits
+# and small holes, with chamfered corners. They are not the original's
+# glyphs, were not traced, vectorised or fitted from its data or from any
+# font, and carry no shading: the original's letters are decoded locally
+# from the TRUG maps when the preview loads and are never stored in Git.
+#
+# Units. A letter's box is 180 units wide and 180 tall, x to the right and
+# y up, with the baseline at y = 0: the original's letter face of 18
+# columns by 15 rows at 10 units a column and 12 a row, since its rows are
+# 1.2 times as tall as its columns are wide on the 4:3 screen. So the box
+# is square as shown, and a unit is the same length across and up. All
+# vertices are whole units inside the box.
+#
+# Format. Lines starting with # are comments, and blank lines are ignored.
+# Fields are separated by tabs.
+#   box<TAB>180<TAB>180
+# is the letter box's width and height.
+#   advance<TAB>216
+# is the step from one letter's box to the next set in a line (a gap of
+# 36), and
+#   pitch<TAB>216
+# the step between letters stacked as part 7 stacks them, one to an
+# 18-row slot (18 rows of 12 units).
+#   minimum<TAB>ink<TAB>36<TAB>counter<TAB>24
+# are the narrowest ink and the narrowest counter (slit, hole or notch,
+# open or closed) any letter has, measured across, in units: the
+# drawings keep at least these. A 45-degree bevel of 8 units on every
+# edge, cutting in or building out, leaves at least 20 of ink face and 8
+# of counter open.
+# Then, for each letter, one line per closed contour:
+#   C<TAB>outer<TAB>x,y x,y ...
+#   C<TAB>hole<TAB>x,y x,y ...
+# is a contour of letter C: its vertices "x,y" separated by spaces, in
+# order, the last joining the first (which is not repeated). Edges are
+# straight. Outer contours run counter-clockwise (y up) and holes
+# clockwise, so the letter's ink is on the left of every edge; a hole lies
+# inside its letter's outer contour. No contour touches or crosses itself
+# or another.
+#
+# Made by tools/letters/export_letters.py from the drawings in
+# tools/letters/; edit those and export again rather than editing this
+# file.
+
+box	180	180
+advance	216
+pitch	216
+minimum	ink	36	counter	24
+
+# A: arch, peaked hole and notch
+A	outer	0,12 12,0 68,0 68,48 76,56 104,56 112,48 112,0 168,0 180,12 180,132 132,180 48,180 0,132
+A	hole	68,116 90,138 112,116 112,100 104,92 76,92 68,100
+
+# C: one wide slit from the right
+C	outer	0,36 36,0 168,0 180,12 180,70 76,70 64,82 64,98 76,110 180,110 180,168 168,180 36,180 0,144
+
+# E: two slits from the right
+E	outer	0,36 36,0 168,0 180,12 180,44 64,44 64,68 156,68 156,112 64,112 64,136 180,136 180,168 168,180 36,180 0,144
+
+# G: hooked slit, jaw joined at the lower right
+G	outer	0,36 36,0 168,0 180,12 180,108 88,108 88,72 120,72 120,48 76,48 64,60 64,120 76,132 180,132 180,168 168,180 36,180 0,144
+
+# I: a single stem
+I	outer	54,12 66,0 114,0 126,12 126,168 114,180 66,180 54,168
+
+# N: two staggered slits, ends cut along the diagonal
+N	outer	0,12 12,0 60,0 60,85 68,85 84,69 84,0 168,0 180,12 180,168 168,180 120,180 120,95 112,95 96,111 96,180 12,180 0,168
+
+# O: block with a small upright hole
+O	outer	0,36 36,0 144,0 180,36 180,144 144,180 36,180 0,144
+O	hole	70,112 82,124 98,124 110,112 110,68 98,56 82,56 70,68
+
+# R: bowl hole, waist notch, notch under the bowl
+R	outer	0,12 12,0 64,0 64,64 72,72 96,72 104,64 104,0 168,0 180,12 180,64 156,88 180,112 180,144 144,180 12,180 0,168
+R	hole	64,132 72,140 112,140 120,132 120,116 112,108 72,108 64,116
+
+# S: slit from the right above, from the left below
+S	outer	0,12 12,0 144,0 180,36 180,100 168,112 64,112 64,124 76,136 180,136 180,168 168,180 36,180 0,144 0,80 12,68 116,68 116,56 104,44 0,44
+
+# T: bar and stem
+T	outer	58,12 70,0 110,0 122,12 122,124 168,124 180,136 180,168 168,180 12,180 0,168 0,136 12,124 58,124

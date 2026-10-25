@@ -64,10 +64,11 @@ RESEARCH_FILES = {
     'rust/src/hd/plasma_faithful.wgsl', 'rust/src/hd/plasma_light.wgsl',
     # Part 7: its state and tables, the letterforms derived from the user's
     # data at load (no glyph data), its GPU side, the shared shader code,
-    # faithful HD and the modern lighthouse.
+    # faithful HD, the modern lighthouse and the authored letters' outlines.
     'rust/src/hd/greetings.rs', 'rust/src/hd/greetings_type.rs',
     'rust/src/hd/greetings_render.rs', 'rust/src/hd/greetings_common.wgsl',
     'rust/src/hd/greetings_faithful.wgsl', 'rust/src/hd/greetings_light.wgsl',
+    'rust/src/hd/greetings_letters.txt',
     'rust/src/scenes/mod.rs', 'rust/src/scenes/intro.rs',
     'rust/src/scenes/scroller.rs', 'rust/src/scenes/field.rs',
     'rust/src/scenes/rings.rs', 'rust/src/scenes/dots.rs',
@@ -83,6 +84,11 @@ RESEARCH_FILES = {
     'tools/symbols/pattern_5.py', 'tools/symbols/pattern_6.py',
     'tools/symbols/pattern_7.py', 'tools/symbols/export_symbols.py',
     'tests/test_symbols.py',
+    # Part 7's authored letters (not demo data): the drawings, their kit
+    # and previewer, and the exporter that writes
+    # rust/src/hd/greetings_letters.txt.
+    'tools/letters/kit.py', 'tools/letters/glyphs.py', 'tools/letters/render.py',
+    'tools/letters/export_letters.py', 'tests/test_letters.py',
 }
 # Research files since removed from the tree: earlier commits may hold them,
 # the index may not. Part 6's other four styles, tried and dropped.
