@@ -19,11 +19,13 @@
 //!   nothing; a white frame, the picture squeezed to a line, the line to a
 //!   dot and the dot's pulse read that way); interpolation between the
 //!   70 Hz frames.
-//! - Authored: everything the modern view adds (ending_crt.wgsl and the
-//!   values marked authored here): the tube, its curvature and scanlines on
-//!   the original's 200 lines, the phosphor's glow and persistence, the gains
-//!   that brighten the picture as it squeezes, the CRT coming on over the
-//!   hold and the fade to black over the last frames.
+//! - Authored: everything the modern view adds (ending_crt.wgsl,
+//!   ending_set.wgsl and the values marked authored here): the bank of nine
+//!   monitors and the camera's pull back from the centre one's face, the
+//!   tubes' shape and scanlines on the original's 200 lines, the phosphor's
+//!   glow and persistence, the gains that brighten the picture as it
+//!   squeezes, the light the screens throw on the sets, the CRT coming on
+//!   over the hold and the fade to black over the last frames.
 use super::{clip::vga_linear, greetings::GreetingsPreview};
 use crate::{
     data::Data,
@@ -60,6 +62,53 @@ pub const TRAIL_AGES: [f64; 4] = [1.0, 2.0, 3.0, 4.5];
 pub const END_FADE: f64 = 24.0;
 /// The halation image's blur (source pixels; authored).
 pub const HALATION_SIGMA: f64 = 2.5;
+/// The cells each screen's light is gathered in for lighting the sets:
+/// columns and rows of the picture (authored).
+pub const CELLS: (usize, usize) = (4, 3);
+
+/// The camera (authored), in scene units (source rows on the 4:3 display,
+/// the centre set's face at the origin, its front toward +z). Its vertical
+/// field of view (degrees): from 100 / tan(half of it) the face's 200 rows
+/// fill the frame's height, as part 7's picture does, which is where it
+/// starts. It draws back over the first PULL frames of the hold until the
+/// bank (ending_set.wgsl: three sets of 284 rows and two gaps of 5) fills
+/// BANK_FILL of the frame's height, turned a little (TURN, degrees across
+/// and down); from the white it eases in over EASE_IN frames until the bank
+/// fills SWITCH_OFF_FILL, so the centre set's line and dot read.
+pub const FIELD_OF_VIEW: f64 = 30.0;
+pub const BANK_HEIGHT: f64 = 862.0;
+pub const PULL: f64 = 240.0;
+pub const BANK_FILL: f64 = 0.86;
+pub const SWITCH_OFF_FILL: f64 = 0.96;
+pub const EASE_IN: f64 = 120.0;
+pub const TURN: (f64, f64) = (2.0, 3.0);
+
+/// Where the camera is and what it looks at, at part-8 frame position
+/// `tau` (continuous), the white coming at frame `white`: its position,
+/// the point it looks at, and the tangent of half its field of view.
+pub fn camera(tau: f64, white: f64) -> ([f64; 3], [f64; 3], f64) {
+    let tan_half = (FIELD_OF_VIEW / 2.0).to_radians().tan();
+    let first = 100.0 / tan_half;
+    let revealed = BANK_HEIGHT / 2.0 / (BANK_FILL * tan_half);
+    let closer = BANK_HEIGHT / 2.0 / (SWITCH_OFF_FILL * tan_half);
+    let pull = smootherstep(tau / PULL);
+    let ease = smootherstep((tau - white) / EASE_IN);
+    let distance =
+        (first.ln() + (revealed / first).ln() * pull + (closer / revealed).ln() * ease).exp();
+    let (across, down) = (TURN.0.to_radians() * pull, TURN.1.to_radians() * pull);
+    let direction = [
+        across.sin() * down.cos(),
+        down.sin(),
+        across.cos() * down.cos(),
+    ];
+    (direction.map(|d| d * distance), [0.0; 3], tan_half)
+}
+
+/// 0 to 1 over 0 to 1, with no speed or acceleration at either end.
+fn smootherstep(x: f64) -> f64 {
+    let t = x.clamp(0.0, 1.0);
+    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+}
 
 /// What a part-8 frame shows, by the scene's step (read from the code).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -176,6 +225,10 @@ pub struct EndingBlock {
     /// last, unused, unused.
     pub events: [f32; 4],
     pub events_late: [f32; 4],
+    /// The camera ([`camera`]): its position and the tangent of half its
+    /// field of view; the point it looks at, unused.
+    pub eye: [f32; 4],
+    pub aim: [f32; 4],
 }
 
 /// Part 8 of the HD clip: from its first frame to the demo's last.
@@ -205,6 +258,10 @@ pub struct EndingPreview {
     /// the frames' values): the white's afterglow, the dot's fast glow, its
     /// slow afterglow.
     pub phosphor: Vec<[f64; 3]>,
+    /// Per frame, the original picture's mean colour (linear) in each of
+    /// [`CELLS`], left to right and top to bottom: the light each screen
+    /// throws on the sets.
+    pub cells: Vec<[f32; 4]>,
 }
 
 impl EndingPreview {
@@ -285,6 +342,7 @@ impl EndingPreview {
             line_colour: [0.0; 3],
             profile: Vec::new(),
             phosphor: Vec::new(),
+            cells: Vec::new(),
         };
         let at = |stage: Stage| {
             let j = preview.frames.iter().position(|f| f.stage >= stage);
@@ -341,6 +399,9 @@ impl EndingPreview {
             })
             .collect();
         preview.phosphor = preview.persistence();
+        preview.cells = (0..preview.frames.len())
+            .flat_map(|j| cell_means(preview.indices(j), preview.palette(j)))
+            .collect();
         Ok(preview)
     }
 
@@ -500,6 +561,7 @@ impl EndingPreview {
         }
         let e = &self.events;
         let c = self.line_colour;
+        let (eye, aim, tan_half) = camera(tau, e.white * FRAME_RATE as f64);
         EndingBlock {
             part: [
                 1.0,
@@ -540,8 +602,32 @@ impl EndingPreview {
             trail_right: trail[4],
             events: [e.white, e.collapse, e.line, e.dot].map(|v| v as f32),
             events_late: [e.end, e.last, 0.0, 0.0].map(|v| v as f32),
+            eye: [eye[0] as f32, eye[1] as f32, eye[2] as f32, tan_half as f32],
+            aim: [aim[0] as f32, aim[1] as f32, aim[2] as f32, 0.0],
         }
     }
+}
+
+/// The picture's mean colour (linear) in each of [`CELLS`].
+pub fn cell_means(indices: &[u8], palette: &[u8]) -> Vec<[f32; 4]> {
+    let (columns, rows) = CELLS;
+    let mut cells = vec![[0.0f32, 0.0, 0.0, 1.0]; columns * rows];
+    let mut counts = vec![0.0f32; columns * rows];
+    for (i, &index) in indices.iter().enumerate().take(64000) {
+        let (x, y) = (i % 320, i / 320);
+        let cell = (y * rows / 200) * columns + x * columns / 320;
+        let p = &palette[index as usize * 3..][..3];
+        for (c, &v) in cells[cell].iter_mut().zip(p) {
+            *c += vga_linear(v);
+        }
+        counts[cell] += 1.0;
+    }
+    for (cell, count) in cells.iter_mut().zip(counts) {
+        for c in cell.iter_mut().take(3) {
+            *c /= count;
+        }
+    }
+    cells
 }
 
 fn smoothstep(a: f64, b: f64, x: f64) -> f64 {
@@ -613,6 +699,58 @@ mod tests {
                 Hold, Hold, White, White, Collapse, Collapse, Line, Line, Dot, Dot, End, End
             ]
         );
+    }
+
+    /// The camera starts where the face's 200 rows fill the frame, straight
+    /// on, and draws back until the bank fills its share of the frame, then
+    /// eases in from the white; it never jumps.
+    #[test]
+    fn camera_starts_on_the_face_and_frames_the_bank() {
+        let white = 285.0;
+        let (eye, aim, tan_half) = camera(0.0, white);
+        assert_eq!(aim, [0.0; 3]);
+        assert_eq!(&eye[..2], &[0.0, 0.0]);
+        assert!((eye[2] * tan_half - 100.0).abs() < 1e-9);
+        let length = |e: [f64; 3]| (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]).sqrt();
+        let fill = |tau: f64| BANK_HEIGHT / 2.0 / (length(camera(tau, white).0) * tan_half);
+        assert!((fill(PULL) - BANK_FILL).abs() < 1e-9);
+        assert!((fill(white + EASE_IN) - SWITCH_OFF_FILL).abs() < 1e-9);
+        // Tenths of a frame: each step small against the distance, and the
+        // speed never changing suddenly.
+        let mut previous = camera(0.0, white).0;
+        let mut speed = 0.0;
+        for k in 1..=4800 {
+            let tau = k as f64 / 10.0;
+            let now = camera(tau, white).0;
+            let step = length([0, 1, 2].map(|i| now[i] - previous[i]));
+            assert!(
+                step < 0.002 * length(now),
+                "the camera jumps at frame {tau}"
+            );
+            assert!(
+                (step - speed).abs() < 0.02,
+                "its speed jumps at frame {tau}"
+            );
+            (previous, speed) = (now, step);
+        }
+    }
+
+    #[test]
+    fn cell_means_average_each_cell() {
+        let mut palette = vec![0u8; 768];
+        palette[3..6].fill(63);
+        let mut indices = vec![0u8; 64000];
+        // The top-left cell (80 x 67 pixels) all white, one pixel elsewhere.
+        for y in 0..67 {
+            indices[y * 320..y * 320 + 80].fill(1);
+        }
+        indices[199 * 320 + 319] = 1;
+        let cells = cell_means(&indices, &palette);
+        assert_eq!(cells.len(), CELLS.0 * CELLS.1);
+        assert!((cells[0][0] - 1.0).abs() < 1e-6);
+        assert!(cells[1][0] == 0.0);
+        let last = cells[11][1];
+        assert!(last > 0.0 && last < 0.001, "{last}");
     }
 
     #[test]

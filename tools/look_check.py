@@ -173,12 +173,14 @@ SHOTS = (
     _shot('faithful-greetings', 'faithful', 241.25, '--greetings', '--faithful'),
     _shot('faithful-greetings', 'faithful', 241.7, '--greetings', '--faithful'),
     _shot('original-greetings', 'original', 233.1, '--greetings', '--original'),
-    # Part 8 (--ending): the hand-over from part 7's monster, the CRT coming
-    # on and at full, the white behind the monster, the white frame, the
-    # squeeze early and late, the line, the dot as it is set and at a peak
-    # of its pulse, its afterglow and the final black.
+    # Part 8 (--ending): the hand-over from part 7's monster, the pull back
+    # from the centre set to the bank of nine, the bank revealed, the white
+    # behind the monster, the white frame, the squeeze early and late, the
+    # line, the dot as it is set and at a peak of its pulse, its afterglow
+    # and the final black.
     _shot('ending', 'ending', 242.3, '--ending'),
     _shot('ending', 'ending', 243.5, '--ending'),
+    _shot('ending', 'ending', 244.3, '--ending'),
     _shot('ending', 'ending', 245.5, '--ending'),
     _shot('ending', 'ending', 246.372, '--ending'),
     _shot('ending', 'ending', 246.386, '--ending'),

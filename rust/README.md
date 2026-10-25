@@ -1872,45 +1872,51 @@ frame: every pixel's colour index is the original's on every frame, upscaled
 smoothly as part 7's monster is, the palette moving between frames as the
 original's changes (the lift toward white, the dot's pulse).
 
-The modern view is an old television, switched off. All of it is authored,
-on the port's pictures, palettes, stages and timing:
+The modern view is a bank of nine old monitors, switched off. All of it is
+authored, on the port's pictures, palettes, stages and timing:
 
-- The hold. From part 7's last frame the picture becomes, slightly, an old
-  television's over the first 2.6 seconds of the 4.1-second hold: the tube
-  drawn back to 92% of the height, its face gently curved, each axis
-  pulled in by the square of the other, with rounded corners; the picture
-  on the original's 200 lines as scanlines, each line's spot spread more
-  as the line is brighter; a little halation of a blurred copy, convergence
-  error of up to 0.4 columns toward the sides, a gentle vignette, and the
-  face a shade above black so it shows against the room.
-- The white. The white behind the monster and the white frame flash the
-  face, and their light lingers on the phosphor for a frame or two.
-- The squeeze. The picture squeezes toward row 100 with the original's
-  compression, eased between its steps; its colours are the original's
-  palettes, so they lift toward white as the original's do, and its light
-  rises with the compression to the power 0.35 as the beam's lines crowd
-  together, so the band brightens and blooms. A screen row gathers the
-  source rows the beam's spot spans.
-- The line keeps the original's row and its ends as they are erased,
-  brightening as it shortens, with a warm halo.
-- The dot is a glowing point of phosphor: its glow follows the original's
-  colour 1, so it pulses as the original does, and a slower afterglow,
-  a little greener, gathers while it pulses and decays through the last
-  second; everything fades to black over the last third of a second.
-- The phosphor's persistence: what the beam lit a few frames before still
-  glows, fading, so the squeeze and the line leave short trails.
+- The pull back. The camera starts where the centre set's face fills the
+  frame as part 7's picture does, with the glass flat and the sets unlit,
+  and draws back over 3.4 seconds of the 4.1-second hold until a 3 × 3
+  bank of monitors fills 86% of the frame's height, centred in the dark.
+  On the way the face becomes a tube's: the glass bulges and its outline
+  rounds into bowed sides and deep corners, set back into a thick dark
+  bezel, and the picture takes the original's 200 lines as scanlines (each
+  line's spot wider as it is brighter, fading out once a line is under two
+  of the frame's pixels), with a little halation, convergence error and a
+  vignette. The sets, ray-marched, nearly touch; each neighbour shows the
+  monster a little brighter or dimmer, warmer or cooler, and slightly
+  shifted and turned, as real sets do.
+- The light. There is no room: the screens are the only light. Each set is
+  lit by its own screen (twelve patches, from the original picture's mean
+  colours) and its neighbours', on its rims, the tunnels down to the glass
+  and the bezels' rounded edges; the glass shows the lit rim in its curve,
+  a faint glare and a little light scattered by the phosphor. As the
+  screens go dark, so does the bank.
+- The switch-off, on every set at once, from the white; the camera eases
+  in until the bank fills 96% of the frame, the centre set a third of it.
+  The white behind the monster and the white frame flash the faces and
+  light the bank. The picture squeezes with the original's compression and
+  palettes, so it lifts toward white, its light rising with the
+  compression to the power 0.35 as the beam's lines crowd together. The
+  line keeps the original's row and erased ends, brightening as it
+  shortens. The dot is a glowing point of phosphor following the original's
+  colour 1, so it pulses as the original does, with a slower, greener
+  afterglow that decays through the last second; everything fades to black
+  over the last third of a second. What the beam lit a few frames before
+  still glows, fading.
 
 Nothing flickers: every value moves smoothly between the original's
 frames. Everything is a function of the clip's time; an ignored test checks
 that part 8's first frame is part 7's last, byte for byte, that its own
 drawing a moment later is within two steps of a channel of it, that frames
 drawn after others match a new renderer's and that the end is black. The
-look's constants are at the top of `ending_crt.wgsl`, its timing in
-`hd/ending.rs`.
+pictures' constants are at the top of `ending_crt.wgsl`, the bank's in
+`ending_set.wgsl`, the timing and the camera in `hd/ending.rs`.
 
-At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (150 frames,
-on a machine in use), modern part 8 takes about 1.5 ms a frame over the
-hold and under 1 ms once the picture is gone; faithful HD under 1 ms.
+At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (120 frames,
+on a machine in use), modern part 8 takes about 2 to 3 ms a frame; faithful
+HD under 1 ms.
 
 ### Options and tests
 
