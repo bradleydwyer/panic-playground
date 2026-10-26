@@ -83,8 +83,6 @@ impl Inputs {
 type Prepassed = (BindGroup, [Option<TextureView>; 3], (u32, u32));
 
 pub(super) struct FieldRenderer {
-    /// Identifies the uploaded preview by its heights buffer.
-    key: (usize, usize),
     palette: Texture,
     palette_key: Option<usize>,
     buffers: [Texture; 2],
@@ -353,7 +351,6 @@ impl FieldRenderer {
         let fluid = FrameFluid::new(device, queue, preview, &frame, &relief, &fragment_fluid);
         let zoom = ZoomLevels::new(device, preview, zoom_drawn);
         Self {
-            key: key(preview),
             palette,
             palette_key: None,
             buffers,
@@ -367,11 +364,6 @@ impl FieldRenderer {
             fluid,
             zoom,
         }
-    }
-
-    /// Whether this renderer holds `preview`'s data.
-    pub fn holds(&self, preview: &FieldPreview) -> bool {
-        self.key == key(preview)
     }
 
     /// Make the authors' half-resolution prepass targets for this drawable
@@ -536,8 +528,4 @@ impl FieldRenderer {
         }
         self.pass(encoder, hdr, &self.style, inputs, true, "Part 5 modern");
     }
-}
-
-fn key(preview: &FieldPreview) -> (usize, usize) {
-    (preview.heights.as_ptr() as usize, preview.heights.len())
 }

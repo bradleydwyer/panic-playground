@@ -27,8 +27,6 @@ pub(super) fn crt_source() -> String {
 }
 
 pub(super) struct EndingRenderer {
-    /// Identifies the uploaded preview by its palettes.
-    key: (usize, usize),
     data: BindGroup,
     original: Texture,
     /// The original frame uploaded to `original`.
@@ -373,18 +371,12 @@ impl EndingRenderer {
             })
         };
         Self {
-            key: key(preview),
             faithful: pipeline("Part 8 faithful HD", faithful_source(), "faithful", output),
             crt: pipeline("Part 8 modern", crt_source(), "television", HDR),
             data,
             original,
             original_frame: None,
         }
-    }
-
-    /// Whether this renderer holds `preview`'s data.
-    pub fn holds(&self, preview: &EndingPreview) -> bool {
-        self.key == key(preview)
     }
 
     /// Upload the original frame `j` for the comparison modes.
@@ -461,10 +453,6 @@ fn picture_layers(preview: &EndingPreview) -> (Vec<usize>, Vec<u32>) {
         layer_of.push(layer as u32);
     }
     (shown, layer_of)
-}
-
-fn key(preview: &EndingPreview) -> (usize, usize) {
-    (preview.palettes.as_ptr() as usize, preview.palettes.len())
 }
 
 #[cfg(test)]

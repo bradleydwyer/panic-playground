@@ -59,8 +59,6 @@ struct Targets {
 }
 
 pub(super) struct GreetingsRenderer {
-    /// Identifies the uploaded preview by its palettes.
-    key: (usize, usize),
     data: BindGroup,
     original: Texture,
     /// The original frame uploaded to `original`.
@@ -581,7 +579,6 @@ impl GreetingsRenderer {
             &[target(HDR, None)],
         );
         Self {
-            key: key(preview),
             data,
             original,
             original_frame: None,
@@ -602,11 +599,6 @@ impl GreetingsRenderer {
             monster,
             shows_monster: false,
         }
-    }
-
-    /// Whether this renderer holds `preview`'s data.
-    pub fn holds(&self, preview: &GreetingsPreview) -> bool {
-        self.key == key(preview)
     }
 
     /// Upload the original frame `j` for the comparison modes.
@@ -805,10 +797,6 @@ pub fn noise() -> Vec<u8> {
         }
     }
     out
-}
-
-fn key(preview: &GreetingsPreview) -> (usize, usize) {
-    (preview.palettes.as_ptr() as usize, preview.palettes.len())
 }
 
 #[cfg(test)]

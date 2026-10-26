@@ -71,8 +71,6 @@ impl Inputs {
 }
 
 pub(super) struct RingsRenderer {
-    /// Identifies the uploaded preview by its atlas buffer.
-    key: (usize, usize),
     inputs: Inputs,
     /// Inputs with a blank prepass texture, and with the style's prepass
     /// (bind group, target and its size).
@@ -243,18 +241,12 @@ impl RingsRenderer {
             picture,
         };
         Self {
-            key: key(preview),
             plain: inputs.bind(device, &blank),
             inputs,
             prepassed: None,
             faithful,
             styles,
         }
-    }
-
-    /// Whether this renderer holds `preview`'s data.
-    pub fn holds(&self, preview: &RingsPreview) -> bool {
-        self.key == key(preview)
     }
 
     /// Make the style's half-resolution prepass target for this drawable
@@ -428,9 +420,4 @@ fn upload_fields(
         );
     }
     (array(&atlas), array(&light))
-}
-
-fn key(preview: &RingsPreview) -> (usize, usize) {
-    let atlas = &preview.symbols.atlas;
-    (atlas.as_ptr() as usize, atlas.len())
 }

@@ -144,6 +144,8 @@ impl Frame {
 }
 
 pub struct Clip {
+    /// This load's own number; see [`Clip::id`].
+    id: u64,
     pub frames: Vec<Frame>,
     pub pcm: Vec<i16>,
     pub logo_at: f64,
@@ -286,6 +288,12 @@ pub struct TileTransition {
     pub end_tick: usize,
     pub order: [u16; 160],
     pub palette: [[f32; 4]; 64],
+}
+
+/// A new number for [`Clip::id`].
+fn next_clip_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Clip {
@@ -617,6 +625,7 @@ impl Clip {
             None
         };
         Ok(Self {
+            id: next_clip_id(),
             frames,
             audio: audio_cues(&pcm),
             pcm,
@@ -632,6 +641,15 @@ impl Clip {
             greetings,
             ending,
         })
+    }
+
+    /// A number no other clip loaded in this process has. A renderer keeps
+    /// what it made from a clip's previews (textures and tables) while it is
+    /// given the clip with this number and starts again for any other, so
+    /// the previews' data must not change once the clip is drawn; settings
+    /// read each frame may.
+    pub fn id(&self) -> u64 {
+        self.id
     }
 
     pub fn duration(&self) -> f64 {
@@ -1997,6 +2015,7 @@ mod tests {
         assert_eq!(unwrap.next(at(-312, 520, 0)), [-312.0, 0.0, 0.0]);
         assert_eq!(unwrap.next(at(-312, 516, 2047)), [-312.0, -4.0, -1.0]);
         let mut clip = Clip {
+            id: next_clip_id(),
             frames: Vec::new(),
             pcm: Vec::new(),
             logo_at: 0.0,
@@ -2228,6 +2247,7 @@ mod tests {
             },
         ];
         let clip = Clip {
+            id: next_clip_id(),
             frames: Vec::new(),
             pcm: Vec::new(),
             logo_at: 0.0,

@@ -386,10 +386,13 @@ pub struct Renderer {
     field_keys: [Option<(u8, usize)>; 2],
     reference: wgpu::Texture,
     reference_index: Option<usize>,
+    /// The clip ([`Clip::id`]) that the part renderers, the glyphs and the
+    /// uploads above were made for; a different clip starts them again.
+    clip: Option<u64>,
     /// Scroller glyph atlas and tables; 1 × 1 until a scroller clip is shown.
     glyph_atlas: wgpu::Texture,
     scroll_data: wgpu::Texture,
-    glyph_key: Option<(usize, usize)>,
+    glyphs_uploaded: bool,
     /// Both scroller distance fields for the displayed moment, rendered once
     /// per frame in world space, so marched rays sample rather than evaluate.
     /// Also 1 × 1 until a scroller clip is shown.
@@ -676,9 +679,10 @@ impl Renderer {
                 field_keys: [None, None],
                 reference,
                 reference_index: None,
+                clip: None,
                 glyph_atlas,
                 scroll_data,
-                glyph_key: None,
+                glyphs_uploaded: false,
                 glyph_field,
                 glyph_field_pipeline,
                 field_inputs,
@@ -734,6 +738,9 @@ impl Renderer {
             hud,
             ..
         } = view;
+        if self.clip != Some(clip.id()) {
+            self.start_clip(clip);
+        }
         self.hud_visible = hud.is_some();
         self.modern_view = modern;
         self.part6 = false;
@@ -750,7 +757,7 @@ impl Renderer {
                 .resize(&self.device, &self.uniform, &self.reference, size);
         }
         if let Some(ending) = &clip.ending {
-            if self.ending.as_ref().is_none_or(|r| !r.holds(ending)) {
+            if self.ending.is_none() {
                 self.ending = Some(EndingRenderer::new(
                     &self.device,
                     &self.queue,
@@ -766,7 +773,7 @@ impl Renderer {
             }
         }
         if let Some(greetings) = &clip.greetings {
-            if self.greetings.as_ref().is_none_or(|r| !r.holds(greetings)) {
+            if self.greetings.is_none() {
                 self.greetings = Some(GreetingsRenderer::new(
                     &self.device,
                     &self.queue,
@@ -780,7 +787,7 @@ impl Renderer {
             }
         }
         if let Some(dots) = &clip.dots
-            && self.dots.as_ref().is_none_or(|r| !r.holds(dots))
+            && self.dots.is_none()
         {
             self.dots = Some(DotsRenderer::new(
                 &self.device,
@@ -792,7 +799,7 @@ impl Renderer {
             ));
         }
         if let Some(plasma) = &clip.plasma {
-            if self.plasma.as_ref().is_none_or(|r| !r.holds(plasma)) {
+            if self.plasma.is_none() {
                 self.plasma = Some(PlasmaRenderer::new(
                     &self.device,
                     &self.queue,
@@ -829,7 +836,7 @@ impl Renderer {
             renderer.preroll_fluid(&self.device, &self.queue, field, time);
         }
         if let Some(rings) = &clip.rings {
-            if self.rings.as_ref().is_none_or(|r| !r.holds(rings)) {
+            if self.rings.is_none() {
                 self.rings = Some(RingsRenderer::new(
                     &self.device,
                     &self.queue,
@@ -1000,6 +1007,21 @@ impl Renderer {
         u
     }
 
+    /// Forget what was made for another clip: the part renderers, the
+    /// scroller's glyphs and the frames uploaded.
+    fn start_clip(&mut self, clip: &Clip) {
+        self.clip = Some(clip.id());
+        self.rings = None;
+        self.field = None;
+        self.dots = None;
+        self.plasma = None;
+        self.greetings = None;
+        self.ending = None;
+        self.glyphs_uploaded = false;
+        self.field_keys = [None; 2];
+        self.reference_index = None;
+    }
+
     /// Show original frame `index` in the comparison texture, its pixels
     /// made by `rgba` only when another frame is there.
     fn upload_reference(&mut self, index: usize, rgba: impl FnOnce() -> Vec<u8>) {
@@ -1074,9 +1096,9 @@ impl Renderer {
         u
     }
 
-    /// Make part 5's renderer, unless it holds `field` already.
+    /// Make part 5's renderer, if there is none for this clip yet.
     fn hold_field(&mut self, field: &FieldPreview) {
-        if self.field.as_ref().is_none_or(|r| !r.holds(field)) {
+        if self.field.is_none() {
             self.field = Some(FieldRenderer::new(
                 &self.device,
                 &self.queue,
@@ -1263,12 +1285,10 @@ impl Renderer {
 
     /// Upload a scroller clip's glyph atlas and tables once, on first use.
     fn upload_glyphs(&mut self, scroll: &ScrollerPreview) {
-        let glyphs = &scroll.glyphs;
-        // The clip owns these buffers for its lifetime; identify it by them.
-        let key = (glyphs.atlas.as_ptr() as usize, glyphs.atlas.len());
-        if self.glyph_key == Some(key) {
+        if self.glyphs_uploaded {
             return;
         }
+        let glyphs = &scroll.glyphs;
         let upload = |texture: &wgpu::Texture, bytes: &[u8], (width, height): (u32, u32)| {
             self.queue.write_texture(
                 texture.as_image_copy(),
@@ -1327,7 +1347,7 @@ impl Renderer {
             [&self.glyph_atlas, &self.scroll_data],
             &self.sampler,
         );
-        self.glyph_key = Some(key);
+        self.glyphs_uploaded = true;
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
@@ -2838,6 +2858,33 @@ mod tests {
             modern: true,
             hud: None,
         }
+    }
+
+    /// A renderer starts again for each clip it is given, by the clip's
+    /// number rather than by where its data happens to lie in memory, which
+    /// a clip loaded after another is dropped may reuse: it draws a new
+    /// clip as a new renderer would, here one with no scroller letters.
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
+    fn a_renderer_starts_again_for_each_clip() {
+        let data = crate::test_support::data();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let renderer = || pollster::block_on(Renderer::new(&instance, None)).unwrap();
+        let (mut playing, format) = renderer();
+        let clip = Clip::load_scroller(&data, ScrollerLighting::Studio).unwrap();
+        let lettered = playing.render_rgba(&clip, view_at(31.0), format).unwrap();
+        let first = clip.id();
+        drop(clip);
+        let mut clip = Clip::load_scroller(&data, ScrollerLighting::Studio).unwrap();
+        assert_ne!(clip.id(), first);
+        for value in &mut clip.scroller.as_mut().unwrap().glyphs.atlas {
+            *value = half::f16::from_f32(-13.0);
+        }
+        let blank = playing.render_rgba(&clip, view_at(31.0), format).unwrap();
+        assert_eq!(playing.clip, Some(clip.id()));
+        let fresh = renderer().0.render_rgba(&clip, view_at(31.0), format);
+        assert!(blank == fresh.unwrap());
+        assert!(blank != lettered, "the letters show");
     }
 
     /// Rust field names and byte offsets, in declaration order.

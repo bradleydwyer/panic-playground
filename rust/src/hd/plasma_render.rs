@@ -35,8 +35,6 @@ pub(super) fn light_source() -> String {
 }
 
 pub(super) struct PlasmaRenderer {
-    /// Identifies the uploaded preview by its palettes.
-    key: (usize, usize),
     data: BindGroup,
     original: Texture,
     /// The original frame uploaded to `original`.
@@ -426,7 +424,6 @@ impl PlasmaRenderer {
             hdr,
         );
         Self {
-            key: key(preview),
             data,
             original,
             original_frame: None,
@@ -440,11 +437,6 @@ impl PlasmaRenderer {
             downsample,
             style,
         }
-    }
-
-    /// Whether this renderer holds `preview`'s data.
-    pub fn holds(&self, preview: &PlasmaPreview) -> bool {
-        self.key == key(preview)
     }
 
     /// Upload the original frame `j` for the comparison modes.
@@ -549,8 +541,4 @@ impl PlasmaRenderer {
         pass.set_pipeline(&self.faithful);
         pass.draw(0..3, 0..1);
     }
-}
-
-fn key(preview: &PlasmaPreview) -> (usize, usize) {
-    (preview.palettes.as_ptr() as usize, preview.palettes.len())
 }

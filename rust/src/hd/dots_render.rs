@@ -73,8 +73,6 @@ struct Targets {
 }
 
 pub(super) struct DotsRenderer {
-    /// Identifies the uploaded preview by its points buffer.
-    key: (usize, usize),
     data: BindGroup,
     samples_write: BindGroup,
     samples_read: BindGroup,
@@ -618,7 +616,6 @@ impl DotsRenderer {
             &[target(output, None)],
         );
         Self {
-            key: key(preview),
             data,
             samples_write,
             samples_read,
@@ -636,11 +633,6 @@ impl DotsRenderer {
             marks_dot,
             faithful,
         }
-    }
-
-    /// Whether this renderer holds `preview`'s data.
-    pub fn holds(&self, preview: &DotsPreview) -> bool {
-        self.key == key(preview)
     }
 
     /// Make the targets for this drawable size.
@@ -781,8 +773,4 @@ impl DotsRenderer {
         pass.set_pipeline(&self.faithful);
         pass.draw(0..3, 0..1);
     }
-}
-
-fn key(preview: &DotsPreview) -> (usize, usize) {
-    (preview.points.as_ptr() as usize, preview.points.len())
 }
