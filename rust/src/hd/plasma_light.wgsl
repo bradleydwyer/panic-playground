@@ -531,6 +531,15 @@ fn haze(d:vec3f,reach:f32)->vec3f {
     if end<=begin {return vec3f(0);}
     let span=(end-begin)/f32(HAZE_STEPS);
     let cell=1.0/vec2f(HAZE_CELLS);
+    // Each cell's radiance, both lights, the same at every step: taken once.
+    var radiance:array<vec3f,8>;
+    for(var j=0u;j<HAZE_CELLS.y;j++) {
+        for(var i=0u;i<HAZE_CELLS.x;i++) {
+            let st=vec2f(f32(i),f32(j))*cell;
+            radiance[j*HAZE_CELLS.x+i]=sheet_sample(0u,st+cell*.5,HAZE_LEVEL)
+                +sheet_sample(1u,st+cell*.5,HAZE_LEVEL);
+        }
+    }
     var c=vec3f(0);
     for(var k=0u;k<HAZE_STEPS;k++) {
         let t=begin+(f32(k)+.5)*span;
@@ -547,8 +556,7 @@ fn haze(d:vec3f,reach:f32)->vec3f {
                 let cc=sheet_point(0u,st+cell)-q;
                 let e=sheet_point(0u,st+vec2f(0,cell.y))-q;
                 let omega=solid_angle(a,b,cc)+solid_angle(a,cc,e);
-                light+=omega*(sheet_sample(0u,st+cell*.5,HAZE_LEVEL)
-                    +sheet_sample(1u,st+cell*.5,HAZE_LEVEL));
+                light+=omega*radiance[j*HAZE_CELLS.x+i];
             }
         }
         c+=light*density;
