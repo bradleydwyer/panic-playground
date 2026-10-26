@@ -25,7 +25,9 @@
 //! kernel ([`KERNEL_WGSL`]) while the doubling before it plays; the window
 //! resamples the level of the current doubling. A level depends only on its
 //! depth and resolution, so however a moment is reached (playing, seeking,
-//! scrubbing, a one-frame export) it shows the same image. A level that isn't
+//! scrubbing, a one-frame export) it shows the same image. The first level
+//! is built the same way ahead of the first frame that shows it, in the
+//! last part of part 6 ([`ZoomLevels::prebuild`]). A level that isn't
 //! complete when it is needed is finished at once ([`ZoomLevels::advance`]),
 //! a one-off hitch, rather than shown partly built.
 //!
@@ -57,6 +59,15 @@ pub const LEVEL_SLOTS: usize = 3;
 /// it is built each frame.
 pub const BUILD_BY: f64 = 0.8;
 pub const BUILD_FRAMES: u32 = 48;
+/// The level the zoom first shows is built ahead, in the frames before
+/// part 5's view is first drawn ([`ZoomLevels::prebuild`]): its rows in
+/// proportion over [`PREBUILD_SPAN`] seconds ending [`PREBUILD_LEAD`]
+/// seconds before then, after the smoke's pre-roll has finished. Authored,
+/// so that the first frame doesn't build it all at once: observed with
+/// `--bench` at 2560 x 1440 on an Apple M5 Max, about 18 ms of compute
+/// that made that frame take 26 to 29 ms.
+pub const PREBUILD_SPAN: f64 = 1.0;
+pub const PREBUILD_LEAD: f64 = 0.5;
 /// BLA's tolerance: the level-0 validity radius is this times |Z_m|. 2^-12
 /// moves the smooth count by about 1e-3 against a direct fixed-point render
 /// (the prototype's proof), with 40% fewer steps than 2^-24.
@@ -1304,8 +1315,7 @@ impl ZoomLevels {
             self.make_slots(device, size);
         }
         let last = self.path.last_level();
-        let level = (block.zoom[2] as f64).clamp(0.0, self.path.stop);
-        let k = (level.floor() as usize).min(last);
+        let (level, k) = self.level_of(block);
         self.clock += 1;
         let mut encoder = device.create_command_encoder(&Default::default());
         let shown = self.claim(k, None);
@@ -1335,6 +1345,57 @@ impl ZoomLevels {
         self.shown = Some(shown);
     }
 
+    /// The depth `block` shows, within the path, and its level.
+    fn level_of(&self, block: &FieldBlock) -> (f64, usize) {
+        let level = (block.zoom[2] as f64).clamp(0.0, self.path.stop);
+        (level, (level.floor() as usize).min(self.path.last_level()))
+    }
+
+    /// Ahead of the first frame that shows the zoom, at clip time `first`,
+    /// on a drawable of `drawable` pixels: build the level it shows there,
+    /// the rows due by `time`, in proportion over [`PREBUILD_SPAN`] seconds
+    /// ending [`PREBUILD_LEAD`] seconds before `first`, and nothing outside
+    /// them. A level depends only on its depth and size, so it is the same
+    /// as one built at once; [`ZoomLevels::advance`] finishes whatever is
+    /// left at `first`, as after a seek into the span.
+    pub fn prebuild(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        preview: &FieldPreview,
+        drawable: (u32, u32),
+        time: f64,
+        first: f64,
+    ) {
+        let begin = first - PREBUILD_LEAD - PREBUILD_SPAN;
+        if time <= begin || time >= first {
+            return;
+        }
+        let block = preview.controls(first);
+        if block.part[0] < 0.5 || block.window[0] > 0.5 {
+            return;
+        }
+        let size = Self::level_size(drawable);
+        if size != self.size {
+            self.make_slots(device, size);
+        }
+        let (_, k) = self.level_of(&block);
+        let due = ((time - begin) / PREBUILD_SPAN).min(1.0);
+        let rows = (self.size.1 as f64 * due).ceil() as u32;
+        if self
+            .slot_of(k)
+            .is_some_and(|i| self.slots[i].rows_done >= rows)
+        {
+            return;
+        }
+        self.clock += 1;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let i = self.claim(k, None);
+        self.build(queue, &mut encoder, i, rows);
+        self.slots[i].used = self.clock;
+        queue.submit([encoder.finish()]);
+    }
+
     /// Levels resident and complete, for tests: (level, rows done).
     #[cfg(test)]
     fn resident(&self) -> Vec<(usize, u32)> {
@@ -1342,6 +1403,49 @@ impl ZoomLevels {
             .iter()
             .filter_map(|s| s.level.map(|l| (l, s.rows_done)))
             .collect()
+    }
+
+    /// Level k's rows built and its texels as they are on the GPU, if it is
+    /// resident; for tests.
+    #[cfg(test)]
+    pub fn read_level(&self, device: &Device, queue: &Queue, k: usize) -> Option<(u32, Vec<u8>)> {
+        let slot = &self.slots[self.slot_of(k)?];
+        let (width, height) = self.size;
+        let row = width as u64 * 8;
+        let stride = row.div_ceil(256) * 256;
+        let read = device.create_buffer(&BufferDescriptor {
+            label: Some("Part 5 zoom level readback"),
+            size: stride * height as u64,
+            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            slot._texture.as_image_copy(),
+            TexelCopyBufferInfo {
+                buffer: &read,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(stride as u32),
+                    rows_per_image: Some(height),
+                },
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        read.slice(..).map_async(MapMode::Read, |_| {});
+        device.poll(PollType::wait_indefinitely()).unwrap();
+        let mapped = read.slice(..).get_mapped_range().unwrap();
+        let texels = mapped
+            .chunks(stride as usize)
+            .flat_map(|r| &r[..row as usize])
+            .copied()
+            .collect();
+        Some((slot.rows_done, texels))
     }
 }
 
@@ -1357,10 +1461,19 @@ fn level_texture(device: &Device, (width, height): (u32, u32)) -> Texture {
         sample_count: 1,
         dimension: TextureDimension::D2,
         format: LEVEL_FORMAT,
-        usage: TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING,
+        usage: LEVEL_USAGE,
         view_formats: &[],
     })
 }
+
+/// A level texture's uses, and in tests read back ([`ZoomLevels::read_level`]).
+#[cfg(not(test))]
+const LEVEL_USAGE: TextureUsages =
+    TextureUsages::STORAGE_BINDING.union(TextureUsages::TEXTURE_BINDING);
+#[cfg(test)]
+const LEVEL_USAGE: TextureUsages = TextureUsages::STORAGE_BINDING
+    .union(TextureUsages::TEXTURE_BINDING)
+    .union(TextureUsages::COPY_SRC);
 
 #[cfg(test)]
 mod tests {
@@ -1639,6 +1752,75 @@ mod tests {
             let seen = shot(&mut playing, time);
             assert!(seen == shot(&mut renderer(), time), "seeking, {time}");
         }
+    }
+
+    /// The zoom's first level is built ahead, in the frames before part 5's
+    /// view is first drawn (part 6's fade), and is the same as one built
+    /// there at once: played on at 60 frames a second, nothing is built
+    /// before the span, part of it during it and all of it by its end, and
+    /// at the fade its texels and the frames drawn from then on match a new
+    /// renderer's byte for byte; a seek into the span, or back before it,
+    /// carries on from the rows built, and the fade finishes the rest.
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
+    fn first_level_is_built_ahead_the_same() {
+        use crate::hd::clip::{Clip, ScrollerLighting};
+        use crate::hd::renderer::{Renderer, View};
+        let data = crate::test_support::data();
+        let clip = Clip::load_field(&data, ScrollerLighting::Studio).unwrap();
+        let field = clip.field.as_ref().unwrap();
+        let first = field.picture_fade.unwrap();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let renderer = || pollster::block_on(Renderer::new(&instance, None)).unwrap();
+        let view = |time| View {
+            time,
+            size: (640, 360),
+            comparison: 0,
+            modern: true,
+            hud: None,
+        };
+        let level = |r: &Renderer| {
+            let field = r.field_renderer().unwrap();
+            field.zoom_level(&r.device, &r.queue, 0)
+        };
+        let rows = |r: &Renderer| level(r).map_or(0, |l| l.0);
+        let play = |r: &mut Renderer, from: f64, to: f64| {
+            let mut k = 0;
+            while from + k as f64 / 60.0 < to {
+                r.prepare(&clip, view(from + k as f64 / 60.0));
+                k += 1;
+            }
+        };
+        let (mut fresh, format) = renderer();
+        fresh.prepare(&clip, view(first));
+        let at_once = level(&fresh).unwrap();
+        let height = ZoomLevels::level_size(view(first).size).1;
+        assert_eq!(at_once.0, height, "built at the fade");
+        let begin = first - PREBUILD_LEAD - PREBUILD_SPAN;
+        // Played on through part 6: built in the span, done before the fade.
+        let (mut playing, _) = renderer();
+        play(&mut playing, begin - 0.5, begin);
+        assert_eq!(rows(&playing), 0, "nothing before the span");
+        play(&mut playing, begin, begin + 0.5 * PREBUILD_SPAN);
+        let part = rows(&playing);
+        assert!(part > 0 && part < height, "{part} rows half way");
+        play(&mut playing, begin + 0.5 * PREBUILD_SPAN, first - 0.1);
+        assert!(level(&playing).unwrap() == at_once, "built ahead");
+        for time in [first, first + 0.5, first + 0.85] {
+            let pixels = playing.render_rgba(&clip, view(time), format).unwrap();
+            let new = renderer().0.render_rgba(&clip, view(time), format).unwrap();
+            assert!(pixels == new, "frame at {time}");
+        }
+        assert!(level(&playing).unwrap() == at_once, "shown at the fade");
+        // Seeks into the span, back before it, and on to the fade.
+        let (mut seeking, _) = renderer();
+        play(&mut seeking, first - 0.9, first - 0.85);
+        let part = rows(&seeking);
+        assert!(part > 0 && part < height, "{part} rows after a seek");
+        play(&mut seeking, first - 20.0, first - 19.9);
+        assert_eq!(rows(&seeking), part, "kept before the span");
+        play(&mut seeking, first, first + 0.01);
+        assert!(level(&seeking).unwrap() == at_once, "finished at the fade");
     }
 
     /// Levels for the music run's stop, without a preview.

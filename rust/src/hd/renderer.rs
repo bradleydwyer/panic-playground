@@ -841,9 +841,13 @@ impl Renderer {
                 return self.prepare_field(clip, field, view);
             }
             // Ahead of part 5, in either view: a few of its smoke's pre-roll
-            // steps, so that they don't all run when the smoke starts.
+            // steps, so that they don't all run when the smoke starts; and
+            // in the modern view, its zoom's first level, in bands.
             let renderer = self.field.as_mut().unwrap();
             renderer.preroll_fluid(&self.device, &self.queue, field, time);
+            if modern {
+                renderer.prebuild_zoom(&self.device, &self.queue, field, time, size);
+            }
         }
         if let Some(rings) = &clip.rings {
             if self.rings.is_none() {
@@ -1540,6 +1544,12 @@ impl Renderer {
         pass.draw(0..6, 0..512);
         pass.set_pipeline(&self.foreground);
         pass.draw(0..3, 0..1);
+    }
+
+    /// Part 5's renderer, once made; for its tests.
+    #[cfg(test)]
+    pub(super) fn field_renderer(&self) -> Option<&FieldRenderer> {
+        self.field.as_ref()
     }
 
     /// Render one frame for offline capture, in tightly packed RGBA byte order.

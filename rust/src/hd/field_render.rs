@@ -11,11 +11,12 @@
 //!
 //! The zoom hook is the zoom author's [`ZoomLevels`] (field_zoom.rs): the
 //! deep zoom's reference orbit, tables and level kernel, and the levels it
-//! builds in bands, one per doubling. This file brings it to each moment
+//! builds in bands, one per doubling. This file builds its first level in
+//! the frames before part 5's view is first drawn, brings it to each moment
 //! shown and binds the shown level for the fragments as group 2.
 use super::field::{
-    BUFFER_SIZE, COARSE_CELLS, FieldBlock, FieldPreview, FrameFluid, MAP_SIZE, ZoomLevels, authors,
-    frame_shape,
+    BUFFER_SIZE, COARSE_CELLS, FRAME_TAKES_PART6_FADE, FieldBlock, FieldPreview, FrameFluid,
+    MAP_SIZE, ZoomLevels, authors, frame_shape,
 };
 use super::renderer::wgsl_parts;
 use wgpu::*;
@@ -435,6 +436,28 @@ impl FieldRenderer {
         self.fluid.preroll(device, queue, preview, time);
     }
 
+    /// In the modern view, before part 5's view is first drawn, build the
+    /// zoom's first level for a drawable of `size` pixels, the rows due by
+    /// `time` ([`ZoomLevels::prebuild`]), so that the first frame doesn't
+    /// build it all at once.
+    pub fn prebuild_zoom(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        preview: &FieldPreview,
+        time: f64,
+        size: (u32, u32),
+    ) {
+        // The modern view first draws part 5 at part 6's fade when the
+        // frame author takes it over, else at part 5's start.
+        let first = match (FRAME_TAKES_PART6_FADE, preview.picture_fade) {
+            (true, Some(fade)) => fade,
+            _ => preview.seconds(0),
+        };
+        self.zoom
+            .prebuild(device, queue, preview, size, time, first);
+    }
+
     /// Bring the zoom's levels to the moment `block` shows on a drawable of
     /// `size` pixels: the shown level complete, a band of the next built.
     pub fn advance_zoom(
@@ -457,6 +480,17 @@ impl FieldRenderer {
     #[cfg(test)]
     pub(super) fn fluid_prerolled(&self) -> (usize, usize) {
         self.fluid.prerolled()
+    }
+
+    /// The zoom's level k, if resident: its rows built and its texels.
+    #[cfg(test)]
+    pub(super) fn zoom_level(
+        &self,
+        device: &Device,
+        queue: &Queue,
+        k: usize,
+    ) -> Option<(u32, Vec<u8>)> {
+        self.zoom.read_level(device, queue, k)
     }
 
     /// The fragments' fluid bind group: the smoke's light behind the frame

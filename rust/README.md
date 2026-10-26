@@ -961,7 +961,11 @@ doubling before it plays, due by 0.8 of the way (`BUILD_BY`), and the
 window resamples the level of the current doubling, 1 to 2 times
 magnified, with four samples a pixel. Unlike the original's, a level is
 computed afresh, not enlarged from the one before. Three levels are kept on
-the GPU: the one shown, the next and one for stepping back.
+the GPU: the one shown, the next and one for stepping back. The first
+level, which part 6's fade first shows, is built the same way ahead of it,
+over the second that ends half a second before the fade (`PREBUILD_SPAN`,
+`PREBUILD_LEAD`), after the smoke's pre-roll, so that the fade's first
+frame doesn't build it all at once.
 
 A level is a pure function of its depth and size, so playing, seeking,
 scrubbing and a one-frame export show the same image. An ignored test
@@ -970,7 +974,9 @@ at five moments reached by seeking. A level that isn't complete when it is
 needed is finished at once, rather than shown partly built or blank. That
 is a one-off hitch when seeking: at 2560 x 1440 a level takes about 18 to
 40 ms, at 3840 x 2160 40 to 80 ms (the deeper, the longer), and a seek can
-need two.
+need two. A second ignored test checks that the first level built ahead,
+in playing through part 6 or after seeks into and back before the second
+it is built in, is the same, byte for byte, as one built at the fade.
 
 Each texel is computed by perturbation from one reference orbit, at the
 minibrot's nucleus. That orbit is exactly periodic (Z_3341 = 0 = Z_0), so
@@ -1317,12 +1323,13 @@ step, `frame_fluid` and `frame_fluid_init` with `field_style.wgsl`'s
 The zoom hook is the zoom author's `ZoomLevels` (`field_zoom.rs`), which
 `field_render.rs` creates beside the fluid, with the zoom's stop as the
 preview measures it, and brings to each moment shown (`advance_zoom`, after
-the fluid). It owns the reference orbit, the BLA tables and radii, the level
-kernel and `LEVEL_SLOTS` level textures, and decides which level is shown
-and how much of the next to build. The kernel, `KERNEL_WGSL`, is a compute
-module of its own. It is kept in the Rust file because every `.wgsl` file
-in `src/hd` goes into the renderers' modules with the shared controls.
-Group 2 of the modern module's fragments is the zoom's:
+the fluid); in the modern view's frames before part 5 it builds the first
+level ahead (`prebuild_zoom`). It owns the reference orbit, the BLA tables
+and radii, the level kernel and `LEVEL_SLOTS` level textures, and decides
+which level is shown and how much of the next to build. The kernel,
+`KERNEL_WGSL`, is a compute module of its own. It is kept in the Rust file
+because every `.wgsl` file in `src/hd` goes into the renderers' modules with
+the shared controls. Group 2 of the modern module's fragments is the zoom's:
 
 - Binding 1, `zoom_level`: the shown level, rgba16float. Each texel holds
   its band phase, log2 of its distance estimate in texels, and its class:
