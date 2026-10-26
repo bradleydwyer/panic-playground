@@ -359,6 +359,9 @@ fn through_glass(q:vec2f,distance:f32)->Seen {
 // the middle to the mirrored edges. The colour split shifts the red and
 // blue stripes, and so each beat k times as much.
 fn grille(face:vec2f,across:f32,pixel:f32,v:f32)->vec3f {
+    // Before it fades in it is 1 everywhere: sqrt(v) is 0 and the sum
+    // finite.
+    if v<=0.0 {return vec3f(1);}
     let half=160.0*COLUMN;
     let seen=through_glass(face,ec.eye.z);
     let bow=1.0+GRILLE_BOW*(seen.at.y/100.0)*(seen.at.y/100.0);
