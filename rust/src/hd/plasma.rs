@@ -70,6 +70,13 @@ pub const LAYER_SMOOTH: f64 = 3.0;
 pub const PALETTE_SMOOTH: (f64, f64) = (1.5, 3.0);
 /// The same for the layers' displacements, in frames (authored).
 pub const LAYER_GLIDE: f64 = 1.0;
+/// The most frames part 4's preview may hold, part 7's first included: the
+/// modern renderer keeps each frame's palette as a row of one texture, and
+/// `Renderer::new` asks the device for wgpu's default limits, under which a
+/// texture is at most this high (8,192 rows, about 117 s at 70 Hz; the real
+/// part is about 45 s). Parts 7 and 8 keep their palettes the same way
+/// within one-minute limits, well inside it.
+pub const MAX_FRAMES: usize = wgpu::Limits::defaults().max_texture_dimension_2d as usize;
 
 /// What a part-4 frame shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -338,8 +345,13 @@ impl PlasmaPreview {
         let mut offsets = None;
         let part7 = loop {
             let j = frames.len();
-            if j > FRAME_RATE as usize * 120 {
-                return Err("Part 4 exceeded its two-minute import limit".into());
+            // This frame and part 7's, after the loop, must both fit.
+            if j + 2 > MAX_FRAMES {
+                return Err(format!(
+                    "Part 4 exceeded its import limit of {MAX_FRAMES} frames ({:.0} s), \
+                     the most its palettes' texture holds",
+                    MAX_FRAMES as f64 / FRAME_RATE as f64
+                ));
             }
             // The palette this step showed was filled from the pointers the
             // previous frame's step rendered with.
@@ -1430,6 +1442,19 @@ mod tests {
             plasma.frame_at(dots.seconds(dots.frames.len() - 1)),
             Some(0)
         );
+    }
+
+    /// Part 4's import limit is the palette texture's height under the
+    /// limits the renderer asks the device for (wgpu's defaults), and leaves
+    /// the real part (about 45 s, observed) and the invented one room.
+    #[test]
+    fn part4s_import_limit_fits_its_palette_texture() {
+        assert_eq!(
+            MAX_FRAMES as u32,
+            wgpu::Limits::default().max_texture_dimension_2d
+        );
+        assert!(MAX_FRAMES > FRAME_RATE as usize * 100);
+        assert!(invented().frames.len() < MAX_FRAMES);
     }
 
     /// The layers the renderer uploads, each plasma frame smoothed down the

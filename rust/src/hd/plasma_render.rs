@@ -154,6 +154,14 @@ impl PlasmaRenderer {
         preview: &PlasmaPreview,
     ) -> Self {
         let frames = preview.frames.len();
+        // One palette row a frame (see plasma::MAX_FRAMES, which the import
+        // keeps to the default limit).
+        let rows = device.limits().max_texture_dimension_2d as usize;
+        assert!(
+            frames <= rows,
+            "Part 4's {frames} frames need a palette texture {frames} rows high; \
+             this device allows {rows}"
+        );
         let buffer = |label, contents: &[u8]| {
             device.create_buffer_init(&util::BufferInitDescriptor {
                 label: Some(label),
