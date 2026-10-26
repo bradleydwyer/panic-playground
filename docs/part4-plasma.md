@@ -9,7 +9,10 @@ The ground, both its looks (water, the default, and a polished stone floor on
 the preview's **D** key) and the sheets' new placement are all authored. None
 of it is recovered from the original, which has no ground: below its plasma
 and beside its logo the screen is black. Faithful HD and the original view
-are unchanged.
+are unchanged. The water itself (its reflectance, swell and drops,
+`water.wgsl`) is shared with part 3, whose objects fly over it, with the
+tuning keys below; part 3's notes in [rust/README.md](../rust/README.md)
+say where it lies there.
 
 ## Where it lies
 

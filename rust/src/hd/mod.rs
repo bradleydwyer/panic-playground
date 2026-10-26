@@ -4,6 +4,7 @@
 pub mod clip;
 pub mod dots;
 mod dots_render;
+pub mod dots_water;
 pub mod ending;
 mod ending_render;
 pub mod field;

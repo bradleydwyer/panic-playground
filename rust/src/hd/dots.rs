@@ -21,6 +21,10 @@
 //!   continuous iterations with a floating-point sine.
 //! - Authored: everything the modern view adds (dots_light.wgsl and the
 //!   values marked authored here).
+use super::dots_water::Water;
+use super::plasma::MAX_DROPS;
+#[cfg(doc)]
+use super::plasma::WaterTuning;
 use crate::{
     data::Data,
     engine::{FRAME_RATE, SAMPLE_RATE},
@@ -176,6 +180,14 @@ pub struct DotsBlock {
     /// The port's eight echo levels (6-bit blue), echo k being the frame 4k
     /// before; read from the trail palettes.
     pub echo_levels: [[f32; 4]; 2],
+    /// The water (authored; dots_water.rs): part 4's water controls
+    /// ([`WaterTuning::controls`], filled in by the renderer); where it
+    /// lies ([`Water::controls`]); and the drops on it, their places
+    /// across and back, ages and 1, or all 0 for none (filled in by the
+    /// renderer).
+    pub water: [f32; 4],
+    pub water_plane: [f32; 4],
+    pub drops: [[f32; 4]; MAX_DROPS],
 }
 
 /// The replay's position: a frame, the scene and video memory after it.
@@ -243,6 +255,8 @@ pub struct DotsPreview {
     /// The last dot frame as part 4's wait holds it.
     wait: (Vec<u8>, Vec<u8>),
     pub events: DotsEvents,
+    /// The modern view's water (authored; dots_water.rs).
+    pub water: Water,
     replay: Replay,
 }
 
@@ -361,6 +375,7 @@ impl DotsPreview {
             .iter()
             .position(|f| f.phase >= Phase::Shades)
             .unwrap_or(0);
+        let water = Water::new(&tables.objects[tables.order[7]], &dot_frames)?;
         let order_starts = (shades.max(1)..positions.len())
             .filter(|&j| positions[j] >> 8 != positions[j - 1] >> 8)
             .map(|j| (start + j) as f64 / FRAME_RATE as f64)
@@ -378,6 +393,7 @@ impl DotsPreview {
             order_starts,
             wait,
             events,
+            water,
             replay: Replay {
                 checkpoints,
                 music: positions,
@@ -737,6 +753,9 @@ impl DotsPreview {
                 [levels[0], levels[1], levels[2], levels[3]],
                 [levels[4], levels[5], levels[6], levels[7]],
             ],
+            water: [0.0; 4],
+            water_plane: self.water.controls(),
+            drops: [[0.0; 4]; MAX_DROPS],
         }
     }
 }

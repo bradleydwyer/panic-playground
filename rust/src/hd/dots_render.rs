@@ -36,18 +36,20 @@ pub(super) fn faithful_source() -> String {
     wgsl_parts(&[COMMON, FAITHFUL])
 }
 
-/// The modern module: the shared controls, dots_common.wgsl and
-/// dots_light.wgsl.
+/// The modern module: the shared controls, dots_common.wgsl,
+/// dots_light.wgsl and the water it shares with part 4.
 pub(super) fn light_source() -> String {
-    wgsl_parts(&[COMMON, LIGHT])
+    wgsl_parts(&[COMMON, LIGHT, super::plasma_render::WATER])
 }
 
-/// Samples in the buffer: each light's trail, each shade tip's, then the
-/// lights the haze sees.
+/// Samples in the buffer: each light's trail, each shade tip's, the lights
+/// the haze sees, then the trails' and the tips' mirror images in the
+/// water.
 fn sample_count() -> u32 {
     let points = POINTS as u32;
     let discs = SHADE_DISCS as u32;
-    points * (TRAIL_SAMPLES + AFTER_SAMPLES + 1) + discs * (SHADE_SAMPLES + 1) + points + discs
+    let trails = points * (TRAIL_SAMPLES + AFTER_SAMPLES + 1) + discs * (SHADE_SAMPLES + 1);
+    2 * trails + points + discs
 }
 
 /// Bytes of one sample (two vec4f).
@@ -60,9 +62,10 @@ struct Targets {
     /// faithful HD (the output's format).
     underlay_hdr: TextureView,
     underlay_out: TextureView,
-    /// The light painted (rgb) and the shade count (a), and the haze at half
-    /// resolution.
+    /// The light painted (rgb) and the shade count (a), its mirror image in
+    /// the water, painted the same way, and the haze at half resolution.
     painted: TextureView,
+    mirror: TextureView,
     haze: TextureView,
     /// Faithful HD's marks: the shade count and the echo level.
     count: TextureView,
@@ -76,7 +79,8 @@ pub(super) struct DotsRenderer {
     data: BindGroup,
     samples_write: BindGroup,
     samples_read: BindGroup,
-    images_layout: BindGroupLayout,
+    light_layout: BindGroupLayout,
+    faithful_layout: BindGroupLayout,
     output: TextureFormat,
     targets: Option<Targets>,
     samples: ComputePipeline,
@@ -84,6 +88,8 @@ pub(super) struct DotsRenderer {
     fog_light: ComputePipeline,
     trails: RenderPipeline,
     shades: RenderPipeline,
+    mirror_trails: RenderPipeline,
+    mirror_shades: RenderPipeline,
     haze: RenderPipeline,
     style: RenderPipeline,
     marks_shade: RenderPipeline,
@@ -465,10 +471,18 @@ impl DotsRenderer {
                 resource: BindingResource::TextureView(&fog_noise),
             }],
         });
-        let images_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("Part 3 images"),
-            entries: &[1, 2, 3].map(|b| entry(b, ShaderStages::FRAGMENT, sampled())),
-        });
+        let images_layout = |label, bindings: &[u32]| {
+            let entries: Vec<_> = bindings
+                .iter()
+                .map(|&b| entry(b, ShaderStages::FRAGMENT, sampled()))
+                .collect();
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries: &entries,
+            })
+        };
+        let light_layout = images_layout("Part 3 modern images", &[1, 2, 3, 4]);
+        let faithful_layout = images_layout("Part 3 faithful images", &[1, 2, 3]);
         let layout = |groups: &[&BindGroupLayout]| {
             let groups: Vec<Option<&BindGroupLayout>> = groups.iter().map(|&g| Some(g)).collect();
             device.create_pipeline_layout(&PipelineLayoutDescriptor {
@@ -539,6 +553,22 @@ impl DotsRenderer {
             "swept",
             &[target(hdr, Some(ADD))],
         );
+        let mirror_trails = pipeline(
+            "Part 3 trails' mirror image",
+            &painting,
+            &light_module,
+            "dots_trail_mirrored",
+            "swept",
+            &[target(hdr, Some(ADD))],
+        );
+        let mirror_shades = pipeline(
+            "Part 3 shade bobs' mirror image",
+            &painting,
+            &light_module,
+            "shade_trail_mirrored",
+            "swept",
+            &[target(hdr, Some(ADD))],
+        );
         let haze = pipeline(
             "Part 3 haze",
             &painting,
@@ -549,7 +579,7 @@ impl DotsRenderer {
         );
         let style = pipeline(
             "Part 3 modern",
-            &layout(&[&data_layout, &read_layout, &images_layout]),
+            &layout(&[&data_layout, &read_layout, &light_layout]),
             &light_module,
             "fullscreen",
             "dots_style",
@@ -609,7 +639,7 @@ impl DotsRenderer {
         );
         let faithful = pipeline(
             "Part 3 faithful HD",
-            &layout(&[&data_layout, &images_layout]),
+            &layout(&[&data_layout, &faithful_layout]),
             &faithful_module,
             "fullscreen",
             "faithful",
@@ -619,7 +649,8 @@ impl DotsRenderer {
             data,
             samples_write,
             samples_read,
-            images_layout,
+            light_layout,
+            faithful_layout,
             output,
             targets: None,
             samples: samples_pipeline,
@@ -627,6 +658,8 @@ impl DotsRenderer {
             fog_light: fog_light_pipeline,
             trails,
             shades,
+            mirror_trails,
+            mirror_shades,
             haze,
             style,
             marks_shade,
@@ -649,26 +682,35 @@ impl DotsRenderer {
         let underlay_hdr = view("Part 3 underlay", size, hdr);
         let underlay_out = view("Part 3 faithful underlay", size, self.output);
         let painted = view("Part 3 light painted", size, hdr);
+        let mirror = view("Part 3 light's mirror image", size, hdr);
         let haze = view("Part 3 haze", half, hdr);
         let count = view("Part 3 shade count", size, TextureFormat::R16Float);
         let level = view("Part 3 echo level", size, TextureFormat::R16Float);
-        let images = |views: [&TextureView; 3]| {
+        let images = |layout, views: &[&TextureView]| {
+            let entries: Vec<_> = (1..)
+                .zip(views)
+                .map(|(binding, view)| BindGroupEntry {
+                    binding,
+                    resource: BindingResource::TextureView(view),
+                })
+                .collect();
             device.create_bind_group(&BindGroupDescriptor {
                 label: Some("Part 3 images"),
-                layout: &self.images_layout,
-                entries: &[1, 2, 3].map(|b| BindGroupEntry {
-                    binding: b,
-                    resource: BindingResource::TextureView(views[b as usize - 1]),
-                }),
+                layout,
+                entries: &entries,
             })
         };
-        let light_images = images([&underlay_hdr, &painted, &haze]);
-        let faithful_images = images([&count, &level, &underlay_out]);
+        let light_images = images(
+            &self.light_layout,
+            &[&underlay_hdr, &painted, &haze, &mirror],
+        );
+        let faithful_images = images(&self.faithful_layout, &[&count, &level, &underlay_out]);
         self.targets = Some(Targets {
             size,
             underlay_hdr,
             underlay_out,
             painted,
+            mirror,
             haze,
             count,
             level,
@@ -738,6 +780,15 @@ impl DotsRenderer {
             pass.set_pipeline(&self.trails);
             pass.draw(0..6, 0..POINTS as u32 * (TRAIL_SAMPLES + AFTER_SAMPLES));
             pass.set_pipeline(&self.shades);
+            pass.draw(0..6, 0..2 * SHADE_DISCS as u32 * SHADE_SAMPLES);
+        }
+        {
+            let mut pass = Self::pass(encoder, "Part 3 mirror image", &[&targets.mirror]);
+            pass.set_bind_group(0, &self.data, &[]);
+            pass.set_bind_group(1, &self.samples_read, &[]);
+            pass.set_pipeline(&self.mirror_trails);
+            pass.draw(0..6, 0..POINTS as u32 * (TRAIL_SAMPLES + AFTER_SAMPLES));
+            pass.set_pipeline(&self.mirror_shades);
             pass.draw(0..6, 0..2 * SHADE_DISCS as u32 * SHADE_SAMPLES);
         }
         {

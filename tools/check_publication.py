@@ -53,17 +53,19 @@ RESEARCH_FILES = {
     'rust/src/hd/field_zoom.wgsl', 'rust/src/hd/field_zoom.rs',
     'rust/src/hd/field_mountain.wgsl', 'rust/src/hd/field_mountain.rs',
     # Part 3: its state and tables, its GPU side, the shared shader code,
-    # faithful HD and the modern light painting.
+    # faithful HD, the modern light painting and its authored water.
     'rust/src/hd/dots.rs', 'rust/src/hd/dots_render.rs',
     'rust/src/hd/dots_common.wgsl', 'rust/src/hd/dots_faithful.wgsl',
-    'rust/src/hd/dots_light.wgsl',
+    'rust/src/hd/dots_light.wgsl', 'rust/src/hd/dots_water.rs',
     # Part 4: its state and tables, the slab fitted to the logo, its GPU
     # side, the shared shader code, faithful HD and the modern light on
-    # stone, and the notes on its authored floor.
+    # stone, the authored water it shares with part 3, and the notes on its
+    # authored floor.
     'docs/part4-plasma.md',
     'rust/src/hd/plasma.rs', 'rust/src/hd/plasma_stone.rs',
     'rust/src/hd/plasma_render.rs', 'rust/src/hd/plasma_common.wgsl',
     'rust/src/hd/plasma_faithful.wgsl', 'rust/src/hd/plasma_light.wgsl',
+    'rust/src/hd/water.wgsl',
     # Part 7: its state and tables, the letterforms derived from the user's
     # data at load (no glyph data), its GPU side, the shared shader code,
     # faithful HD, the modern lighthouse and the authored letters' outlines.

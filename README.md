@@ -308,11 +308,16 @@ The modern look is light painting, a long exposure in a dark, hazy space:
   discs shaped by a seven-bladed diaphragm. A haze and drifting fog glow
   round them, they breathe with the bass, and each order of the tune sends
   a plane of light sweeping through the object.
+- The objects fly over part 4's water, which mirrors the lights, their
+  trails and the glowing haze, a slow swell drawing the reflection out into
+  streaks and the odd drop sending rings through it. It lies level below
+  them; as the box comes down at the end, the camera rises and tilts down
+  onto it, so the box lands on the water part 4's slab stands in.
 - The landed box's trails collapse into its lights, which flare up in the
   second before part 4's white slab takes over.
 
-The lights, the brush, the lens, the haze and the music's effects are
-authored; the positions, motion and timing are the port's. Faithful HD
+The lights, the brush, the lens, the haze, the water and the music's
+effects are authored; the positions, motion and timing are the port's. Faithful HD
 (**M**) shows the original's discs and dots at display resolution. The
 [renderer notes](rust/README.md#part-3-dots) say what is read, what is
 interpreted and what is authored.
@@ -368,7 +373,8 @@ stone is seen by:
   so a drop lands beside the slab and sends out a ring of ripples. The
   water is lit only by the sheets, so it comes up and fades with them.
   **D** swaps it for polished dark stone, and the number keys tune the
-  mirror, the swell and the drops while the preview plays.
+  mirror, the swell and the drops (part 3's water too) while the preview
+  plays.
 - Part 3's flare overexposes the camera, and the exposure settles over the
   original's 64 frames of fade from white, so the carving comes out of the
   white first. The slab sinks with the original's line compare.

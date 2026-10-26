@@ -14,6 +14,7 @@ use wgpu::*;
 const COMMON: &str = include_str!("plasma_common.wgsl");
 const FAITHFUL: &str = include_str!("plasma_faithful.wgsl");
 const LIGHT: &str = include_str!("plasma_light.wgsl");
+pub(super) const WATER: &str = include_str!("water.wgsl");
 
 /// The sheets' light: each sheet's size in their texture and the levels,
 /// as plasma_light.wgsl has them (SHEET_SIZE; its cells read levels 6 and
@@ -28,10 +29,10 @@ pub(super) fn faithful_source() -> String {
     wgsl_parts(&[COMMON, FAITHFUL])
 }
 
-/// The modern module: the shared controls, plasma_common.wgsl and
-/// plasma_light.wgsl.
+/// The modern module: the shared controls, plasma_common.wgsl,
+/// plasma_light.wgsl and the water it shares with part 3.
 pub(super) fn light_source() -> String {
-    wgsl_parts(&[COMMON, LIGHT])
+    wgsl_parts(&[COMMON, LIGHT, WATER])
 }
 
 pub(super) struct PlasmaRenderer {

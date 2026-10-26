@@ -405,11 +405,11 @@ optical simulation. All fields are generated locally in memory.
 | ; / ' | Strength of the waves' side light and shadows |
 | N | Part 6: the new symbols in its middle, or the original's throughout |
 | D | Part 4: still water under the slab (default), or polished dark stone |
-| 1 / 2 | Part 4: the water's mirror, ×0.8 or ×1.25 (1, real water, to 8; default 3) |
-| 3 / 4 | Part 4: the swell's height, ×0.8 or ×1.25 (0, a flat mirror, to about 15; default 3.8) |
-| 5 / 6 | Part 4: the swell's speed, ×0.8 or ×1.25 (about 0.26 to 15; default 3.8) |
-| 7 / 8 | Part 4: the swell's size, ×0.8 or ×1.25 (about 0.26 to 15; default 1) |
-| 9 / 0 | Part 4: drops ×0.8 or ×1.25 as often (none, or one every 17 s to 0.9 s; default every 1.2 s) |
+| 1 / 2 | Parts 3 and 4: the water's mirror, ×0.8 or ×1.25 (1, real water, to 8; default 3) |
+| 3 / 4 | Parts 3 and 4: the swell's height, ×0.8 or ×1.25 (0, a flat mirror, to about 15; default 3.8; part 3's is 0.35 of it) |
+| 5 / 6 | Parts 3 and 4: the swell's speed, ×0.8 or ×1.25 (about 0.26 to 15; default 3.8) |
+| 7 / 8 | Parts 3 and 4: the swell's size, ×0.8 or ×1.25 (about 0.26 to 15; default 1) |
+| 9 / 0 | Parts 3 and 4: drops ×0.8 or ×1.25 as often (none, or one every 17 s to 0.9 s; default every 1.2 s) |
 | J / K | Part 7: the beam's starting turn 16 frames shorter (faster) or longer (slower); default 128; from 237 s it shortens linearly to 32 by part 8 |
 | U / I | Part 7: the beam's tilt toward the camera, 3° less or more (0 to 90°, straight at the camera; default 51°) |
 | G / H | Part 7: the beam's starting brightness, ×0.8 or ×1.25 (0.05 to 4; default 0.25); from 237 s it rises linearly to 1 by part 8 |
@@ -1492,6 +1492,28 @@ port's timing, positions and motion.
   music's position, sends a plane of light through the object along a
   direction of its own, stronger where the PCM shows an onset. The waves
   light the lights and their trails, not the air.
+- The water: part 4's (`water.wgsl`, shared) lies beneath the objects:
+  its reflectance, raised by the mirror's gain to 1 - (1 - F)^gain (about
+  gain times F where F is small, as in part 4, and never past a perfect
+  mirror near grazing), its swell at 0.35 of part 4's height (this level
+  view meets it near grazing, where the same slopes turn the mirror image
+  much further) and its drops, from 2 s after the dots begin until the
+  rotation stops, below the objects. The trails and the shade tips are
+  painted again at their mirror images, at the depth those lie, so as far
+  out of focus; where each pixel's ray meets the water the composite takes
+  that image, moved as the slopes turn the reflected ray and spread over
+  the slopes too small to draw. The air's march goes on past the water
+  through its mirror image (the grid's cells under the water gather the
+  light at their mirror images). A light under the surface fades over 12
+  units. The objects fly along the camera's axis, about 500 to 2,300 units
+  out, and the box lands tilted 20 degrees toward the camera: no one plane
+  is below the one and under the other. So the water lies level, 260 units
+  below the camera, until the box comes down; then, eased with the box's
+  descent, it turns into the plane of the box's base, read as the camera
+  rising and tilting down onto it (`dots_water.rs`). About 1% of the
+  points ever dip under it, corners of the lattices and the box as they
+  pass nearest; an ignored test checks that and that the box at rest
+  stands on it.
 - At the end the rotation stops, the box's trails collapse into its lights,
   which burn brighter, and in the second before part 4 draws they flare and
   swell. Part 4's slab takes over at its own colours through the tonemap,
@@ -1501,14 +1523,16 @@ Everything is a function of the clip's time, so seeking, captures and video
 agree; an ignored test checks frames drawn after others against a new
 renderer's, byte for byte. Each frame a compute pass takes 105 samples
 along each light's path and 65 along each tip's and another gathers the
-air's light, the lights are drawn as 53,000 swept discs, the haze and fog
+air's light, the lights are drawn as 53,000 swept discs and again at their
+mirror images, the haze and fog
 are marched at half resolution, and a composite takes part 5's view during
 the zoom. The look's constants are at the top of `dots_light.wgsl`; the
 fog's noise is made once, on the GPU, when the renderer loads.
 
 At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (150 frames,
 on a machine in use), the shade bobs and the dots take 2.4 to 4.3 ms a
-frame, the flare the most. The hold and the zoom, which draw part 5's
+frame, the flare the most, before the water; its mirror image adds about
+0.5 to 0.9 ms (at 151 s, 3.3 to 3.8 ms; at 176 s, 3.5 to 4.3). The hold and the zoom, which draw part 5's
 frame and smoke beneath, take 7 to 9 ms, about what part 5's own last
 seconds take. Faithful HD takes 0.3 to 0.8 ms. Gathering the air's light in
 the grid and marching it, rather than summing each light's closed-form
@@ -1650,7 +1674,7 @@ and motion, and on the block fitted to the logo.
 - The ground, which the original lacks, is the slab's base reaching back
   to the sheets, which stand on it: calm water mirroring them, with an
   occasional drop, or with **D** polished dark stone. The number keys tune
-  the water. It shows only by their light, so only while the plasma is lit
+  the water (part 3's too). It shows only by their light, so only while the plasma is lit
   ([docs/part4-plasma.md](../docs/part4-plasma.md)).
 - The arrival: on the slab frame part 3's own modern view, its box flared,
   is still drawn, and gives way to this one over 0.35 s. The stone comes in

@@ -580,7 +580,7 @@ fn run() -> Result<(), String> {
     let (mut renderer, format) = pollster::block_on(Renderer::new(&instance, Some(&surface)))?;
     println!("GPU: {}", renderer.adapter_name);
     println!(
-        "Space pause · arrows step, hold to scrub · Cmd+arrows section · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength · W wall waves · ,/. wave depth · ;/' wave light · N part 6 symbols · D part 4 water/floor · 1/2 3/4 5/6 7/8 9/0 part 4 water · J/K U/I G/H Z/X O part 7 beam · T/Y part 8 grille · Q/E part 8 pull-back"
+        "Space pause · arrows step, hold to scrub · Cmd+arrows section · Home replay · End logo · Tab original/HD · C compare · M faithful/modern · F fullscreen · S capture · L scroller lighting · B backdrop · [/] bump shape · -/= wall strength · W wall waves · ,/. wave depth · ;/' wave light · N part 6 symbols · D part 4 water/floor · 1/2 3/4 5/6 7/8 9/0 parts 3–4 water · J/K U/I G/H Z/X O part 7 beam · T/Y part 8 grille · Q/E part 8 pull-back"
     );
     let (width, height) = window.drawable_size();
     let mut config = wgpu::SurfaceConfiguration {
@@ -838,7 +838,7 @@ fn run() -> Result<(), String> {
                             println!("Part 7 beam: width x{:.2}", g.beam_width);
                         }
                     }
-                    // Part 4's water, tuned live: the mirror's gain, the
+                    // The water (parts 3 and 4), tuned live: the mirror's gain, the
                     // swell's height, speed and size, and the drops' rate.
                     Keycode::Num1
                     | Keycode::Num2

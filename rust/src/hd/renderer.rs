@@ -161,6 +161,13 @@ struct DotsBlock {
     low: array<vec4f,10>,
     // The port's eight echo levels (6-bit blue), echo k 4k frames old.
     echo_levels: array<vec4f,2>,
+    // The water: mirror gain, swell height, swell clock, swell size; where
+    // it lies: the tilt and the camera's height above it at rest, the
+    // camera's height while level, the dot frame the box comes down from;
+    // the drops: place across and back, age, 1 (0 none).
+    water: vec4f,
+    water_plane: vec4f,
+    drops: array<vec4f,6>,
 }
 // Part 4's controls (hd/plasma.rs, PlasmaBlock), in u.plasma.
 struct PlasmaBlock {
@@ -1752,6 +1759,16 @@ const SOURCE_EXTENT: wgpu::Extent3d = wgpu::Extent3d {
 /// and each order's first row's strength.
 fn dots_block(clip: &Clip, dots: &DotsPreview, time: f64, aspect: f64) -> DotsBlock {
     let mut block = dots.controls(time, aspect);
+    // Part 4's water, as tuned, on part 4's clock (its slab frame is part
+    // 3's last).
+    let water = clip
+        .plasma
+        .as_ref()
+        .map_or_else(Default::default, |p| p.water);
+    block.water = water.controls(time - dots.seconds(dots.frames.len() - 1));
+    block.drops = dots
+        .water
+        .drops(&water, &dots.events, time - dots.seconds(0));
     for k in 0..40 {
         block.low[k / 4][k % 4] = clip.audio_at(time - k as f64 / 70.0).intro[2];
     }
@@ -2291,9 +2308,12 @@ mod tests {
             hit_strength,
             low,
             echo_levels,
+            water,
+            water_plane,
+            drops,
         ];
         assert_eq!(
-            expected.last().unwrap().1 + size_of::<[[f32; 4]; 2]>(),
+            expected.last().unwrap().1 + size_of::<[[f32; 4]; super::super::plasma::MAX_DROPS]>(),
             size_of::<DotsBlock>()
         );
         for (name, source) in [
@@ -2406,9 +2426,13 @@ mod tests {
                     "dots_samples" => &[(1, 1)],
                     "dots_fog_light" => &[(1, 2), (1, 6)],
                     "dots_fog_noise" => &[(1, 7)],
-                    "dots_trail" | "shade_trail" | "swept" => &[(1, 2)],
+                    "dots_trail"
+                    | "shade_trail"
+                    | "dots_trail_mirrored"
+                    | "shade_trail_mirrored"
+                    | "swept" => &[(1, 2)],
                     "dots_haze" => &[(1, 2), (1, 3), (1, 4), (1, 5)],
-                    "dots_style" => &[(1, 2), (2, 1), (2, 2), (2, 3)],
+                    "dots_style" => &[(1, 2), (2, 1), (2, 2), (2, 3), (2, 4)],
                     n => panic!("unexpected entry point {n}"),
                 };
                 let uses = info.get_entry_point(index);
