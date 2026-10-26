@@ -231,6 +231,15 @@ const SWING_LEAD=.45;
 // photon_vertex.
 @group(1) @binding(7) var<storage,read_write> photons_out:array<vec4f>;
 @group(1) @binding(8) var<storage,read> photons_in:array<vec4f>;
+// The splats the caustics draw, in their order (each a photon's take-away,
+// 2 n, or its landing, 2 n + 1; see count_splats): each block of photons'
+// count of them, the list, and the draw's arguments (6 corners, the
+// list's length, 0, 0); written by count_splats and list_splats, the list
+// read by photon_vertex.
+@group(1) @binding(9) var<storage,read_write> block_splats:array<u32>;
+@group(1) @binding(10) var<storage,read_write> splats_out:array<u32>;
+@group(1) @binding(11) var<storage,read_write> splat_draw:array<u32,4>;
+@group(1) @binding(12) var<storage,read> splats_in:array<u32>;
 
 // ---- The beam -----------------------------------------------------------------------
 // The stars' colour, (v, 8v/9, 7v/9) as the scanout shows it, in linear
@@ -691,18 +700,72 @@ fn photon_home(cell:u32)->vec2f {
     let landing=p+out*(max(LANDING-along,1.0)/max(dot(out,axis),.05));
     photons_out[n]=vec4f(map_uv(landing),weight*carried,carried);
 }
+// Only the splats that move light are drawn, in the order of all of them
+// (so the map adds up the same light in the same order; the others would
+// draw nothing): whether photon n's take-away (landing false) or landing
+// is drawn, as photon_vertex decides it. The photons are taken in blocks of
+// SPLAT_BLOCK, SPLAT_RUN for each of a workgroup's threads in turn; each
+// block's splats are counted, then listed after the earlier blocks'.
+const SPLAT_RUN=8u;
+const SPLAT_BLOCK=2048u;
+fn splat_drawn(n:u32,landing:bool)->bool {
+    let ph=photons_in[n];
+    return !(ph.w<=0.0 || (landing && ph.z<=0.0));
+}
+// A thread's run of photons: how many of their splats are drawn.
+fn run_splats(block:u32,t:u32)->u32 {
+    var count=0u;
+    for(var k=0u;k<SPLAT_RUN;k++) {
+        let n=block*SPLAT_BLOCK+t*SPLAT_RUN+k;
+        if n>=PHOTON_GRID.x*PHOTON_GRID.y*3u {break;}
+        count+=u32(splat_drawn(n,false))+u32(splat_drawn(n,true));
+    }
+    return count;
+}
+var<workgroup> runs:array<u32,256>;
+@compute @workgroup_size(256) fn count_splats(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) t:u32) {
+    runs[t]=run_splats(g.x,t);
+    workgroupBarrier();
+    if t==0u {
+        var count=0u;
+        for(var i=0u;i<256u;i++) {count+=runs[i];}
+        block_splats[g.x]=count;
+    }
+}
+@compute @workgroup_size(256) fn list_splats(@builtin(workgroup_id) g:vec3u,@builtin(local_invocation_index) t:u32,@builtin(num_workgroups) blocks:vec3u) {
+    runs[t]=run_splats(g.x,t);
+    workgroupBarrier();
+    if t==0u {
+        // Each run's place in the list: after the earlier blocks' and the
+        // block's earlier runs'.
+        var at=0u;
+        for(var b=0u;b<g.x;b++) {at+=block_splats[b];}
+        for(var i=0u;i<256u;i++) {let count=runs[i];runs[i]=at;at+=count;}
+        if g.x==blocks.x-1u {splat_draw=array<u32,4>(6u,at,0u,0u);}
+    }
+    workgroupBarrier();
+    var at=runs[t];
+    for(var k=0u;k<SPLAT_RUN;k++) {
+        let n=g.x*SPLAT_BLOCK+t*SPLAT_RUN+k;
+        if n>=PHOTON_GRID.x*PHOTON_GRID.y*3u {break;}
+        if splat_drawn(n,false) {splats_out[at]=2u*n;at++;}
+        if splat_drawn(n,true) {splats_out[at]=2u*n+1u;at++;}
+    }
+}
 // Each photon that met a block moves its light: it takes what it carried
 // away where its straight ray would have gone and puts what reached through
 // where it landed (a tent, see SPLAT), in its wavelength's channel; the
-// map is cleared to 0 and added to the beam's profile.
+// map is cleared to 0 and added to the beam's profile. Splat k of the list
+// is instance k.
 struct PhotonVertex {
     @builtin(position) position:vec4f,
     @location(0) offset:vec2f,
     @location(1) @interpolate(flat) colour:vec3f,
 }
-@vertex fn photon_vertex(@builtin(vertex_index) corner:u32,@builtin(instance_index) i:u32)->PhotonVertex {
+@vertex fn photon_vertex(@builtin(vertex_index) corner:u32,@builtin(instance_index) k:u32)->PhotonVertex {
     var out:PhotonVertex;
     out.position=vec4f(2,2,2,1);
+    let i=splats_in[k];
     let n=i/2u;
     let landing=(i%2u)==1u;
     let ph=photons_in[n];

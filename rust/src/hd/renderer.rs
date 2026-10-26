@@ -1266,7 +1266,15 @@ impl Renderer {
         }
         let mut u = base_uniforms(clip, view, self.srgb, part_state(PART7_PHASE, j, time));
         u.greetings = greetings.controls(time);
+        self.greetings.as_mut().unwrap().traces_photons =
+            greetings.photons_can_move_light(&u.greetings);
         u
+    }
+
+    /// Part 7's renderer, when the prepared moment is part 7's (tests).
+    #[cfg(test)]
+    pub(super) fn part7(&self) -> Option<&GreetingsRenderer> {
+        self.greetings.as_ref().filter(|_| self.part7)
     }
 
     /// Part 8: the shared controls for this moment, and the original frame
@@ -2682,9 +2690,10 @@ mod tests {
 
     /// Each part-7 entry point uses only the bindings its pipeline has
     /// (greetings_render.rs): group 0 everywhere; in group 1, the photons
-    /// written by their trace and read by the caustics, the blocks' geometry
-    /// and the strips' transmission for the dust and the air, and the dust,
-    /// the geometry and the air for the picture.
+    /// written by their trace, read with the splats' counts, list and draw
+    /// as the splats are listed, and with the list by the caustics, the
+    /// blocks' geometry and the strips' transmission for the dust and the
+    /// air, and the dust, the geometry and the air for the picture.
     #[test]
     fn part7_entry_points_use_only_their_bindings() {
         for (name, source) in [
@@ -2702,7 +2711,8 @@ mod tests {
                 let allowed: &[(u32, u32)] = match entry.name.as_str() {
                     "fullscreen" | "faithful" | "blocks" => &[],
                     "trace_photons" => &[(1, 7)],
-                    "photon_vertex" | "photon_fragment" => &[(1, 8)],
+                    "count_splats" | "list_splats" => &[(1, 8), (1, 9), (1, 10), (1, 11)],
+                    "photon_vertex" | "photon_fragment" => &[(1, 8), (1, 12)],
                     "dust_vertex" | "dust_fragment" | "air" => &[(1, 2), (1, 3)],
                     "style" => &[(1, 1), (1, 2), (1, 4), (1, 5), (1, 6)],
                     n => panic!("unexpected entry point {n}"),

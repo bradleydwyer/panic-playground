@@ -45,6 +45,25 @@ pub const NOISE_SIZE: u32 = 64;
 /// each of three wavelengths (greetings_light.wgsl's PHOTON_GRID).
 pub const PHOTON_GRID: (u32, u32) = (600, 600);
 const PHOTONS: u32 = PHOTON_GRID.0 * PHOTON_GRID.1 * 3;
+/// The photons a workgroup of count_splats and list_splats takes
+/// (greetings_light.wgsl's SPLAT_BLOCK: its 256 threads, SPLAT_RUN each).
+const SPLAT_BLOCK: u32 = 2048;
+
+/// How the strips' transmission map is made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Caustics {
+    /// Only cleared, as the trace would leave it where the photons move no
+    /// light ([`GreetingsPreview::photons_can_move_light`]).
+    Cleared,
+    /// The photons traced, and of their splats those that move light drawn,
+    /// listed in order (greetings_light.wgsl's count_splats and
+    /// list_splats).
+    Listed,
+    /// The photons traced and every splat drawn, in order, as the list
+    /// stands in for (tests).
+    #[cfg(test)]
+    All,
+}
 
 /// The images the modern view's passes hand on, for one drawable size.
 struct Targets {
@@ -64,14 +83,24 @@ pub(super) struct GreetingsRenderer {
     /// The original frame uploaded to `original`.
     original_frame: Option<usize>,
     motes: u32,
+    #[cfg(test)]
+    transmission_map: Texture,
     transmission: TextureView,
     photons_out: BindGroup,
     photons_in: BindGroup,
+    /// The splats the caustics draw, in order, and the draw's arguments
+    /// (greetings_light.wgsl's count_splats and list_splats).
+    splats_listed: BindGroup,
+    splat_draw: Buffer,
+    #[cfg(test)]
+    splats: Buffer,
     scene_layout: BindGroupLayout,
     style_layout: BindGroupLayout,
     targets: Option<Targets>,
     faithful: RenderPipeline,
     trace: ComputePipeline,
+    count_splats: ComputePipeline,
+    list_splats: ComputePipeline,
     caustics: RenderPipeline,
     blocks: RenderPipeline,
     dust: RenderPipeline,
@@ -81,6 +110,10 @@ pub(super) struct GreetingsRenderer {
     /// Whether the moment shows the monster (the modern view then draws
     /// only it).
     pub shows_monster: bool,
+    /// Whether the moment's photons can move any light
+    /// ([`GreetingsPreview::photons_can_move_light`]); where they can't, the
+    /// trace and the caustics are skipped and their map only cleared.
+    pub traces_photons: bool,
 }
 
 const HDR: TextureFormat = TextureFormat::Rgba16Float;
@@ -325,14 +358,20 @@ impl GreetingsRenderer {
             },
         );
         let noise_view = noise_texture.create_view(&Default::default());
-        let transmission = texture(
+        // (Tests read the map back.)
+        let readable = if cfg!(test) {
+            TextureUsages::COPY_SRC
+        } else {
+            TextureUsages::empty()
+        };
+        let transmission_map = texture(
             device,
             "Part 7 strips' transmission",
             TRANSMISSION_SIZE,
             HDR,
-            TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
-        )
-        .create_view(&Default::default());
+            TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING | readable,
+        );
+        let transmission = transmission_map.create_view(&Default::default());
         let all = ShaderStages::VERTEX | ShaderStages::FRAGMENT | ShaderStages::COMPUTE;
         let storage = BindingType::Buffer {
             ty: BufferBindingType::Storage { read_only: true },
@@ -446,7 +485,57 @@ impl GreetingsRenderer {
         });
         let photons_in_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("Part 7 photons gathered"),
-            entries: &[entry(8, ShaderStages::VERTEX, storage)],
+            entries: &[
+                entry(8, ShaderStages::VERTEX, storage),
+                entry(12, ShaderStages::VERTEX, storage),
+            ],
+        });
+        // The splats: a count for each block of photons, the list (at most
+        // two for each photon) and the draw's four arguments. (Tests write
+        // the list and the arguments to draw every splat.)
+        let written = if cfg!(test) {
+            BufferUsages::COPY_DST
+        } else {
+            BufferUsages::empty()
+        };
+        let splat_buffer = |label, size: u64, usage| {
+            device.create_buffer(&BufferDescriptor {
+                label: Some(label),
+                size,
+                usage: BufferUsages::STORAGE | usage,
+                mapped_at_creation: false,
+            })
+        };
+        let block_splats = splat_buffer(
+            "Part 7 splats a block",
+            PHOTONS.div_ceil(SPLAT_BLOCK) as u64 * 4,
+            BufferUsages::empty(),
+        );
+        let splats = splat_buffer("Part 7 splats", PHOTONS as u64 * 2 * 4, written);
+        let splat_draw = splat_buffer("Part 7 splats drawn", 16, BufferUsages::INDIRECT | written);
+        let read_write = BindingType::Buffer {
+            ty: BufferBindingType::Storage { read_only: false },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        };
+        let splats_listed_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("Part 7 splats listed"),
+            entries: &[
+                entry(8, ShaderStages::COMPUTE, storage),
+                entry(9, ShaderStages::COMPUTE, read_write),
+                entry(10, ShaderStages::COMPUTE, read_write),
+                entry(11, ShaderStages::COMPUTE, read_write),
+            ],
+        });
+        let splats_listed = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Part 7 splats listed"),
+            layout: &splats_listed_layout,
+            entries: &[
+                resource(8, &photons),
+                resource(9, &block_splats),
+                resource(10, &splats),
+                resource(11, &splat_draw),
+            ],
         });
         let photons_out = device.create_bind_group(&BindGroupDescriptor {
             label: Some("Part 7 photons traced"),
@@ -456,7 +545,7 @@ impl GreetingsRenderer {
         let photons_in = device.create_bind_group(&BindGroupDescriptor {
             label: Some("Part 7 photons gathered"),
             layout: &photons_in_layout,
-            entries: &[resource(8, &photons)],
+            entries: &[resource(8, &photons), resource(12, &splats)],
         });
         let layout = |groups: &[&BindGroupLayout]| {
             let groups: Vec<Option<&BindGroupLayout>> = groups.iter().map(|&g| Some(g)).collect();
@@ -526,6 +615,18 @@ impl GreetingsRenderer {
             compilation_options: Default::default(),
             cache: None,
         });
+        let compute = |label, entry_point| {
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout(&[&data_layout, &splats_listed_layout])),
+                module: &light_module,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let count_splats = compute("Part 7 splats counted", "count_splats");
+        let list_splats = compute("Part 7 splats listed", "list_splats");
         let caustics = pipeline(
             "Part 7 caustics",
             &layout(&[&data_layout, &photons_in_layout]),
@@ -583,14 +684,22 @@ impl GreetingsRenderer {
             original,
             original_frame: None,
             motes: preview.motes.len() as u32,
+            #[cfg(test)]
+            transmission_map,
             transmission,
             photons_out,
             photons_in,
+            splats_listed,
+            splat_draw,
+            #[cfg(test)]
+            splats,
             scene_layout,
             style_layout,
             targets: None,
             faithful,
             trace,
+            count_splats,
+            list_splats,
             caustics,
             blocks,
             dust,
@@ -598,6 +707,7 @@ impl GreetingsRenderer {
             style,
             monster,
             shows_monster: false,
+            traces_photons: true,
         }
     }
 
@@ -699,23 +809,12 @@ impl GreetingsRenderer {
             return;
         }
         let t = self.targets.as_ref().unwrap();
-        {
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: Some("Part 7 photons"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.trace);
-            pass.set_bind_group(0, &self.data, &[]);
-            pass.set_bind_group(1, &self.photons_out, &[]);
-            pass.dispatch_workgroups(PHOTONS.div_ceil(64), 1, 1);
-        }
-        {
-            let mut pass = Self::pass(encoder, "Part 7 caustics", &[&self.transmission]);
-            pass.set_bind_group(0, &self.data, &[]);
-            pass.set_bind_group(1, &self.photons_in, &[]);
-            pass.set_pipeline(&self.caustics);
-            pass.draw(0..6, 0..PHOTONS * 2);
-        }
+        let caustics = if self.traces_photons {
+            Caustics::Listed
+        } else {
+            Caustics::Cleared
+        };
+        self.draw_caustics(encoder, caustics);
         {
             let mut pass = Self::pass(encoder, "Part 7 blocks", &[&t.geometry]);
             pass.set_bind_group(0, &self.data, &[]);
@@ -741,6 +840,101 @@ impl GreetingsRenderer {
         pass.set_bind_group(1, &t.style_inputs, &[]);
         pass.set_pipeline(&self.style);
         pass.draw(0..3, 0..1);
+    }
+
+    /// The transmission map, cleared, then (but for [`Caustics::Cleared`])
+    /// the beam's photons traced through the blocks and their splats
+    /// gathered into it.
+    fn draw_caustics(&self, encoder: &mut CommandEncoder, caustics: Caustics) {
+        let photons = PHOTONS.div_ceil(64);
+        let traced = ("Part 7 photons", &self.trace, &self.photons_out, photons);
+        let (listed, blocks) = (&self.splats_listed, PHOTONS.div_ceil(SPLAT_BLOCK));
+        let passes = match caustics {
+            Caustics::Cleared => vec![],
+            Caustics::Listed => vec![
+                traced,
+                ("Part 7 splats counted", &self.count_splats, listed, blocks),
+                ("Part 7 splats listed", &self.list_splats, listed, blocks),
+            ],
+            #[cfg(test)]
+            Caustics::All => vec![traced],
+        };
+        for (label, pipeline, group, groups) in passes {
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: Some(label),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &self.data, &[]);
+            pass.set_bind_group(1, group, &[]);
+            pass.dispatch_workgroups(groups, 1, 1);
+        }
+        let mut pass = Self::pass(encoder, "Part 7 caustics", &[&self.transmission]);
+        if caustics == Caustics::Cleared {
+            return;
+        }
+        pass.set_bind_group(0, &self.data, &[]);
+        pass.set_bind_group(1, &self.photons_in, &[]);
+        pass.set_pipeline(&self.caustics);
+        match caustics {
+            Caustics::Listed => pass.draw_indirect(&self.splat_draw, 0),
+            #[cfg(test)]
+            Caustics::All => pass.draw(0..6, 0..PHOTONS * 2),
+            Caustics::Cleared => unreachable!(),
+        }
+    }
+
+    /// The transmission map at the prepared moment, made `caustics`' way
+    /// whatever the renderer would do there, read back (RGBA16F texels,
+    /// row by row).
+    #[cfg(test)]
+    pub(super) fn caustics_map(
+        &self,
+        device: &Device,
+        queue: &Queue,
+        caustics: Caustics,
+    ) -> Vec<u8> {
+        if caustics == Caustics::All {
+            // Every splat, in order: the list is every instance.
+            let every: Vec<u32> = (0..PHOTONS * 2).collect();
+            queue.write_buffer(&self.splats, 0, bytemuck::cast_slice(&every));
+        }
+        let (width, height) = TRANSMISSION_SIZE;
+        let stride = width * 8;
+        let buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("Part 7 transmission readback"),
+            size: stride as u64 * height as u64,
+            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        self.draw_caustics(&mut encoder, caustics);
+        encoder.copy_texture_to_buffer(
+            self.transmission_map.as_image_copy(),
+            TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(stride),
+                    rows_per_image: Some(height),
+                },
+            },
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer.slice(..).map_async(MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        device.poll(PollType::wait_indefinitely()).unwrap();
+        rx.recv().unwrap().unwrap();
+        let map = buffer.slice(..).get_mapped_range().unwrap().to_vec();
+        buffer.unmap();
+        map
     }
 
     /// Faithful HD into the output.
@@ -851,6 +1045,16 @@ mod tests {
         assert_eq!(ATLAS_COLUMNS * CELL, ATLAS_SIZE.0 as usize);
         let (gx, gy) = super::PHOTON_GRID;
         assert!(light.contains(&format!("const PHOTON_GRID=vec2u({gx}u,{gy}u);")));
+        // The splats' blocks: a workgroup of 256 threads, SPLAT_RUN photons
+        // each.
+        let block = super::SPLAT_BLOCK;
+        assert!(light.contains(&format!("const SPLAT_BLOCK={block}u;")));
+        assert!(light.contains(&format!("const SPLAT_RUN={}u;", block / 256)));
+        assert_eq!(
+            light.matches("@compute @workgroup_size(256) fn ").count(),
+            2,
+            "count_splats and list_splats"
+        );
         // The map is square, as its spread is the same both ways.
         let (w, h) = super::TRANSMISSION_SIZE;
         assert_eq!(w, h);
@@ -867,6 +1071,67 @@ mod tests {
         assert!(light.contains(
             "fn project(p:vec3f)->vec2f {return p.xy*CAMERA_DISTANCE/(CAMERA_DISTANCE+p.z);}"
         ));
+    }
+
+    /// Part 7's caustics are every photon's: at every frame of the part, and
+    /// halfway to the next, the strips' transmission map the renderer makes,
+    /// the trace skipped where the photons move no light or the splats that
+    /// move light listed and drawn, is byte for byte the one that drawing
+    /// every photon's splats makes; and both ways are taken, the list
+    /// through the words, where the caustics show.
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
+    fn part7_caustics_are_every_photons_however_they_are_drawn() {
+        use super::super::clip::{Clip, ScrollerLighting};
+        use super::super::renderer::{Renderer, View};
+        use super::Caustics;
+        let data = crate::test_support::data();
+        let clip = Clip::load_greetings(&data, ScrollerLighting::Studio).unwrap();
+        let greetings = clip.greetings.as_ref().unwrap();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let (mut renderer, _) = pollster::block_on(Renderer::new(&instance, None)).unwrap();
+        let (mut cleared, mut listed, mut lit) = (0, 0, 0);
+        let mut empty = None;
+        for j in 0..greetings.frames.len() {
+            for half in [0.0, 0.5] {
+                let time = greetings.seconds(j) + half / crate::engine::FRAME_RATE as f64;
+                renderer.prepare(
+                    &clip,
+                    View {
+                        time,
+                        size: (64, 36),
+                        comparison: 0,
+                        modern: true,
+                        hud: None,
+                    },
+                );
+                let Some(part7) = renderer.part7().filter(|r| !r.shows_monster) else {
+                    continue;
+                };
+                let made = if part7.traces_photons {
+                    listed += 1;
+                    Caustics::Listed
+                } else {
+                    cleared += 1;
+                    Caustics::Cleared
+                };
+                let (device, queue) = (&renderer.device, &renderer.queue);
+                let every = part7.caustics_map(device, queue, Caustics::All);
+                assert!(
+                    part7.caustics_map(device, queue, made) == every,
+                    "{time:.4} s (frame {j}, {made:?})"
+                );
+                let empty = empty
+                    .get_or_insert_with(|| part7.caustics_map(device, queue, Caustics::Cleared));
+                lit += (every != *empty) as usize;
+            }
+        }
+        println!("{cleared} moments cleared, {listed} listed, {lit} with caustics");
+        assert!(
+            cleared > 100 && listed > 1000,
+            "{cleared} cleared, {listed} listed"
+        );
+        assert!(lit > 500, "{lit} moments with caustics");
     }
 
     /// The air's density tiles: its opposite faces meet without a seam, and

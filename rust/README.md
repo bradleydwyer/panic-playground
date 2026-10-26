@@ -1825,7 +1825,14 @@ All of it is authored, on the port's timing, positions and motion:
   letters' shadows in the beam, and coloured caustics, in it and sprayed
   out of it (a second, sparser march outside the cone gathers those).
   Where the photons gather, the light is shown 8 times brighter (authored:
-  the true spray is too thin to see).
+  the true spray is too thin to see). Only the splats that move light are
+  drawn, listed in their order, so the map adds up the same light in the
+  same order as drawing them all; where the photons can move none (outside
+  the words and the white, with the stars dark, or with no letter in the
+  frame shown: before the words rise and after they have gone) the trace
+  is skipped and the map only cleared. An ignored test checks the map,
+  made either way, against every photon's splats, byte for byte, at every
+  frame of the part and halfway to the next.
 - The letterforms are authored outlines, drawn for this remake in the
   original's spirit (greetings_letters.txt and tools/letters/; they are not
   the original's glyphs): each letter's signed distance is computed from
@@ -1845,10 +1852,11 @@ a new renderer's, byte for byte. The look's constants are at the top of
 monster's frames are drawn by a module of their own,
 `greetings_monster.wgsl`.
 
-At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it (on a
-machine in use), modern part 7 takes about 6 to 8 ms a frame, the
-photons, the air's marches, the crystal and the shutter included;
-faithful HD under 1 ms.
+At 2560 × 1440 on an Apple M5 Max, as `--bench` measures it from 226 s
+(on a machine in use), modern part 7 takes about 3.6 ms a frame (median;
+about 5.5 before the photons were skipped and listed), the photons, the
+air's marches, the crystal and the shutter included; faithful HD under
+1 ms.
 
 ### Part 8: the ending
 

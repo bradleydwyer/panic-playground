@@ -803,6 +803,32 @@ impl GreetingsPreview {
             ],
         }
     }
+
+    /// Whether the modern view's photons can move any light at the moment
+    /// `block` ([`GreetingsPreview::controls`]) describes. Where they can't,
+    /// greetings_light.wgsl's trace_photons leaves every photon at zero, so
+    /// the caustics draw nothing and their map stays cleared, and the
+    /// renderer skips both and only clears the map. The same tests as the
+    /// shader's, on the same f32 values: the stage outside the words and the
+    /// white, the stars dark (intensity() is then pow(0, 2.2), 0), or no
+    /// letter in the frame shown (frame_now()'s slots), as photons only
+    /// move light through the letters' blocks. Any other moment is traced,
+    /// whether or not its photons meet a block.
+    pub fn photons_can_move_light(&self, block: &GreetingsBlock) -> bool {
+        let stage = block.part[2];
+        if stage < Stage::Words as u8 as f32 - 0.5 || stage > Stage::White as u8 as f32 + 0.5 {
+            return false;
+        }
+        // Only +0 for certain: a negative or NaN level is left to the shader.
+        let level = block.sweep[1];
+        if level == 0.0 && level.is_sign_positive() {
+            return false;
+        }
+        let shown = block.frame[0] as usize;
+        self.slots
+            .get(shown)
+            .is_none_or(|(_, strips)| strips.iter().flatten().any(|&letter| letter != 255))
+    }
 }
 
 #[cfg(test)]
@@ -893,6 +919,41 @@ mod tests {
                 ]
             })
             .collect()
+    }
+
+    /// The photons are traced only through the words and the white, while
+    /// the stars are lit and the frame shown has a letter; the renderer
+    /// skips them at every other moment of the invented part.
+    #[test]
+    fn photons_are_traced_only_where_they_can_move_light() {
+        let mut p = invented();
+        let traced =
+            |p: &GreetingsPreview, j: usize| p.photons_can_move_light(&p.controls(p.seconds(j)));
+        // No letters yet: nothing to trace anywhere.
+        assert!((0..p.frames.len()).all(|j| !traced(&p, j)));
+        // One letter in every frame: traced in the words and the white only.
+        for (_, strips) in p.slots.iter_mut() {
+            strips[2][7] = 4;
+        }
+        let stages: Vec<Stage> = p.frames.iter().map(|f| f.stage).collect();
+        for (j, stage) in stages.iter().enumerate() {
+            let expected = matches!(stage, Stage::Words | Stage::White);
+            assert_eq!(traced(&p, j), expected, "frame {j}, {stage:?}");
+        }
+        // The stars dark: no light to move, letters or not.
+        let words = stages.iter().position(|&s| s == Stage::Words).unwrap();
+        p.frames[words].intensity = 0.0;
+        p.frames[words + 1].intensity = 0.0;
+        assert!(!traced(&p, words));
+        assert!(traced(&p, words + 2));
+        // Halfway to a lit frame the stars light again.
+        let between = p.seconds(words + 1) + 0.5 / FRAME_RATE as f64;
+        assert!(p.photons_can_move_light(&p.controls(between)));
+        // It is the frame shown whose letters count, not the next.
+        p.slots[words + 3].1 = [[255; SLOTS]; STRIPS];
+        assert!(!traced(&p, words + 3));
+        let into = p.seconds(words + 2) + 0.5 / FRAME_RATE as f64;
+        assert!(p.photons_can_move_light(&p.controls(into)));
     }
 
     #[test]
