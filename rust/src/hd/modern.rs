@@ -436,53 +436,59 @@ impl Modern {
                 },
             })]
         };
-        {
-            let attachments = target(&self.targets.backdrop);
-            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("Space, stars and door panels"),
-                color_attachments: &attachments,
-                ..Default::default()
-            });
-            pass.set_bind_group(0, scene_inputs, &[]);
-            pass.set_pipeline(&self.background);
-            pass.draw(0..3, 0..1);
-            pass.set_pipeline(&self.stars);
-            pass.draw(0..6, 0..3200);
-        }
-        {
-            let attachments = target(&self.targets.tiles);
-            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("Motion tiles"),
-                color_attachments: &attachments,
-                ..Default::default()
-            });
-            pass.set_bind_group(0, &self.targets.bindings[0], &[]);
-            pass.set_pipeline(&self.tiles);
-            pass.draw(0..3, 0..1);
-        }
-        {
-            // One centre ray per pixel finds silhouettes and creases, so the
-            // model pass only supersamples where edges actually are.
-            let attachments = target(&self.targets.probe);
-            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("Model coverage probe"),
-                color_attachments: &attachments,
-                ..Default::default()
-            });
-            pass.set_bind_group(0, &self.targets.bindings[5], &[]);
-            pass.set_pipeline(&self.probe);
-            pass.draw(0..3, 0..1);
-        }
-        {
-            let attachments = target(&self.targets.scene);
-            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("Glass letters, metal plate and logo"),
-                color_attachments: &attachments,
-                ..Default::default()
-            });
-            pass.set_bind_group(0, &self.targets.bindings[4], &[]);
-            pass.set_pipeline(&self.model);
-            pass.draw(0..3, 0..1);
+        // Once the cut's tiles have gone, the scroller fills the frame and
+        // nothing samples the space backdrop, the motion tiles, the coverage
+        // probe or the models: the backdrop pass reads `scene` only before
+        // the cut, and only the falling plates read it during the cut.
+        if !scroller || transition {
+            {
+                let attachments = target(&self.targets.backdrop);
+                let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Space, stars and door panels"),
+                    color_attachments: &attachments,
+                    ..Default::default()
+                });
+                pass.set_bind_group(0, scene_inputs, &[]);
+                pass.set_pipeline(&self.background);
+                pass.draw(0..3, 0..1);
+                pass.set_pipeline(&self.stars);
+                pass.draw(0..6, 0..3200);
+            }
+            {
+                let attachments = target(&self.targets.tiles);
+                let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Motion tiles"),
+                    color_attachments: &attachments,
+                    ..Default::default()
+                });
+                pass.set_bind_group(0, &self.targets.bindings[0], &[]);
+                pass.set_pipeline(&self.tiles);
+                pass.draw(0..3, 0..1);
+            }
+            {
+                // One centre ray per pixel finds silhouettes and creases, so
+                // the model pass only supersamples where edges actually are.
+                let attachments = target(&self.targets.probe);
+                let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Model coverage probe"),
+                    color_attachments: &attachments,
+                    ..Default::default()
+                });
+                pass.set_bind_group(0, &self.targets.bindings[5], &[]);
+                pass.set_pipeline(&self.probe);
+                pass.draw(0..3, 0..1);
+            }
+            {
+                let attachments = target(&self.targets.scene);
+                let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                    label: Some("Glass letters, metal plate and logo"),
+                    color_attachments: &attachments,
+                    ..Default::default()
+                });
+                pass.set_bind_group(0, &self.targets.bindings[4], &[]);
+                pass.set_pipeline(&self.model);
+                pass.draw(0..3, 0..1);
+            }
         }
         {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {

@@ -382,8 +382,21 @@ pub struct Renderer {
     pub queue: wgpu::Queue,
     pub adapter_name: String,
     uniform: wgpu::Buffer,
+    /// Faithful HD's two shape fields, the current shape and the next.
+    /// `field_wants` is what each binding needs: what it would hold with a
+    /// texture of its own that keeps its shape while the shape's key stays,
+    /// as the key and the frame it was built from. The frame matters: the
+    /// two 70 Hz frames of a sequence frame share a key, yet with the local
+    /// data their light channels differ at the few hundred pixels that change
+    /// between them (observed in the letters' and the doors' phases). It is
+    /// kept in the modern view too, so that a switch shows the same.
+    /// `field_holds` is what each texture holds; `fields_swapped` binds
+    /// texture 1 as the current shape, so that when the next shape becomes
+    /// current the bindings swap rather than build it again.
     fields: [wgpu::Texture; 2],
-    field_keys: [Option<(u8, usize)>; 2],
+    field_wants: [Option<FieldSource>; 2],
+    field_holds: [Option<FieldSource>; 2],
+    fields_swapped: bool,
     reference: wgpu::Texture,
     reference_index: Option<usize>,
     /// The clip ([`Clip::id`]) that the part renderers, the glyphs and the
@@ -403,7 +416,8 @@ pub struct Renderer {
     glyphs_active: bool,
     inputs: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    bind_group: wgpu::BindGroup,
+    /// The scene inputs with texture 0 as the current shape, then texture 1.
+    bind_groups: [wgpu::BindGroup; 2],
     background: wgpu::RenderPipeline,
     stars: wgpu::RenderPipeline,
     foreground: wgpu::RenderPipeline,
@@ -569,18 +583,12 @@ impl Renderer {
         let glyph_atlas = data_texture(&device, (1, 1), wgpu::TextureFormat::Rg16Float);
         let scroll_data = data_texture(&device, (1, 1), wgpu::TextureFormat::Rgba32Float);
         let glyph_field = field_texture(&device, (1, 1));
-        let bind_group = bind_inputs(
+        let bind_groups = bind_inputs(
             &device,
             &layout,
             &uniform,
-            [
-                &fields[0],
-                &fields[1],
-                &reference,
-                &glyph_atlas,
-                &scroll_data,
-                &glyph_field,
-            ],
+            &fields,
+            [&reference, &glyph_atlas, &scroll_data, &glyph_field],
             &sampler,
         );
         let field_bind_group = bind_field(
@@ -676,7 +684,9 @@ impl Renderer {
                 adapter_name: format!("{} ({:?})", info.name, info.backend),
                 uniform,
                 fields,
-                field_keys: [None, None],
+                field_wants: [None; 2],
+                field_holds: [None; 2],
+                fields_swapped: false,
                 reference,
                 reference_index: None,
                 clip: None,
@@ -690,7 +700,7 @@ impl Renderer {
                 glyphs_active: false,
                 inputs: layout,
                 sampler,
-                bind_group,
+                bind_groups,
                 background,
                 stars,
                 foreground,
@@ -734,9 +744,9 @@ impl Renderer {
         let View {
             time,
             size,
+            comparison,
             modern,
             hud,
-            ..
         } = view;
         if self.clip != Some(clip.id()) {
             self.start_clip(clip);
@@ -877,33 +887,12 @@ impl Renderer {
                 }
             }
         }
-        for (slot, i) in [index, next].into_iter().enumerate() {
-            let source = &clip.frames[i];
-            // Faithful HD draws smooth scroller letters over the original
-            // backdrop; the modern scroller needs no frame fields at all.
-            let backdrop = source.state.phase >= 8 && !modern && slot == 0;
-            if (source.state.phase < 6 || backdrop)
-                && self.field_keys[slot] != Some(source.shape_key())
-            {
-                let field = if backdrop {
-                    source.backdrop()
-                } else {
-                    source.field()
-                };
-                self.queue.write_texture(
-                    self.fields[slot].as_image_copy(),
-                    bytemuck::cast_slice(&field),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(WIDTH as u32 * 8),
-                        rows_per_image: Some(HEIGHT as u32),
-                    },
-                    SOURCE_EXTENT,
-                );
-                self.field_keys[slot] = Some(source.shape_key());
-            }
+        // Only faithful HD draws the frame's shapes and the frame itself; the
+        // modern view reads the frame only when a comparison shows it.
+        self.upload_fields(clip, [index, next], modern);
+        if !modern || comparison != 0 {
+            self.upload_reference(index, || frame.rgba());
         }
-        self.upload_reference(index, || frame.rgba());
         let mix = if frame.state.phase >= 8 {
             (time * 70.0).fract() as f32
         } else if next == index {
@@ -1018,8 +1007,59 @@ impl Renderer {
         self.greetings = None;
         self.ending = None;
         self.glyphs_uploaded = false;
-        self.field_keys = [None; 2];
+        self.field_wants = [None; 2];
+        self.field_holds = [None; 2];
         self.reference_index = None;
+    }
+
+    /// Faithful HD's shape fields: the shown frame's (in the scroller, its
+    /// backdrop) as the current shape and the next frame's as the following
+    /// one, where faithful HD reads them. Only faithful HD builds them; see
+    /// `field_wants` for what each holds.
+    fn upload_fields(&mut self, clip: &Clip, frames: [usize; 2], modern: bool) {
+        let mut read = [false; 2];
+        for (slot, i) in frames.into_iter().enumerate() {
+            let frame = &clip.frames[i];
+            let backdrop = slot == 0 && frame.state.phase >= 8 && !modern;
+            if frame.state.phase < 6 || backdrop {
+                let key = frame.shape_key();
+                if self.field_wants[slot].is_none_or(|(k, _)| k != key) {
+                    self.field_wants[slot] = Some((key, i));
+                }
+                read[slot] = true;
+            }
+        }
+        if modern {
+            return;
+        }
+        let wanted = [0, 1].map(|slot| self.field_wants[slot].filter(|_| read[slot]));
+        let builds;
+        (self.fields_swapped, builds) = plan_fields(wanted, self.field_holds, self.fields_swapped);
+        // With no other shape coming up, both read the shown one.
+        let mut built: Option<(FieldSource, Vec<_>)> = None;
+        for (texture, source) in builds.into_iter().enumerate() {
+            let Some(source) = source else {
+                continue;
+            };
+            let frame = &clip.frames[source.1];
+            let field = match built.take() {
+                Some((done, field)) if done == source => field,
+                _ if frame.state.phase >= 8 => frame.backdrop(),
+                _ => frame.field(),
+            };
+            self.queue.write_texture(
+                self.fields[texture].as_image_copy(),
+                bytemuck::cast_slice(&field),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(WIDTH as u32 * 8),
+                    rows_per_image: Some(HEIGHT as u32),
+                },
+                SOURCE_EXTENT,
+            );
+            self.field_holds[texture] = Some(source);
+            built = Some((source, field));
+        }
     }
 
     /// Show original frame `index` in the comparison texture, its pixels
@@ -1326,13 +1366,12 @@ impl Renderer {
             bytemuck::cast_slice(&glyphs.data),
             glyphs.data_size,
         );
-        self.bind_group = bind_inputs(
+        self.bind_groups = bind_inputs(
             &self.device,
             &self.inputs,
             &self.uniform,
+            &self.fields,
             [
-                &self.fields[0],
-                &self.fields[1],
                 &self.reference,
                 &self.glyph_atlas,
                 &self.scroll_data,
@@ -1348,6 +1387,11 @@ impl Renderer {
             &self.sampler,
         );
         self.glyphs_uploaded = true;
+    }
+
+    /// The scene inputs, with the shape fields in their current order.
+    fn scene_inputs(&self) -> &wgpu::BindGroup {
+        &self.bind_groups[usize::from(self.fields_swapped)]
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
@@ -1444,7 +1488,7 @@ impl Renderer {
             self.modern_renderer.draw(
                 encoder,
                 view,
-                &self.bind_group,
+                self.scene_inputs(),
                 self.tile_transition,
                 self.scroller,
             );
@@ -1469,7 +1513,7 @@ impl Renderer {
                 })],
                 ..Default::default()
             });
-            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_bind_group(0, self.scene_inputs(), &[]);
             pass.set_pipeline(&self.hud);
             pass.draw(0..3, 0..1);
         }
@@ -1489,7 +1533,7 @@ impl Renderer {
             })],
             ..Default::default()
         });
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_bind_group(0, self.scene_inputs(), &[]);
         pass.set_pipeline(&self.background);
         pass.draw(0..3, 0..1);
         pass.set_pipeline(&self.stars);
@@ -1648,6 +1692,36 @@ fn part_state(phase: f32, j: usize, time: f64) -> [f32; 4] {
     [phase, j as f32, 0.0, (time * 70.0).fract() as f32]
 }
 
+/// A shape field's key ([`super::clip::Frame::shape_key`]) and the frame it
+/// was built from.
+type FieldSource = ((u8, usize), usize);
+
+/// For the shape fields each binding reads (`wanted`; the current shape,
+/// then the next), given what each texture `holds`: whether texture 1 is
+/// bound as the current shape, and what to build into each texture. The
+/// order that holds more of them already wins, and on a tie the order bound
+/// before; so when the next shape becomes the current one, the bindings swap
+/// and only the new next shape is built.
+fn plan_fields(
+    wanted: [Option<FieldSource>; 2],
+    holds: [Option<FieldSource>; 2],
+    swapped: bool,
+) -> (bool, [Option<FieldSource>; 2]) {
+    let held =
+        |texture: usize, slot: usize| wanted[slot].is_some() && holds[texture] == wanted[slot];
+    let order = |current: usize| u8::from(held(current, 0)) + u8::from(held(current ^ 1, 1));
+    let kept = usize::from(swapped);
+    let swapped = swapped != (order(kept ^ 1) > order(kept));
+    let current = usize::from(swapped);
+    let mut builds = [None; 2];
+    for (slot, texture) in [(0, current), (1, current ^ 1)] {
+        if !held(texture, slot) {
+            builds[texture] = wanted[slot];
+        }
+    }
+    (swapped, builds)
+}
+
 /// A 320 × 200 source image.
 const SOURCE_EXTENT: wgpu::Extent3d = wgpu::Extent3d {
     width: WIDTH as u32,
@@ -1760,37 +1834,42 @@ fn bind_field(
     })
 }
 
-/// Shared scene inputs: controls, two shape fields, the reference frame, a
-/// filtering sampler, the scroller glyph atlas, its tables and the per-frame
-/// scroller fields.
+/// Shared scene inputs: controls, the two shape fields as the current and
+/// the next shape, the reference frame, a filtering sampler, the scroller
+/// glyph atlas, its tables and the per-frame scroller fields; with field 0 as
+/// the current shape, then field 1.
 fn bind_inputs(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     uniform: &wgpu::Buffer,
-    textures: [&wgpu::Texture; 6],
+    [first, second]: &[wgpu::Texture; 2],
+    [reference, atlas, data, glyph_field]: [&wgpu::Texture; 4],
     sampler: &wgpu::Sampler,
-) -> wgpu::BindGroup {
-    let views = textures.map(|t| t.create_view(&Default::default()));
-    let mut entries = vec![
-        wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform.as_entire_binding(),
-        },
-        wgpu::BindGroupEntry {
-            binding: 4,
-            resource: wgpu::BindingResource::Sampler(sampler),
-        },
-    ];
-    for (view, binding) in views.iter().zip([1, 2, 3, 5, 6, 7]) {
-        entries.push(wgpu::BindGroupEntry {
-            binding,
-            resource: wgpu::BindingResource::TextureView(view),
-        });
-    }
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Scene inputs"),
-        layout,
-        entries: &entries,
+) -> [wgpu::BindGroup; 2] {
+    [[first, second], [second, first]].map(|[current, next]| {
+        let views = [current, next, reference, atlas, data, glyph_field]
+            .map(|t| t.create_view(&Default::default()));
+        let mut entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ];
+        for (view, binding) in views.iter().zip([1, 2, 3, 5, 6, 7]) {
+            entries.push(wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::TextureView(view),
+            });
+        }
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Scene inputs"),
+            layout,
+            entries: &entries,
+        })
     })
 }
 
@@ -2807,6 +2886,32 @@ mod tests {
         assert_eq!(prerolled(&seeking), (length, length));
     }
 
+    /// When the next shape becomes the current one, the two shape fields'
+    /// bindings swap and only the new next shape is built; anything else is
+    /// built from the frame a texture per binding would hold.
+    #[test]
+    fn shape_fields_swap_rather_than_build_again() {
+        // Shape keys and the frames they were built from; `later` is `b`
+        // reached a tick later, as when a tick is skipped.
+        let [a, b, c, later] =
+            [(10, 20), (11, 22), (12, 24), (11, 23)].map(|(k, i)| Some(((1, k), i)));
+        for (wanted, held, swapped, plan) in [
+            ([a, b], [None; 2], false, (false, [a, b])),
+            ([b, c], [a, b], false, (true, [c, None])),
+            ([c, a], [c, b], true, (false, [None, a])),
+            ([later, c], [a, b], false, (false, [later, c])),
+            // Held already, or not read: nothing is built.
+            ([b, c], [c, b], true, (true, [None; 2])),
+            ([b, None], [a, b], false, (true, [None; 2])),
+            ([None; 2], [a, b], true, (true, [None; 2])),
+            // No other shape coming: both bindings read the shown one.
+            ([c, c], [c, b], true, (true, [None, c])),
+        ] {
+            let planned = plan_fields(wanted, held, swapped);
+            assert_eq!(planned, plan, "{wanted:?} {held:?}");
+        }
+    }
+
     /// Every part's controls carry the shared values, the frame-rate
     /// counter's among them, not only the intro's and the scroller's.
     #[test]
@@ -2887,6 +2992,30 @@ mod tests {
         let fresh = renderer().0.render_rgba(&clip, view_at(31.0), format);
         assert!(blank == fresh.unwrap());
         assert!(blank != lettered, "the letters show");
+    }
+
+    /// The modern intro, laser cut and scroller draw the same whether a
+    /// moment is played into or reached by a seek, also back from the
+    /// scroller into the cut, whose scene is not drawn after the cut.
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
+    fn modern_intro_frames_are_the_same_however_reached() {
+        let data = crate::test_support::data();
+        let clip = Clip::load_scroller(&data, ScrollerLighting::Studio).unwrap();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let renderer = || pollster::block_on(Renderer::new(&instance, None)).unwrap();
+        let (mut playing, format) = renderer();
+        for t in [5.2, 27.0, 18.3, 31.0, 19.5, 8.0, 20.8, 18.1, 13.9, 23.0] {
+            for k in (1..4).rev() {
+                playing
+                    .render_rgba(&clip, view_at(t - k as f64 / 60.0), format)
+                    .unwrap();
+            }
+            let played = playing.render_rgba(&clip, view_at(t), format).unwrap();
+            let fresh = renderer().0.render_rgba(&clip, view_at(t), format).unwrap();
+            assert!(played == fresh, "{t} s");
+            assert!(fresh.iter().any(|&p| p > 8), "{t} s is black");
+        }
     }
 
     /// Rust field names and byte offsets, in declaration order.
