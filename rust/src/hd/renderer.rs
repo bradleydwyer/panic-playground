@@ -1584,6 +1584,8 @@ impl Renderer {
         Ok(pixels)
     }
 
+    /// Render one frame and save it as a new PNG at `path`; a file already
+    /// there is never replaced.
     pub fn capture(
         &mut self,
         clip: &Clip,
@@ -1591,26 +1593,26 @@ impl Renderer {
         path: &Path,
         format: wgpu::TextureFormat,
     ) -> Result<(), String> {
-        let size = view.size;
         let pixels = self.render_rgba(clip, view, format)?;
-        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        let file = File::options()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        let mut png = png::Encoder::new(BufWriter::new(file), size.0, size.1);
-        png.set_color(png::ColorType::Rgba);
-        png.set_depth(png::BitDepth::Eight);
-        let mut writer = png.write_header().map_err(|e| e.to_string())?;
-        writer
-            .write_image_data(&pixels)
-            .map_err(|e| e.to_string())?;
-        writer.finish().map_err(|e| e.to_string())?;
-        Ok(())
+        write_png(path, view.size, &pixels).map_err(|e| format!("{}: {e}", path.display()))
     }
+}
+
+/// Save tightly packed RGBA pixels as a new PNG, making its directory. A file
+/// already at `path` is left as it is, and the error's kind is
+/// `AlreadyExists`.
+pub fn write_png(path: &Path, (width, height): (u32, u32), pixels: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = File::options().write(true).create_new(true).open(path)?;
+    let mut png = png::Encoder::new(BufWriter::new(file), width, height);
+    png.set_color(png::ColorType::Rgba);
+    png.set_depth(png::BitDepth::Eight);
+    let mut writer = png.write_header()?;
+    writer.write_image_data(pixels)?;
+    writer.finish()?;
+    Ok(())
 }
 
 /// The controls every moment shares, before a part's own: the drawable size,

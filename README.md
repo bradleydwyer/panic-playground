@@ -492,7 +492,7 @@ is authored.
 | Tab | Toggle the original rendering |
 | C | Toggle the split comparison |
 | F | Toggle fullscreen |
-| S | Save a PNG under `artifacts/` |
+| S | Save a new PNG under `artifacts/`, named for the moment shown |
 | P | Show or hide the frame-rate counter |
 | V | Toggle vsync |
 | Escape | Quit |

@@ -3,7 +3,7 @@ use panic_demo::{
     engine::SAMPLE_RATE,
     hd::{
         clip::{Clip, ScrollerBackdrop, ScrollerLighting},
-        renderer::{Renderer, View},
+        renderer::{Renderer, View, write_png},
     },
 };
 use sdl2::{
@@ -13,7 +13,8 @@ use sdl2::{
     video::FullscreenType,
 };
 use std::{
-    path::PathBuf,
+    io,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -301,7 +302,7 @@ impl Options {
                 }
                 "-h" | "--help" => {
                     println!(
-                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings), as a liquid-chrome pool, to part 5's first frame\n  --field          Continue through part 5 (Field), the zoom and the mountain, to part 3's first frame\n  --dots           Continue through part 3 (Dots), as light painting, and part 4's wait to its first frame\n  --plasma         Continue through part 4 (Plasma), as light on stone, to part 7's first frame\n  --greetings      Continue through part 7 (Greetings), as a lighthouse in the dust, to part 8's first frame\n  --ending         Continue through part 8 (the ending), an endless wall of green monitors switched off, to the demo's end\n  --full           The whole demo, from the intro to the end (the same as --ending)\n  --original-symbols  Part 6 with the original symbols throughout, not the new sets in its middle\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Capture destination; default artifacts/intro-hd.png\n  --bench N        Headless: draw N frames from --seek at 60 a second and print the time each takes\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: step 1s, hold to scrub · Cmd+Left/Right: previous/next section\nHome/R: replay · End: logo · Tab: original/HD · C: split comparison · M: faithful/modern\nF: fullscreen · S: save PNG · L: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light · N: part 6's new or original symbols · D: part 4's water or polished floor\n1/2: part 4's water mirror weaker/stronger · 3/4: its swell lower/higher · 5/6: slower/faster · 7/8: shorter/longer · 9/0: fewer/more drops\nJ/K: part 7's beam faster/slower · U/I: its tilt toward the camera less/more · G/H: its brightness down/up · Z/X: its width narrower/wider · O: its lamp centred or on the sweep's centre\nT/Y: part 8's grille coarser/finer (its moiré later/earlier) · Q/E: part 8's pull-back slower/faster\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6, --field through part 5, --dots through part 3, --plasma through part 4, --greetings through part 7, --ending through part 8."
+                        "Panic HD — intro and scroller experiments\n\nUsage: panic-hd [options]\n  --data DIR       Locally imported data (or PANIC_DATA)\n  --size WxH       PNG size / window aspect; default 1920x1080\n  --seek SECONDS   Start at a point in the intro\n  --logo           Start paused on the completed logo\n  --paused         Start paused\n  --modern         Glass letter fly-bys, HDR lighting and heated metal\n  --faithful       Start in faithful HD, even with --scroller or --transition\n  --transition     Continue through the laser-cut tile transition (modern)\n  --laser          Same as --transition\n  --scroller       Continue into the glass scroller: studio lighting, chrome bump wall\n  --scroller-lighting MODE  Studio (default) or musical lighting\n  --scroller-backdrop MODE  Chrome (default) or tinted (wall) bump wall, or chamber\n  --wall-shape N   Bump shape, 0 rounded square to 1 hemisphere; default 0.5\n  --wall-strength N  Bump wall presence, 0 to 1; default 0.6\n  --wall-waves [D] Authored waves across the bump wall (on by default), swinging\n                   from depth D to -D and back; 0.1 to 1, default 0.5; 0 for none\n  --wave-light N   Their grazing side light and shadows, 0 to 1; default 0.5\n  --rings          Continue through part 6 (Rings), as a liquid-chrome pool, to part 5's first frame\n  --field          Continue through part 5 (Field), the zoom and the mountain, to part 3's first frame\n  --dots           Continue through part 3 (Dots), as light painting, and part 4's wait to its first frame\n  --plasma         Continue through part 4 (Plasma), as light on stone, to part 7's first frame\n  --greetings      Continue through part 7 (Greetings), as a lighthouse in the dust, to part 8's first frame\n  --ending         Continue through part 8 (the ending), an endless wall of green monitors switched off, to the demo's end\n  --full           The whole demo, from the intro to the end (the same as --ending)\n  --original-symbols  Part 6 with the original symbols throughout, not the new sets in its middle\n  --original       Show the original rendering\n  --split          Original on the left, HD on the right\n  --mute           Silent playback, with music timing\n  --fullscreen     Start fullscreen\n  --headless       Export one native-resolution PNG, without a window\n  --out FILE       Headless capture's destination; S saves beside it, named for the moment; default artifacts/intro-hd.png\n  --bench N        Headless: draw N frames from --seek at 60 a second and print the time each takes\n  --seconds N      Close desktop preview after N seconds\n  --fps            Show the frame rate (P toggles it)\n  --no-vsync       Don't wait for the display refresh (V toggles it)\n\nSpace: pause · Left/Right: step 1s, hold to scrub · Cmd+Left/Right: previous/next section\nHome/R: replay · End: logo · Tab: original/HD · C: split comparison · M: faithful/modern\nF: fullscreen · S: save PNG · L: scroller lighting · B: backdrop · [/]: bump shape · -/=: wall strength\nW: wall waves · ,/.: wave depth · ;/': wave light · N: part 6's new or original symbols · D: part 4's water or polished floor\n1/2: part 4's water mirror weaker/stronger · 3/4: its swell lower/higher · 5/6: slower/faster · 7/8: shorter/longer · 9/0: fewer/more drops\nJ/K: part 7's beam faster/slower · U/I: its tilt toward the camera less/more · G/H: its brightness down/up · Z/X: its width narrower/wider · O: its lamp centred or on the sweep's centre\nT/Y: part 8's grille coarser/finer (its moiré later/earlier) · Q/E: part 8's pull-back slower/faster\nP: frame rate · V: vsync · Esc: quit\nThe preview holds on the logo. --transition continues to the backdrop. --scroller plays part 2 after the laser transition. --rings continues through part 6, --field through part 5, --dots through part 3, --plasma through part 4, --greetings through part 7, --ending through part 8."
                     );
                     std::process::exit(0);
                 }
@@ -376,6 +377,45 @@ fn present_mode(vsync: bool) -> wgpu::PresentMode {
     } else {
         wgpu::PresentMode::AutoNoVsync
     }
+}
+
+/// The names S saves under, beside `--out`: its stem and the clip time
+/// shown, then the same numbered from 2.
+fn capture_names(out: &Path, time: f64) -> impl Iterator<Item = PathBuf> {
+    let part = |name: Option<&std::ffi::OsStr>, or: &str| {
+        name.map_or(or.into(), |n| n.to_string_lossy().into_owned())
+    };
+    let (stem, extension) = (
+        part(out.file_stem(), "capture"),
+        part(out.extension(), "png"),
+    );
+    let out = out.to_path_buf();
+    (1..).map(move |n| {
+        let number = if n == 1 {
+            String::new()
+        } else {
+            format!("-{n}")
+        };
+        out.with_file_name(format!("{stem}-{time:.3}s{number}.{extension}"))
+    })
+}
+
+/// Save with `write` under the first of [`capture_names`] that no file has
+/// taken, so that each S keeps every earlier capture; `write` reports a
+/// taken name as `AlreadyExists`, as [`write_png`] does.
+fn save_new(
+    out: &Path,
+    time: f64,
+    mut write: impl FnMut(&Path) -> io::Result<()>,
+) -> Result<PathBuf, String> {
+    for path in capture_names(out, time).take(1000) {
+        match write(&path) {
+            Ok(()) => return Ok(path),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        }
+    }
+    Err(format!("No free name beside {}", out.display()))
 }
 
 fn main() {
@@ -937,19 +977,18 @@ fn run() -> Result<(), String> {
             settle = true;
         }
         if capture {
-            match renderer.capture(
-                &clip,
-                View {
-                    time,
-                    size: o.size,
-                    comparison: o.comparison,
-                    modern: o.modern,
-                    hud: None,
-                },
-                &o.out,
-                format,
-            ) {
-                Ok(()) => println!("Saved {}", o.out.display()),
+            let view = View {
+                time,
+                size: o.size,
+                comparison: o.comparison,
+                modern: o.modern,
+                hud: None,
+            };
+            let saved = renderer
+                .render_rgba(&clip, view, format)
+                .and_then(|pixels| save_new(&o.out, time, |path| write_png(path, o.size, &pixels)));
+            match saved {
+                Ok(path) => println!("Saved {}", path.display()),
                 Err(e) => eprintln!("Capture: {e}"),
             }
         }
@@ -1105,4 +1144,47 @@ fn run() -> Result<(), String> {
         config.height
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn each_capture_takes_a_new_name_beside_out() {
+        let out = Path::new("artifacts/intro-hd.png");
+        let names: Vec<_> = capture_names(out, 83.25).take(3).collect();
+        assert_eq!(
+            names,
+            [
+                "artifacts/intro-hd-83.250s.png",
+                "artifacts/intro-hd-83.250s-2.png",
+                "artifacts/intro-hd-83.250s-3.png",
+            ]
+            .map(PathBuf::from)
+        );
+        assert_eq!(
+            capture_names(Path::new("shot"), 0.0).next().unwrap(),
+            PathBuf::from("shot-0.000s.png")
+        );
+        // Names already taken are kept and skipped; each press takes the
+        // next free one.
+        let mut taken = HashSet::from([names[0].clone(), names[1].clone()]);
+        let mut write = |path: &Path| {
+            if taken.insert(path.to_path_buf()) {
+                Ok(())
+            } else {
+                Err(io::ErrorKind::AlreadyExists.into())
+            }
+        };
+        assert_eq!(save_new(out, 83.25, &mut write), Ok(names[2].clone()));
+        assert_eq!(
+            save_new(out, 83.25, &mut write),
+            Ok(PathBuf::from("artifacts/intro-hd-83.250s-4.png"))
+        );
+        // Any other error is reported, not passed over.
+        let full = save_new(out, 1.0, |_| Err(io::Error::other("disk full")));
+        assert_eq!(full, Err("artifacts/intro-hd-1.000s.png: disk full".into()));
+    }
 }

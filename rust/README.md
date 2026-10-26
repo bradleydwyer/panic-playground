@@ -418,7 +418,7 @@ optical simulation. All fields are generated locally in memory.
 | T / Y | Part 8: the grille's stripes ×1.1 coarser or finer, its moiré later or earlier (default a triad every 2 rows) |
 | Q / E | Part 8: the pull-back ÷1.1 slower or ×1.1 faster (default about 3 sets across at the switch-off) |
 | F | Toggle fullscreen |
-| S | Save a PNG to `--out`; existing files are preserved |
+| S | Save a new PNG beside `--out`, named for the moment shown (`intro-hd-83.250s.png`, then `-2`, `-3` and so on); no file is replaced |
 | P | Show or hide the frame-rate counter |
 | V | Toggle vsync |
 | Escape | Quit |
