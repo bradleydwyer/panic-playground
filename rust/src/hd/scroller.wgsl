@@ -646,7 +646,27 @@ fn shade(p:vec3f,n0:vec3f,ray:vec3f,material:f32)->vec3f {
 }
 // Authored exposure of part 2's whole scene, before the shared tonemap.
 const SCROLLER_EXPOSURE=1.2;
+// During the laser cut, nothing reads the scene under a plate that still lies
+// flat: in transition.wgsl a plate hides its own tile until it has been cut,
+// it takes nothing of the scene before then (tile_fragment) and, while it
+// lies at z = 0, laser_material's fade is exactly 0. Such pixels skip the
+// scene. A margin at each tile's edges leaves alone any crack between
+// plates, cut walls seen past a neighbour that has fallen, and the filtered
+// reads, which reach the next pixel.
+const CUT_GRID=vec2f(16,10);   // transition.wgsl's GRID
+const CUT_FLAT_AGE=1.4;        // in its tile ages: the cut ends at 7 × LASER_CUT, 1.47
+const CUT_MARGIN=3.0;          // pixels
+fn under_flat_plate(pixel:vec2f)->bool {
+    // The renderer draws the plates until 78 ticks after the cut's end.
+    if u.transition.y<.5 || u.transition.x<0.0 || u.transition.x>=u.transition.z+78.0 {return false;}
+    let scale=CUT_GRID/u.screen.xy;
+    let cell=floor(pixel*scale);
+    if any(floor((pixel-CUT_MARGIN)*scale)!=cell) || any(floor((pixel+CUT_MARGIN)*scale)!=cell) {return false;}
+    let id=u32(cell.y)*16u+u32(cell.x);
+    return (u.transition.x-u.tile_order[id/4u][id%4u])/10.0<CUT_FLAT_AGE;
+}
 @fragment fn scroller(v:Vertex)->@location(0) vec4f {
+    if under_flat_plate(v.position.xy) {return vec4f(0,0,0,1);}
     let xy=(v.uv-.5)*vec2f(2.0*aspect(),-2.0);
     let ray=normalize(vec3f(xy,-5.5));
     var color=vec3f(0);

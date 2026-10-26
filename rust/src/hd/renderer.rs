@@ -2886,6 +2886,27 @@ mod tests {
         assert_eq!(prerolled(&seeking), (length, length));
     }
 
+    /// The scroller skips what the laser cut's flat plates hide by the cut's
+    /// grid, while the plates are drawn, and only before the plates tip:
+    /// their tile age reaches 7 × LASER_CUT at the end of the cut.
+    #[test]
+    fn scroller_mask_follows_the_laser_cut() {
+        let (cut, scroller) = (
+            include_str!("transition.wgsl"),
+            include_str!("scroller.wgsl"),
+        );
+        let constant = |source: &str, name: &str| {
+            let start = source.find(&format!("\nconst {name}=")).unwrap() + name.len() + 8;
+            source[start..].split(';').next().unwrap().to_owned()
+        };
+        assert_eq!(constant(cut, "GRID"), constant(scroller, "CUT_GRID"));
+        let flat: f32 = constant(scroller, "CUT_FLAT_AGE").parse().unwrap();
+        assert!(flat < 7.0 * constant(cut, "LASER_CUT").parse::<f32>().unwrap());
+        assert!(cut.contains("fn tile_lifetime()->f32 {return LASER_LIFE*7.0;}"));
+        assert!(cut.contains("let age=(u.transition.x-order(id))/10.0;"));
+        assert!(scroller.contains("u.transition.x>=u.transition.z+78.0"));
+    }
+
     /// When the next shape becomes the current one, the two shape fields'
     /// bindings swap and only the new next shape is built; anything else is
     /// built from the frame a texture per binding would hold.
@@ -2996,7 +3017,9 @@ mod tests {
 
     /// The modern intro, laser cut and scroller draw the same whether a
     /// moment is played into or reached by a seek, also back from the
-    /// scroller into the cut, whose scene is not drawn after the cut.
+    /// scroller into the cut (whose scene is not drawn after the cut) and
+    /// from one part of the cut to another (the scroller skips what its
+    /// flat plates hide).
     #[test]
     #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
     fn modern_intro_frames_are_the_same_however_reached() {
