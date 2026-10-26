@@ -719,12 +719,20 @@ impl Renderer {
     }
 
     pub fn prepare(&mut self, clip: &Clip, view: View) {
+        let u = self.controls(clip, view);
+        self.queue
+            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+    }
+
+    /// Everything [`Renderer::prepare`] does for a moment but writing the
+    /// shared controls, which it returns.
+    fn controls(&mut self, clip: &Clip, view: View) -> Uniforms {
         let View {
             time,
             size,
-            comparison,
             modern,
             hud,
+            ..
         } = view;
         self.hud_visible = hud.is_some();
         self.modern_view = modern;
@@ -734,6 +742,13 @@ impl Renderer {
         self.part4 = false;
         self.part7 = false;
         self.part8 = false;
+        self.glyphs_active = false;
+        self.scroller = false;
+        self.tile_transition = false;
+        if modern {
+            self.modern_renderer
+                .resize(&self.device, &self.uniform, &self.reference, size);
+        }
         if let Some(ending) = &clip.ending {
             if self.ending.as_ref().is_none_or(|r| !r.holds(ending)) {
                 self.ending = Some(EndingRenderer::new(
@@ -747,8 +762,7 @@ impl Renderer {
             // Its first frame is part 7's last, which part 7 draws, so the
             // hand-over is exact.
             if ending.position(time) > 0.0 {
-                self.prepare_ending(clip, ending, view);
-                return;
+                return self.prepare_ending(clip, ending, view);
             }
         }
         if let Some(greetings) = &clip.greetings {
@@ -762,8 +776,7 @@ impl Renderer {
                 ));
             }
             if greetings.frame_at(time).is_some() {
-                self.prepare_greetings(clip, greetings, view);
-                return;
+                return self.prepare_greetings(clip, greetings, view);
             }
         }
         if let Some(dots) = &clip.dots
@@ -789,15 +802,13 @@ impl Renderer {
                 ));
             }
             if plasma.frame_at(time).is_some() {
-                self.prepare_plasma(clip, plasma, view);
-                return;
+                return self.prepare_plasma(clip, plasma, view);
             }
         }
         if let Some(dots) = &clip.dots
             && dots.frame_at(time).is_some()
         {
-            self.prepare_dots(clip, dots, view);
-            return;
+            return self.prepare_dots(clip, dots, view);
         }
         if let Some(field) = &clip.field {
             self.hold_field(field);
@@ -810,8 +821,7 @@ impl Renderer {
                         .is_some_and(|j| r.frames[j].state.phase == 2)
                 });
             if field.frame_at(time).is_some() || fade {
-                self.prepare_field(clip, field, view);
-                return;
+                return self.prepare_field(clip, field, view);
             }
             // Ahead of part 5, in either view: a few of its smoke's pre-roll
             // steps, so that they don't all run when the smoke starts.
@@ -830,8 +840,7 @@ impl Renderer {
                 ));
             }
             if let Some(j) = rings.frame_at(time) {
-                self.prepare_rings(clip, rings, j, view);
-                return;
+                return self.prepare_rings(clip, rings, j, view);
             }
         }
         // The scroller scene is first seen through the laser cut.
@@ -843,10 +852,6 @@ impl Renderer {
         self.tile_transition = clip.transition.as_ref().is_some_and(|cut| {
             time * 70.0 >= cut.start_tick as f64 && time * 70.0 < cut.end_tick as f64 + 78.0
         });
-        if modern {
-            self.modern_renderer
-                .resize(&self.device, &self.uniform, &self.reference, size);
-        }
         let index = clip.frame_index(time);
         let frame = &clip.frames[index];
         self.glyphs_active = clip.scroller.is_some() && frame.state.phase >= 8;
@@ -886,32 +891,12 @@ impl Renderer {
                         bytes_per_row: Some(WIDTH as u32 * 8),
                         rows_per_image: Some(HEIGHT as u32),
                     },
-                    wgpu::Extent3d {
-                        width: WIDTH as u32,
-                        height: HEIGHT as u32,
-                        depth_or_array_layers: 1,
-                    },
+                    SOURCE_EXTENT,
                 );
                 self.field_keys[slot] = Some(source.shape_key());
             }
         }
-        if self.reference_index != Some(index) {
-            self.queue.write_texture(
-                self.reference.as_image_copy(),
-                &frame.rgba(),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(WIDTH as u32 * 4),
-                    rows_per_image: Some(HEIGHT as u32),
-                },
-                wgpu::Extent3d {
-                    width: WIDTH as u32,
-                    height: HEIGHT as u32,
-                    depth_or_array_layers: 1,
-                },
-            );
-            self.reference_index = Some(index);
-        }
+        self.upload_reference(index, || frame.rgba());
         let mix = if frame.state.phase >= 8 {
             (time * 70.0).fract() as f32
         } else if next == index {
@@ -922,15 +907,20 @@ impl Renderer {
         let sequence_frame = frame.state.frame as f32
             + frame.state.tick as f32 * 0.5
             + (time * 70.0).fract() as f32 * 0.5;
-        let (plate_center, plate_rotation) = plate_transform(sequence_frame);
-        let (mut plate_open_center, plate_open_rotation) =
+        let state = [
+            frame.state.phase as f32,
+            sequence_frame,
+            frame.state.door as f32,
+            mix,
+        ];
+        let mut u = base_uniforms(clip, view, self.srgb, state);
+        u.flights = clip.flights;
+        (u.plate_center, u.plate_rotation) = plate_transform(sequence_frame);
+        (u.plate_open_center, u.plate_open_rotation) =
             plate_transform(sequence_frame - SHUTTER_FRAMES);
-        plate_open_center[3] = SHUTTER_FRAMES;
-        let mut transition = [0.0; 4];
-        let mut tile_order = [[0.0; 4]; 40];
-        let mut next_palette = [[0.0; 4]; 64];
+        u.plate_open_center[3] = SHUTTER_FRAMES;
         if let Some(cut) = &clip.transition {
-            transition = [
+            u.transition = [
                 (time * 70.0 - cut.start_tick as f64) as f32,
                 1.0,
                 (cut.end_tick - cut.start_tick) as f32,
@@ -938,23 +928,16 @@ impl Renderer {
                 0.0,
             ];
             for (i, &rank) in cut.order.iter().enumerate() {
-                tile_order[i / 4][i % 4] = rank as f32;
+                u.tile_order[i / 4][i % 4] = rank as f32;
             }
-            next_palette = cut.palette;
+            u.next_palette = cut.palette;
         }
-        let audio = clip.audio_at(time);
-        let mut scroller = [0.0; 4];
-        let mut scroll_light = [0.0; 4];
-        let mut glyphs = [0.0; 4];
-        let mut backdrop = [0.0; 4];
-        let mut backdrop_motion = [0.0; 4];
-        let mut waves = [0.0; 4];
         if let Some(scroll) = &clip.scroller {
             self.upload_glyphs(scroll);
             if let Some([upper, lower, overlay]) = clip.scroll_at(time) {
-                glyphs = [upper as f32, lower as f32, overlay as f32, 0.0];
+                u.glyphs = [upper as f32, lower as f32, overlay as f32, 0.0];
             }
-            scroller = [
+            u.scroller = [
                 1.0,
                 (time - scroll.start_tick as f64 / 70.0) as f32,
                 // Formerly the preset; glass is now the only scroller style.
@@ -963,8 +946,8 @@ impl Renderer {
                     as f32,
             ];
             // The same causal cues as the intro; studio mode ignores them.
-            let [level, bass, treble] = audio.scroller;
-            scroll_light = [
+            let [level, bass, treble] = clip.audio_at(time).scroller;
+            u.scroll_light = [
                 level,
                 if scroll.lighting == ScrollerLighting::Musical {
                     1.0
@@ -976,7 +959,7 @@ impl Renderer {
             ];
             // The scroller replaces the transition's palette with its
             // background image; mix only blends during the exit fade.
-            for (i, color) in next_palette.iter_mut().enumerate() {
+            for (i, color) in u.next_palette.iter_mut().enumerate() {
                 for (channel, c) in color[..3].iter_mut().enumerate() {
                     *c = scroll.backdrop[index][i][channel] * (1.0 - mix)
                         + scroll.backdrop[next][i][channel] * mix;
@@ -997,13 +980,13 @@ impl Renderer {
             };
             let now = oscillator_at(time);
             let open = oscillator_at(time - WALL_SHUTTER_TICKS / 70.0);
-            backdrop = [
+            u.backdrop = [
                 now[0],
                 now[1],
                 scroll.backdrop_style as u32 as f32,
                 scroll.wall_shape,
             ];
-            backdrop_motion = [
+            u.backdrop_motion = [
                 now[0] - open[0],
                 now[1] - open[1],
                 scroll.wall_strength,
@@ -1012,99 +995,53 @@ impl Renderer {
             let reveal = clip.transition.as_ref().map_or(0, |cut| cut.start_tick);
             let [depth, light] = scroll.waves_at(time, reveal);
             let swing = scroll.wave_swing(time, reveal);
-            waves = [depth, (WALL_SHUTTER_TICKS / 70.0) as f32, light, swing];
+            u.waves = [depth, (WALL_SHUTTER_TICKS / 70.0) as f32, light, swing];
         }
-        let u = Uniforms {
-            screen: [size.0 as f32, size.1 as f32, time as f32, comparison as f32],
-            state: [
-                frame.state.phase as f32,
-                sequence_frame,
-                frame.state.door as f32,
-                mix,
-            ],
-            misc: [
-                4.0 / 3.0,
-                if self.srgb { 1.0 } else { 0.0 },
-                clip.logo_at as f32,
-                if modern { 1.0 } else { 0.0 },
-            ],
-            flights: clip.flights,
-            plate_center,
-            plate_rotation,
-            transition,
-            tile_order,
-            next_palette,
-            scroller,
-            scroll_light,
-            audio: audio.intro,
-            plate_open_center,
-            plate_open_rotation,
-            hud: hud.map_or([0.0; 4], |[fps, ms]| [1.0, fps, ms, 0.0]),
-            glyphs,
-            backdrop,
-            backdrop_motion,
-            waves,
-            ..Uniforms::zeroed()
-        };
-        self.queue
-            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+        u
+    }
+
+    /// Show original frame `index` in the comparison texture, its pixels
+    /// made by `rgba` only when another frame is there.
+    fn upload_reference(&mut self, index: usize, rgba: impl FnOnce() -> Vec<u8>) {
+        if self.reference_index == Some(index) {
+            return;
+        }
+        self.queue.write_texture(
+            self.reference.as_image_copy(),
+            &rgba(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(WIDTH as u32 * 4),
+                rows_per_image: Some(HEIGHT as u32),
+            },
+            SOURCE_EXTENT,
+        );
+        self.reference_index = Some(index);
     }
 
     /// Part 6: the shared controls for this moment, and the original frame
     /// when a comparison shows it, replayed on demand
     /// ([`RingsPreview::original`]) rather than stored.
-    fn prepare_rings(&mut self, clip: &Clip, rings: &RingsPreview, j: usize, view: View) {
-        let View {
-            time,
-            size,
-            comparison,
-            modern,
-            hud: _,
-        } = view;
+    fn prepare_rings(
+        &mut self,
+        clip: &Clip,
+        rings: &RingsPreview,
+        j: usize,
+        view: View,
+    ) -> Uniforms {
+        let time = view.time;
         self.part6 = true;
         self.rings_style = rings.style;
-        self.glyphs_active = false;
-        self.scroller = false;
-        self.tile_transition = false;
-        if modern {
-            self.modern_renderer
-                .resize(&self.device, &self.uniform, &self.reference, size);
-            if let Some(renderer) = &mut self.rings {
-                renderer.resize(&self.device, rings.style, size);
-            }
+        if let (true, Some(renderer)) = (view.modern, &mut self.rings) {
+            renderer.resize(&self.device, rings.style, view.size);
         }
-        let index = rings.start + j;
-        if comparison != 0 && self.reference_index != Some(index) {
-            self.queue.write_texture(
-                self.reference.as_image_copy(),
-                &rings.original_rgba(j),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(WIDTH as u32 * 4),
-                    rows_per_image: Some(HEIGHT as u32),
-                },
-                wgpu::Extent3d {
-                    width: WIDTH as u32,
-                    height: HEIGHT as u32,
-                    depth_or_array_layers: 1,
-                },
-            );
-            self.reference_index = Some(index);
+        if view.comparison != 0 {
+            self.upload_reference(rings.start + j, || rings.original_rgba(j));
         }
         let controls = rings.controls(time);
-        let audio = clip.audio_at(time);
-        let mut u = Uniforms::zeroed();
-        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
-        u.state = [PART6_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
-        u.misc = [
-            4.0 / 3.0,
-            if self.srgb { 1.0 } else { 0.0 },
-            clip.logo_at as f32,
-            if modern { 1.0 } else { 0.0 },
-        ];
-        u.audio = audio.intro;
+        let mut u = base_uniforms(clip, view, self.srgb, part_state(PART6_PHASE, j, time));
         if let Some(scroll) = &clip.scroller {
-            let [level, bass, treble] = audio.scroller;
+            let [level, bass, treble] = clip.audio_at(time).scroller;
             let musical = scroll.lighting == ScrollerLighting::Musical;
             u.scroll_light = [level, if musical { 1.0 } else { 0.0 }, bass, treble];
             // The bump wall as part 2 left it, for styles that use wall.wgsl:
@@ -1134,8 +1071,7 @@ impl Renderer {
         u.authored_atlas = controls.authored_atlas;
         u.neon_map = controls.neon_map;
         u.rings_style = controls.rings_style;
-        self.queue
-            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+        u
     }
 
     /// Make part 5's renderer, unless it holds `field` already.
@@ -1157,18 +1093,11 @@ impl Renderer {
     /// zoom's magnification beneath it (its smoke brought to this moment as
     /// in part 5); and the original frame when a comparison shows it,
     /// replayed on demand ([`DotsPreview::original_rgba`]).
-    fn prepare_dots(&mut self, clip: &Clip, dots: &DotsPreview, view: View) {
+    fn prepare_dots(&mut self, clip: &Clip, dots: &DotsPreview, view: View) -> Uniforms {
         let View {
-            time,
-            size,
-            comparison,
-            modern,
-            hud: _,
+            time, size, modern, ..
         } = view;
         self.part3 = true;
-        self.glyphs_active = false;
-        self.scroller = false;
-        self.tile_transition = false;
         let j = dots.frame_at(time).unwrap_or(0);
         let aspect = size.0 as f64 / size.1.max(1) as f64;
         let block = dots_block(clip, dots, time, aspect);
@@ -1184,8 +1113,6 @@ impl Renderer {
             self.hold_field(field);
             let renderer = self.field.as_mut().unwrap();
             if modern {
-                self.modern_renderer
-                    .resize(&self.device, &self.uniform, &self.reference, size);
                 renderer.resize(&self.device, size);
             }
             renderer.update(&self.queue, field, field.frames.len() - 1);
@@ -1198,62 +1125,25 @@ impl Renderer {
             field_block.part3_view = [magnification, 0.0, 0.0, 0.0];
             self.part3_underlay = true;
         }
-        if modern {
-            self.modern_renderer
-                .resize(&self.device, &self.uniform, &self.reference, size);
-        }
         self.dots.as_mut().unwrap().resize(&self.device, size);
-        let index = dots.start + j;
-        if comparison != 0 && self.reference_index != Some(index) {
-            self.queue.write_texture(
-                self.reference.as_image_copy(),
-                &dots.original_rgba(j),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(WIDTH as u32 * 4),
-                    rows_per_image: Some(HEIGHT as u32),
-                },
-                wgpu::Extent3d {
-                    width: WIDTH as u32,
-                    height: HEIGHT as u32,
-                    depth_or_array_layers: 1,
-                },
-            );
-            self.reference_index = Some(index);
+        if view.comparison != 0 {
+            self.upload_reference(dots.start + j, || dots.original_rgba(j));
         }
-        let audio = clip.audio_at(time);
-        let mut u = Uniforms::zeroed();
-        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
-        u.state = [PART3_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
-        u.misc = [
-            4.0 / 3.0,
-            if self.srgb { 1.0 } else { 0.0 },
-            clip.logo_at as f32,
-            if modern { 1.0 } else { 0.0 },
-        ];
-        u.audio = audio.intro;
+        let mut u = base_uniforms(clip, view, self.srgb, part_state(PART3_PHASE, j, time));
         u.field = field_block;
         u.dots = block;
-        self.queue
-            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+        u
     }
 
     /// Part 4: the shared controls for this moment, with the music's cues;
     /// in its first moments, part 3's controls too, for its modern view to
     /// hand over from; and the original frame when a comparison shows it,
     /// rebuilt on demand ([`PlasmaPreview::original_full`]).
-    fn prepare_plasma(&mut self, clip: &Clip, plasma: &PlasmaPreview, view: View) {
+    fn prepare_plasma(&mut self, clip: &Clip, plasma: &PlasmaPreview, view: View) -> Uniforms {
         let View {
-            time,
-            size,
-            comparison,
-            modern,
-            hud: _,
+            time, size, modern, ..
         } = view;
         self.part4 = true;
-        self.glyphs_active = false;
-        self.scroller = false;
-        self.tile_transition = false;
         let j = plasma.frame_at(time).unwrap_or(0);
         let mut block = plasma.controls(time);
         for (h, &since) in block.hits.iter().enumerate() {
@@ -1264,8 +1154,6 @@ impl Renderer {
         let mut dots_controls = DotsBlock::zeroed();
         self.part4_handover = false;
         if modern {
-            self.modern_renderer
-                .resize(&self.device, &self.uniform, &self.reference, size);
             self.plasma.as_mut().unwrap().resize(&self.device, size);
             if let (true, Some(dots)) = (block.camera[2] > 0.0, &clip.dots) {
                 let aspect = size.0 as f64 / size.1.max(1) as f64;
@@ -1276,231 +1164,101 @@ impl Renderer {
         } else {
             block.camera[2] = 0.0;
         }
-        let index = plasma.start + j;
-        if comparison != 0 {
+        if view.comparison != 0 {
             self.plasma
                 .as_mut()
                 .unwrap()
                 .show_original(&self.queue, plasma, j);
-            if self.reference_index != Some(index) {
-                self.queue.write_texture(
-                    self.reference.as_image_copy(),
-                    &plasma.original_rgba(j),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(WIDTH as u32 * 4),
-                        rows_per_image: Some(HEIGHT as u32),
-                    },
-                    wgpu::Extent3d {
-                        width: WIDTH as u32,
-                        height: HEIGHT as u32,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                self.reference_index = Some(index);
-            }
+            self.upload_reference(plasma.start + j, || plasma.original_rgba(j));
         }
-        let audio = clip.audio_at(time);
-        let mut u = Uniforms::zeroed();
-        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
-        u.state = [PART4_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
-        u.misc = [
-            4.0 / 3.0,
-            if self.srgb { 1.0 } else { 0.0 },
-            clip.logo_at as f32,
-            if modern { 1.0 } else { 0.0 },
-        ];
-        u.audio = audio.intro;
+        let mut u = base_uniforms(clip, view, self.srgb, part_state(PART4_PHASE, j, time));
         u.dots = dots_controls;
         u.plasma = block;
-        self.queue
-            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+        u
     }
 
     /// Part 7: the shared controls for this moment, and the original frame
     /// when a comparison shows it, rebuilt on demand
     /// ([`GreetingsPreview::original_rgba`]).
-    fn prepare_greetings(&mut self, clip: &Clip, greetings: &GreetingsPreview, view: View) {
-        let View {
-            time,
-            size,
-            comparison,
-            modern,
-            hud: _,
-        } = view;
+    fn prepare_greetings(
+        &mut self,
+        clip: &Clip,
+        greetings: &GreetingsPreview,
+        view: View,
+    ) -> Uniforms {
+        let time = view.time;
         self.part7 = true;
-        self.glyphs_active = false;
-        self.scroller = false;
-        self.tile_transition = false;
         let j = greetings.frame_at(time).unwrap_or(0);
-        self.greetings.as_mut().unwrap().shows_monster =
-            greetings.frames[j].stage >= super::greetings::Stage::Monster;
-        if modern {
-            self.modern_renderer
-                .resize(&self.device, &self.uniform, &self.reference, size);
-            self.greetings.as_mut().unwrap().resize(&self.device, size);
+        let renderer = self.greetings.as_mut().unwrap();
+        renderer.shows_monster = greetings.frames[j].stage >= super::greetings::Stage::Monster;
+        if view.modern {
+            renderer.resize(&self.device, view.size);
         }
-        let index = greetings.start + j;
-        if comparison != 0 {
-            let renderer = self.greetings.as_mut().unwrap();
+        if view.comparison != 0 {
             renderer.show_original(&self.queue, greetings, j);
-            if self.reference_index != Some(index) {
-                self.queue.write_texture(
-                    self.reference.as_image_copy(),
-                    &greetings.original_rgba(j),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(WIDTH as u32 * 4),
-                        rows_per_image: Some(HEIGHT as u32),
-                    },
-                    wgpu::Extent3d {
-                        width: WIDTH as u32,
-                        height: HEIGHT as u32,
-                        depth_or_array_layers: 1,
-                    },
-                );
-                self.reference_index = Some(index);
-            }
+            self.upload_reference(greetings.start + j, || greetings.original_rgba(j));
         }
-        let mut u = Uniforms::zeroed();
-        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
-        u.state = [PART7_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
-        u.misc = [
-            4.0 / 3.0,
-            if self.srgb { 1.0 } else { 0.0 },
-            clip.logo_at as f32,
-            if modern { 1.0 } else { 0.0 },
-        ];
-        u.audio = clip.audio_at(time).intro;
+        let mut u = base_uniforms(clip, view, self.srgb, part_state(PART7_PHASE, j, time));
         u.greetings = greetings.controls(time);
-        self.queue
-            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+        u
     }
 
     /// Part 8: the shared controls for this moment, and the original frame
     /// when a comparison shows it ([`EndingPreview::original_rgba`]).
-    fn prepare_ending(&mut self, clip: &Clip, ending: &EndingPreview, view: View) {
-        let (time, size, comparison) = (view.time, view.size, view.comparison);
+    fn prepare_ending(&mut self, clip: &Clip, ending: &EndingPreview, view: View) -> Uniforms {
+        let time = view.time;
         self.part8 = true;
-        self.glyphs_active = false;
-        self.scroller = false;
-        self.tile_transition = false;
         let j = ending.frame_at(time).unwrap_or(0);
-        if view.modern {
-            self.modern_renderer
-                .resize(&self.device, &self.uniform, &self.reference, size);
-        }
-        let index = ending.start + j;
-        if comparison != 0 {
+        if view.comparison != 0 {
             self.ending
                 .as_mut()
                 .unwrap()
                 .show_original(&self.queue, ending, j);
-            if self.reference_index != Some(index) {
-                let extent = wgpu::Extent3d {
-                    width: WIDTH as u32,
-                    height: HEIGHT as u32,
-                    depth_or_array_layers: 1,
-                };
-                let layout = wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(WIDTH as u32 * 4),
-                    rows_per_image: Some(HEIGHT as u32),
-                };
-                let pixels = ending.original_rgba(j);
-                let target = self.reference.as_image_copy();
-                self.queue.write_texture(target, &pixels, layout, extent);
-                self.reference_index = Some(index);
-            }
+            self.upload_reference(ending.start + j, || ending.original_rgba(j));
         }
-        let mut u = Uniforms::zeroed();
-        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
-        u.state = [PART8_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
-        let modern = if view.modern { 1.0 } else { 0.0 };
-        u.misc = [
-            4.0 / 3.0,
-            self.srgb as u8 as f32,
-            clip.logo_at as f32,
-            modern,
-        ];
-        u.audio = clip.audio_at(time).intro;
+        let mut u = base_uniforms(clip, view, self.srgb, part_state(PART8_PHASE, j, time));
         u.ending = ending.controls(time);
-        self.queue
-            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+        u
     }
 
     /// Part 5: the shared controls for this moment, its palette and zoom
     /// buffers, the fluid brought to this moment, and the original frame
     /// when a comparison shows it, replayed on demand
     /// ([`FieldPreview::original`]).
-    fn prepare_field(&mut self, clip: &Clip, field: &FieldPreview, view: View) {
+    fn prepare_field(&mut self, clip: &Clip, field: &FieldPreview, view: View) -> Uniforms {
         let View {
-            time,
-            size,
-            comparison,
-            modern,
-            hud: _,
+            time, size, modern, ..
         } = view;
         self.part5 = true;
-        self.glyphs_active = false;
-        self.scroller = false;
-        self.tile_transition = false;
         let j = field.frame_at(time).unwrap_or(0);
         let renderer = self.field.as_mut().unwrap();
         if modern {
-            self.modern_renderer
-                .resize(&self.device, &self.uniform, &self.reference, size);
             renderer.resize(&self.device, size);
         }
         renderer.update(&self.queue, field, j);
-        // Before part 5, when its view draws part 6's fade, the original is
-        // part 6's frame.
-        let before = clip
-            .rings
-            .as_ref()
-            .filter(|_| field.frame_at(time).is_none())
-            .and_then(|r| Some((r, r.frame_at(time)?)));
-        let index = before.map_or(field.start + j, |(r, k)| r.start + k);
-        if comparison != 0 && self.reference_index != Some(index) {
-            let original = match before {
+        if view.comparison != 0 {
+            // Before part 5, when its view draws part 6's fade, the original
+            // is part 6's frame.
+            let before = clip
+                .rings
+                .as_ref()
+                .filter(|_| field.frame_at(time).is_none())
+                .and_then(|r| Some((r, r.frame_at(time)?)));
+            let index = before.map_or(field.start + j, |(r, k)| r.start + k);
+            self.upload_reference(index, || match before {
                 Some((rings, k)) => rings.original_rgba(k),
                 None => field.original_rgba(j),
-            };
-            self.queue.write_texture(
-                self.reference.as_image_copy(),
-                &original,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(WIDTH as u32 * 4),
-                    rows_per_image: Some(HEIGHT as u32),
-                },
-                wgpu::Extent3d {
-                    width: WIDTH as u32,
-                    height: HEIGHT as u32,
-                    depth_or_array_layers: 1,
-                },
-            );
-            self.reference_index = Some(index);
+            });
         }
         let mut block = field.controls(time);
         if modern {
+            let renderer = self.field.as_mut().unwrap();
             block.fluid = renderer.advance_fluid(&self.device, &self.queue, field, time);
             renderer.advance_zoom(&self.device, &self.queue, &block, size);
         }
-        let audio = clip.audio_at(time);
-        let mut u = Uniforms::zeroed();
-        u.screen = [size.0 as f32, size.1 as f32, time as f32, comparison as f32];
-        u.state = [PART5_PHASE, j as f32, 0.0, (time * 70.0).fract() as f32];
-        u.misc = [
-            4.0 / 3.0,
-            if self.srgb { 1.0 } else { 0.0 },
-            clip.logo_at as f32,
-            if modern { 1.0 } else { 0.0 },
-        ];
-        u.audio = audio.intro;
+        let mut u = base_uniforms(clip, view, self.srgb, part_state(PART5_PHASE, j, time));
         u.field = block;
-        self.queue
-            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&u));
+        u
     }
 
     /// Upload a scroller clip's glyph atlas and tables once, on first use.
@@ -1834,6 +1592,46 @@ impl Renderer {
         Ok(())
     }
 }
+
+/// The controls every moment shares, before a part's own: the drawable size,
+/// the clock and the comparison, `state` (phase, frame, door and the
+/// interpolation between frames), the composition's aspect, the output's
+/// encoding, the logo's time and the view, the intro's music cues and the
+/// frame-rate counter.
+fn base_uniforms(clip: &Clip, view: View, srgb: bool, state: [f32; 4]) -> Uniforms {
+    let View {
+        time,
+        size,
+        comparison,
+        modern,
+        hud,
+    } = view;
+    Uniforms {
+        screen: [size.0 as f32, size.1 as f32, time as f32, comparison as f32],
+        state,
+        misc: [
+            4.0 / 3.0,
+            if srgb { 1.0 } else { 0.0 },
+            clip.logo_at as f32,
+            if modern { 1.0 } else { 0.0 },
+        ],
+        audio: clip.audio_at(time).intro,
+        hud: hud.map_or([0.0; 4], |[fps, ms]| [1.0, fps, ms, 0.0]),
+        ..Uniforms::zeroed()
+    }
+}
+
+/// A part's `u.state`: its phase, its frame `j` and the 70 Hz tick's fraction.
+fn part_state(phase: f32, j: usize, time: f64) -> [f32; 4] {
+    [phase, j as f32, 0.0, (time * 70.0).fract() as f32]
+}
+
+/// A 320 × 200 source image.
+const SOURCE_EXTENT: wgpu::Extent3d = wgpu::Extent3d {
+    width: WIDTH as u32,
+    height: HEIGHT as u32,
+    depth_or_array_layers: 1,
+};
 
 /// Everything part 3 puts in `u.dots` at a clip time, with the music's
 /// cues: the low band at the moment and each tick before, for the trails;
@@ -2985,6 +2783,61 @@ mod tests {
             "fluid at {time}"
         );
         assert_eq!(prerolled(&seeking), (length, length));
+    }
+
+    /// Every part's controls carry the shared values, the frame-rate
+    /// counter's among them, not only the intro's and the scroller's.
+    #[test]
+    #[ignore = "requires locally supplied PANIC_DATA and a GPU; run with --ignored"]
+    fn every_part_carries_the_shared_controls() {
+        let data = crate::test_support::data();
+        let clip = Clip::load_ending(&data, ScrollerLighting::Studio).unwrap();
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let (mut renderer, _) = pollster::block_on(Renderer::new(&instance, None)).unwrap();
+        for (time, phase) in [
+            (6.8, 1.0),
+            (31.0, 8.0),
+            (57.2, PART6_PHASE),
+            (84.0, PART5_PHASE),
+            (151.4, PART3_PHASE),
+            (197.0, PART4_PHASE),
+            (233.1, PART7_PHASE),
+            (245.5, PART8_PHASE),
+        ] {
+            for (modern, comparison) in [(true, 0), (false, 2)] {
+                let hud = Some([59.0, 16.9]);
+                let view = View {
+                    modern,
+                    comparison,
+                    hud,
+                    ..view_at(time)
+                };
+                let u = renderer.controls(&clip, view);
+                let shared = (u.state[0], u.hud, u.screen, u.misc, u.audio);
+                let screen = [480.0, 270.0, time as f32, comparison as f32];
+                let misc = [
+                    4.0 / 3.0,
+                    1.0,
+                    clip.logo_at as f32,
+                    f32::from(u8::from(modern)),
+                ];
+                let counter = [1.0, 59.0, 16.9, 0.0];
+                let audio = clip.audio_at(time).intro;
+                assert_eq!(shared, (phase, counter, screen, misc, audio), "{time} s");
+            }
+        }
+        assert_eq!(renderer.controls(&clip, view_at(245.5)).hud, [0.0; 4]);
+    }
+
+    fn view_at(time: f64) -> View {
+        let size = (480, 270);
+        View {
+            time,
+            size,
+            comparison: 0,
+            modern: true,
+            hud: None,
+        }
     }
 
     /// Rust field names and byte offsets, in declaration order.
