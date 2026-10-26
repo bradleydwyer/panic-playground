@@ -549,6 +549,29 @@ impl PlasmaPreview {
     /// neighbouring frames of the plasma, so it glides. Zero outside the
     /// plasma's frames.
     pub fn layers(&self, j: usize) -> [[f32; LAYER_SAMPLES]; 2] {
+        self.glided(j, |k| self.layers_down(k))
+    }
+
+    /// Every frame's [`PlasmaPreview::layers`], in order, as the renderer
+    /// uploads them: the same values, with each plasma frame smoothed down
+    /// the screen once rather than once for every neighbour that glides
+    /// over it.
+    pub fn all_layers(&self) -> Vec<[[f32; LAYER_SAMPLES]; 2]> {
+        let down: Vec<Option<[[f64; LAYER_SAMPLES]; 2]>> = (0..self.frames.len())
+            .map(|k| (self.frames[k].phase == Phase::Plasma).then(|| self.layers_down(k)))
+            .collect();
+        (0..self.frames.len())
+            .map(|j| self.glided(j, |k| down[k].expect("a plasma frame")))
+            .collect()
+    }
+
+    /// Frame `j`'s layers, smoothed over the neighbouring plasma frames,
+    /// whose smoothing down the screen `down` gives.
+    fn glided(
+        &self,
+        j: usize,
+        down: impl Fn(usize) -> [[f64; LAYER_SAMPLES]; 2],
+    ) -> [[f32; LAYER_SAMPLES]; 2] {
         let mut out = [[0.0; LAYER_SAMPLES]; 2];
         if self.frames[j].phase != Phase::Plasma {
             return out;
@@ -564,7 +587,7 @@ impl PlasmaPreview {
                 continue;
             }
             let w = (-(d * d) as f64 / (2.0 * LAYER_GLIDE * LAYER_GLIDE)).exp();
-            let layers = self.layers_down(k as usize);
+            let layers = down(k as usize);
             for (o, l) in out.iter_mut().zip(layers) {
                 for (v, x) in o.iter_mut().zip(l) {
                     *v += (w * x) as f32;
@@ -582,6 +605,10 @@ impl PlasmaPreview {
     fn layers_down(&self, j: usize) -> [[f64; LAYER_SAMPLES]; 2] {
         let starts = self.rasters(j);
         let reach = (3.0 * LAYER_SMOOTH).ceil() as isize;
+        // The Gaussian's weights, worked out once (the same for every tap).
+        let kernel: Vec<f64> = (-reach..=reach)
+            .map(|d| (-(d * d) as f64 / (2.0 * LAYER_SMOOTH * LAYER_SMOOTH)).exp())
+            .collect();
         let mut out = [[0.0; LAYER_SAMPLES]; 2];
         for (layer, smooth) in out.iter_mut().enumerate() {
             let offset = |k: usize| {
@@ -593,7 +620,7 @@ impl PlasmaPreview {
                 for d in -reach..=reach {
                     let i = k as isize + d;
                     if (0..LAYER_SAMPLES as isize).contains(&i) {
-                        let w = (-(d * d) as f64 / (2.0 * LAYER_SMOOTH * LAYER_SMOOTH)).exp();
+                        let w = kernel[(d + reach) as usize];
                         sum += w * offset(i as usize);
                         weight += w;
                     }
@@ -1403,6 +1430,34 @@ mod tests {
             plasma.frame_at(dots.seconds(dots.frames.len() - 1)),
             Some(0)
         );
+    }
+
+    /// The layers the renderer uploads, each plasma frame smoothed down the
+    /// screen once, are every frame's own layers to the bit, over the whole
+    /// invented part: its edges (before the plasma, the slide) included.
+    #[test]
+    fn all_layers_are_each_frames_layers_to_the_bit() {
+        let mut p = invented();
+        // An invented stride table and strides that move from frame to
+        // frame, so the displacements vary down the screen and over time.
+        p.tables.sift = (0..1024u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect();
+        for (j, frame) in p.frames.iter_mut().enumerate() {
+            frame.state.add1 = (j * 7) % 512;
+            frame.state.add2 = (j * 13 + 5) % 512;
+        }
+        let all = p.all_layers();
+        assert_eq!(all.len(), p.frames.len());
+        let mut moving = 0;
+        for (j, layers) in all.iter().enumerate() {
+            let own = p.layers(j);
+            for (a, b) in layers.iter().flatten().zip(own.iter().flatten()) {
+                assert_eq!(a.to_bits(), b.to_bits(), "frame {j}");
+            }
+            moving += own.iter().flatten().any(|&v| v != 0.0) as usize;
+        }
+        assert!(moving > 1000, "{moving} frames with displaced layers");
     }
 
     /// The drops are a function of the moment and the rate alone: the same

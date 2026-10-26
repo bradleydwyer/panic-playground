@@ -177,8 +177,10 @@ impl PlasmaRenderer {
         let rasters = buffer("Part 4 rasters", bytemuck::cast_slice(&rasters));
         let sine: Vec<f32> = preview.tables.sine.iter().map(|&s| s as f32).collect();
         let sine = buffer("Part 4 sine", bytemuck::cast_slice(&sine));
-        let layers: Vec<f32> = (0..frames)
-            .flat_map(|j| preview.layers(j).into_iter().flatten())
+        let layers: Vec<f32> = preview
+            .all_layers()
+            .into_iter()
+            .flat_map(|frame| frame.into_iter().flatten())
             .collect();
         debug_assert_eq!(layers.len(), frames * 2 * LAYER_SAMPLES);
         let layers = buffer("Part 4 layers", bytemuck::cast_slice(&layers));
