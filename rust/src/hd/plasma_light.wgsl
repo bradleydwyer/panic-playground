@@ -36,13 +36,16 @@
 //   carving toward where it comes from; the reflection reads each sheet's
 //   light at the level its spread matches. A dim warm key light from the
 //   upper left, where the logo's painted light comes from, keeps the stone
-//   visible while the plasma is dark and gives way as it rises.
-// - The floor (the original has none: below its plasma it is black): the
-//   plane the slab stands on, its base, through the same camera, running
-//   back to the line the sheets stand on, which projects to the plasma's
-//   last raster, so on the screen the floor meets the plasma's bottom edge.
-//   By default it is water: a near-mirror of the sheets and their glow
-//   (Fresnel's equations for water, with an authored gain),
+//   visible while the plasma is dark, lighting it no more than the plasma
+//   will, and gives way as it rises.
+// - The floor (the original has none: below its plasma it is black): part
+//   3's water, level, lying as part 3 left it and draining from 186 to 200
+//   s, uncovering the slab (plasma.rs, DRAIN), through the same camera,
+//   running back to the sheets, which stand in it below the plasma's last
+//   raster, the plasma carried on down them to it.
+//   By default it is water: a mirror of the sheets and their glow
+//   (Fresnel's equations for water, as it is: seen near grazing, it
+//   mirrors 12 to 53% of their light),
 //   its normals from a calm swell of four long waves, so the mirror image
 //   wavers and draws out into streaks; its body scatters back a little of
 //   the sheets' light, less in the slab's shade. On the preview's D key it
@@ -89,7 +92,7 @@ const GLOW_SPILL=.06;
 // Dither against banding in the 8-bit output: the light's relative jitter.
 const DITHER=.008;
 // plasma::LAYER_SAMPLES.
-const LAYER_SAMPLES=113u;
+const LAYER_SAMPLES=200u;
 const HIT_DECAY=.45;
 // The key light: toward it (camera space), its colour and strength; a cool
 // fill from the camera's side, and the ambient light. They light the slab
@@ -98,6 +101,14 @@ const KEY_DIR=vec3f(-.5,-.55,-.67);
 const KEY=vec3f(1.0,.93,.84)*.75;
 // How far the key dims as the plasma comes up (at its full level).
 const KEY_DUCK=.8;
+// The key's share of KEY while the plasma is dark (authored): the light the
+// full plasma itself gives the slab's top face (measured on the frames, its
+// mean over the part's full level: 0.38 of what KEY gives it), so the
+// stone is no brighter in the dark than by the plasma's light. At KEY it
+// was 1.5 times as bright as under the full plasma, and the top face's far
+// end, the face the key meets most squarely and all that shows above the
+// water then, was the brightest thing in the frame.
+const KEY_DARK=.38;
 const FILL=vec3f(.55,.68,.9)*.2;
 const AMBIENT=.035;
 // The stone: its reflectance at normal incidence, polished on its faces
@@ -142,10 +153,14 @@ const FLOOR_FADE=900.0;
 // preview's D key): the same plane, a near-mirror, as water.wgsl has it
 // (shared with part 3, whose objects fly over the same water). The light
 // its body scatters back (of what enters it). How much more it mirrors
-// than water does (pc.water.x, plasma::WATER_MIRROR by default, authored:
-// at this camera's angles water reflects only 2 to 7%, darker than the
-// floor; 1 for water as it is), the swell's height, clock and size
-// (pc.water.yzw) are tuned live on the preview's number keys.
+// than water does (pc.water.x, plasma::WaterTuning::part4_mirror_gain: by
+// default 1, water as it is), the swell's height, clock and size
+// (pc.water.yzw) are tuned live on the preview's number keys. (A gain of 3
+// was authored for the old ground, the slab's base, which this camera met
+// at 45 to 60 degrees, where water reflects only 3 to 6%; the level water
+// it meets at 69 to 84 degrees, where water's own 12 to 53% is already
+// more than that gain gave, 8 to 18%, and the gain raised it to 32 to
+// 90%, near a perfect mirror toward the sheets' foot.)
 const WATER_BODY=vec3f(.010,.020,.024);
 // The slab's shadow on the floor: the strips each of its sides is taken
 // in.
@@ -339,7 +354,7 @@ fn swell()->f32 {
 // show the original's colour (and its bloom keeps the hue), at half power:
 // the two sheets together give the light the original's two layers do.
 fn layer_light(layer:u32,s:vec2f)->vec3f {
-    if !field_written() || pc.palette.y<=0.0 || s.y>f32(PLASMA_RASTERS)*.5 {return vec3f(0);}
+    if !field_written() || pc.palette.y<=0.0 {return vec3f(0);}
     let c=shutter_colour(layer_phase(layer,s.y*2.0-.5,s.x));
     let y=dot(c,vec3f(.2126,.7152,.0722));
     if y<=0.0 {return vec3f(0);}
@@ -577,7 +592,7 @@ fn shade_stone(p:vec3f,d:vec3f)->vec3f {
     let v=-d;
     let ao=occlusion(p,n);
     let level=select(0.0,clamp(pc.palette.y/63.0,0.0,1.0),field_written());
-    let key_light=KEY*(1.0-KEY_DUCK*level);
+    let key_light=KEY*mix(KEY_DARK,1.0-KEY_DUCK,level);
     let key=normalize(KEY_DIR);
     let shadow=soft_shadow(p+n*.3,key,120.0);
     let nk=max(dot(n,key),0.0);
@@ -610,34 +625,34 @@ fn shade_stone(p:vec3f,d:vec3f)->vec3f {
     return c;
 }
 
-// ---- The floor (authored) ----------------------------------------------------------
-// The original has no floor; this one is the plane the slab stands on,
-// its base, level with its top face, seen through the camera the logo
-// implies. It runs back to the line where both sheets stand, which
-// projects to the plasma's last raster; behind that it is dark (the sheets
-// give light only toward the camera). It slides with the slab.
-fn floor_up()->vec3f {return -slab_down();}
-// The floor straight below the slab's near top edge's centre.
-fn floor_origin()->vec3f {return pc.slab_origin.xyz+slab_down()*slab_size().z;}
-// Floor coordinates: across, and back from below the near top edge.
+// ---- The ground (authored) ----------------------------------------------------------
+// The original has no ground; this one is part 3's water as it lies
+// through part 3's dots (dots_water.rs), level below the camera (or as
+// tilted, pc.ground.w), seen through the camera the logo implies, running
+// on under the sheets, which hang over it, to the horizon. It slides with
+// the slab.
+fn floor_up()->vec3f {return vec3f(0.0,-cos(pc.ground.w),-sin(pc.ground.w));}
+// Back along it, away from the camera.
+fn ground_back()->vec3f {return vec3f(0.0,-sin(pc.ground.w),cos(pc.ground.w));}
+// The ground straight below the slab's near top edge's centre.
+fn floor_origin()->vec3f {return pc.ground.xyz;}
+// Ground coordinates: across, and back from below the near top edge.
 fn floor_local(p:vec3f)->vec2f {
     let q=p-floor_origin();
-    return vec2f(q.x,dot(q,slab_back()));
+    return vec2f(q.x,dot(q,ground_back()));
 }
-// How far back the sheets stand on it.
-fn floor_end()->f32 {return floor_local(pc.sheet.xyz).y;}
-// Where a ray from o along d meets the floor in front of the sheets, or -1.
+// Where a ray from o along d meets the ground, or -1.
 fn floor_hit(o:vec3f,d:vec3f)->f32 {
     let n=floor_up();
     let denom=dot(d,n);
     if denom>=0.0 {return -1.0;}
     let t=dot(floor_origin()-o,n)/denom;
-    if t<=0.0 || floor_local(o+d*t).y>floor_end() {return -1.0;}
+    if t<=0.0 {return -1.0;}
     return t;
 }
 // The light both sheets send from o along d (0 off them), at the level of
 // their light that matches a spread `spread` per unit of distance, its
-// edges soft but for the bottom ones, which stand on the floor.
+// edges soft but for the bottom ones, which stand on the slab's base plane.
 fn sheets_toward(o:vec3f,d:vec3f,spread:f32)->vec3f {
     let texel=2.0*pc.sheet_size.x/SHEET_SIZE.x;
     var c=vec3f(0);
@@ -728,49 +743,72 @@ fn shade_floor(p:vec3f,d:vec3f)->vec3f {
 
 // ---- The water (authored) -------------------------------------------------------------
 fn shade_water(p:vec3f,d:vec3f)->vec3f {
-    // It shows only by the sheets' light.
-    if !field_written() || pc.palette.y<=0.0 {return vec3f(0);}
+    // Its surface shows only by the sheets' light (and the stone's mirror
+    // image); what lies under it, by any light.
+    let sheets_lit=field_written() && pc.palette.y>0.0;
     let up=floor_up();
     let v=-d;
     let q=floor_local(p);
-    var g=water_slope(q,pc.water);
-    // A pixel's size on the water, across its foreshortening.
-    let footprint=length(p)*200.0/(focal()*u.screen.y)/max(dot(up,v),.2);
+    // A pixel's size on the water, across and back (foreshortened), and
+    // for the drops' rings, across its foreshortening.
+    let pixel=length(p)*200.0/(focal()*u.screen.y);
+    let swell=water_slope(q,pc.water,vec2f(pixel,pixel/max(dot(up,v),.01)));
+    var g=swell.xy;
+    let footprint=pixel/max(dot(up,v),.2);
     // (Unrolled: indexing the controls with a variable slows and changes
     // the whole shader's code.)
     g+=drop_slope(q,pc.drops[0],footprint)+drop_slope(q,pc.drops[1],footprint)
         +drop_slope(q,pc.drops[2],footprint)+drop_slope(q,pc.drops[3],footprint)
         +drop_slope(q,pc.drops[4],footprint)+drop_slope(q,pc.drops[5],footprint);
-    let n=normalize(up-g.x*vec3f(1,0,0)-g.y*slab_back());
+    let n=normalize(up-g.x*vec3f(1,0,0)-g.y*ground_back());
     let o=p+up*.3;
     // The mirror image, over the slopes too small to draw, spread in the
     // plane of incidence (Gaussian weights): the sheets, their glow, or the
-    // slab where it stands in the way (from this camera, outside the
-    // frame, as for the floor).
+    // slab where it stands in the way (its part above the water, mirrored
+    // just below where it comes out).
     let away=normalize(d-dot(d,up)*up);
     let rd=reflect(d,n);
-    let f=pc.water.x*water_fresnel(dot(n,v));
+    let f=water_share(water_fresnel(dot(n,v)),pc.water.x);
     var mirrored=vec3f(0);
     let t=march_from(o,rd);
     if t>0.0 {
         mirrored=shade_stone(o+rd*t,rd)*f;
-    } else {
+    } else if sheets_lit {
         var weight=0.0;
         for(var j=0;j<5;j++) {
             let x=f32(j-2)*.8;
-            let nj=normalize(n+away*WATER_FINE*x);
+            let nj=normalize(n+away*(WATER_FINE+swell.z)*x);
             let rj=reflect(d,nj);
             if dot(rj,up)<=0.0 {continue;}
             let wj=exp(-.5*x*x);
-            mirrored+=wj*pc.water.x*water_fresnel(dot(nj,v))*sheets_toward(o,rj,WATER_FINE);
+            mirrored+=wj*water_share(water_fresnel(dot(nj,v)),pc.water.x)*sheets_toward(o,rj,WATER_FINE+swell.z);
             weight+=wj;
         }
         mirrored=mirrored/max(weight,1e-4)+f*glow_from(o,rd);
     }
     // The light its body scatters back: of the sheets' light that enters,
     // less what the slab keeps from it, so a little darker in its shade.
-    let lit=max(gather(p,up).light-slab_blocks(p,up),vec3f(0));
-    return mirrored+max(1.0-f,0.0)*WATER_BODY*lit;
+    var lit=vec3f(0);
+    if sheets_lit {lit=max(gather(p,up).light-slab_blocks(p,up),vec3f(0));}
+    // What lies under the surface: the stone, seen along the ray refracted
+    // down through the moving surface, fading over the water it is seen
+    // through and the water its light comes down through (WATER_CLARITY).
+    // Its radiance comes out of the water spread from the cone it filled
+    // there (Snell's window) over the wider one above, so divided by the
+    // index squared (the n-squared law for radiance), besides what the
+    // surface reflects back (1 - f, below). The light falling on it is
+    // taken as in air: the key comes in at 54 degrees, where water lets
+    // through 96%.
+    var beneath=vec3f(0);
+    let into=refract(d,n,1.0/WATER_ETA);
+    let below=p-up*.3;
+    let ti=march_from(below,into);
+    if ti>0.0 {
+        let q=below+into*ti;
+        let depth=max(dot(p-q,up),0.0);
+        beneath=shade_stone(q,into)*exp(-(ti+depth)/WATER_CLARITY)/(WATER_ETA*WATER_ETA);
+    }
+    return mirrored+max(1.0-f,0.0)*(WATER_BODY*lit+beneath);
 }
 // The ground: the water, or the polished floor.
 fn shade_ground(p:vec3f,d:vec3f)->vec3f {
@@ -808,15 +846,19 @@ fn shade_ground(p:vec3f,d:vec3f)->vec3f {
         let t=march(d);
         var reach=pc.sheet.z+400.0;
         var on_sheets=false;
-        if t>0.0 {
+        // The ground, where it lies in front of the sheets, and of the stone
+        // where the stone stands in the water (the water lies over what of
+        // it is under the surface).
+        let hit=sheet_hit(0u,vec3f(0),d);
+        let at=floor_hit(vec3f(0),d);
+        let ground=at>0.0 && (hit.z<=0.0 || at<hit.z) && (t<=0.0 || at<t);
+        if t>0.0 && !ground {
             c=shade_stone(d*t,d);
             reach=t;
         } else {
             // The two sheets of light, the front one sharp and the back one
-            // through it, softer; below them, the floor.
-            let hit=sheet_hit(0u,vec3f(0),d);
-            let at=floor_hit(vec3f(0),d);
-            if at>0.0 && (hit.z<=0.0 || at<hit.z) {
+            // through it, softer; below them, the ground.
+            if ground {
                 c=shade_ground(d*at,d);
                 reach=at;
             } else if hit.z>0.0 {

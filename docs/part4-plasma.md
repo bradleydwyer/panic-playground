@@ -16,6 +16,18 @@ say where it lies there.
 
 ## Where it lies
 
+The ground is now part 3's water, carried on: it lies level, tilted as part
+3's lies (3 degrees by default, rising further off), as far below the camera
+as part 3 left it at the slab frame, and from 186 to 200 seconds it drains,
+eased, to 222 units below the camera, uncovering the slab
+(`dots_water.rs`, `plasma.rs`'s `DRAIN`). The sheets stand in it, on the
+water straight below the line where the slab's base plane meets row 113,
+the plasma carried on down them below its last raster to the water
+(`PlasmaPreview::sheet_rasters`). Part 4's mirror gain is 1, water as it
+is, by default: this level water meets the camera near grazing, where it
+mirrors enough. What follows describes the ground as it was first laid, at
+the slab's base, which the sheets' placement still starts from.
+
 The camera and the slab come from the fit to the logo, which is measured when
 the preview loads (`plasma_stone.rs`). The focal length is 262.8 rows, the
 block's tilt 31.3 degrees and its near top edge 504 units away. The block is
@@ -125,7 +137,7 @@ row 210.
     shader holds, would start to cut drops short; x3.8 (a drop every 1.2 s)
     by default. A change re-times the drops.
   - The window's title shows the current values.
-- **Left out:** the waterline is the slab's base, which is below the frame and
+- **Left out** (when the ground was the slab's base): the waterline was the slab's base, which is below the frame and
   hidden behind the slab. A ring of ripples from the slab was tried and left
   out. The water near the slab is hidden behind it, and further out the
   ring's slopes run across the line of sight, so they hardly move the mirror

@@ -405,11 +405,17 @@ optical simulation. All fields are generated locally in memory.
 | ; / ' | Strength of the waves' side light and shadows |
 | N | Part 6: the new symbols in its middle, or the original's throughout |
 | D | Part 4: still water under the slab (default), or polished dark stone |
-| 1 / 2 | Parts 3 and 4: the water's mirror, ×0.8 or ×1.25 (1, real water, to 8; default 3) |
+| 1 / 2 | Parts 3 and 4: the water's mirror, ×0.8 or ×1.25 (part 3's 1, real water, to 8, default 3; part 4's about ×0.33 to ×3.05 of real water, default ×1) |
 | 3 / 4 | Parts 3 and 4: the swell's height, ×0.8 or ×1.25 (0, a flat mirror, to about 15; default 3.8; part 3's is 0.35 of it) |
 | 5 / 6 | Parts 3 and 4: the swell's speed, ×0.8 or ×1.25 (about 0.26 to 15; default 3.8) |
 | 7 / 8 | Parts 3 and 4: the swell's size, ×0.8 or ×1.25 (about 0.26 to 15; default 1) |
 | 9 / 0 | Parts 3 and 4: drops ×0.8 or ×1.25 as often (none, or one every 17 s to 0.9 s; default every 1.2 s) |
+| Shift + 1 / 2 | Parts 3 and 4: the water's tilt a degree less or more (−15 to 30; default 3) |
+| Shift + - / = | Parts 3 and 4: the water ×1.1 nearer or further below the camera at part 3's end (40 to 700; default 100) |
+| Shift + 3 / 4 | Part 3: the plankton's glow shorter or longer, ×0.8 or ×1.25 |
+| Shift + 5 / 6 | Part 3: the plankton dimmer or brighter, ×0.8 or ×1.25 |
+| Shift + 7 / 8 | Part 3: the glow under the water dimmer or brighter, ×0.8 or ×1.25 |
+| Shift + 9 / 0 | Part 3: the ripples weaker or stronger, ×0.8 or ×1.25 |
 | J / K | Part 7: the beam's starting turn 16 frames shorter (faster) or longer (slower); default 128; from 237 s it shortens linearly to 32 by part 8 |
 | U / I | Part 7: the beam's tilt toward the camera, 3° less or more (0 to 90°, straight at the camera; default 51°) |
 | G / H | Part 7: the beam's starting brightness, ×0.8 or ×1.25 (0.05 to 4; default 0.25); from 237 s it rises linearly to 1 by part 8 |
@@ -1504,16 +1510,21 @@ port's timing, positions and motion.
   that image, moved as the slopes turn the reflected ray and spread over
   the slopes too small to draw. The air's march goes on past the water
   through its mirror image (the grid's cells under the water gather the
-  light at their mirror images). A light under the surface fades over 12
-  units. The objects fly along the camera's axis, about 500 to 2,300 units
-  out, and the box lands tilted 20 degrees toward the camera: no one plane
-  is below the one and under the other. So the water lies level, 260 units
-  below the camera, until the box comes down; then, eased with the box's
-  descent, it turns into the plane of the box's base, read as the camera
-  rising and tilting down onto it (`dots_water.rs`). About 1% of the
-  points ever dip under it, corners of the lattices and the box as they
-  pass nearest; an ignored test checks that and that the box at rest
-  stands on it.
+  light at their mirror images). The objects fly along the camera's axis,
+  about 500 to 2,300 units out, and the water lies just below them, tilted
+  3 degrees so it rises further off, rising through the part, eased, from
+  400 units below the camera to 100 at part 4's slab frame, where part 4's
+  ground takes it on (`dots_water.rs`), so they fly ever deeper through
+  it. A light under it is seen bent at the surface by Snell's law, through
+  the swell, the drops and the ripples, fading over 110 units of water and
+  blurring as the water scatters its light, which lights the water from
+  below. The lights moving through the water set off ripples along their
+  paths, as a drop sets off rings, as hard as they move and less the
+  deeper they run, and stir its plankton, which glows white blue along the
+  path behind them and then where the rings pass, fading with its
+  lifetime. Shift with the number keys tunes the water's tilt and depth,
+  the plankton's lifetime and brightness, the glow under the water and the
+  ripples (all authored, chosen by eye).
 - At the end the rotation stops, the box's trails collapse into its lights,
   which burn brighter, and in the second before part 4 draws they flare and
   swell. Part 4's slab takes over at its own colours through the tonemap,
@@ -1671,10 +1682,12 @@ and motion, and on the block fitted to the logo.
   while the plasma is dark and dims to a fifth as the plasma rises.
 - A mist hanging at the sheets scatters a little of their light, so it
   spills softly below their edges.
-- The ground, which the original lacks, is the slab's base reaching back
-  to the sheets, which stand on it: calm water mirroring them, with an
-  occasional drop, or with **D** polished dark stone. The number keys tune
-  the water (part 3's too). It shows only by their light, so only while the plasma is lit
+- The ground, which the original lacks, is part 3's water reaching back
+  to the sheets, which stand in it, the plasma carried on down them to it:
+  calm water mirroring them, with an occasional drop, or with **D**
+  polished dark stone. It lies as part 3 left it, and drains from 186 to
+  200 s, uncovering the slab. The number keys tune the water (part 3's
+  too). It shows only by their light, so only while the plasma is lit
   ([docs/part4-plasma.md](../docs/part4-plasma.md)).
 - The arrival: on the slab frame part 3's own modern view, its box flared,
   is still drawn, and gives way to this one over 0.35 s. The stone comes in

@@ -31,12 +31,12 @@
 // - The music: the lights breathe with the PCM's low band at the moment of
 //   each part of the exposure, and each order's first row sends a plane of
 //   light sweeping through the object.
-// - The water: part 4's water (water.wgsl) lies beneath the objects,
-//   mirroring the lights, their trails and the air's glow, its swell and
-//   drops drawing the mirror image out into streaks. It lies level below
-//   the objects until the box comes down, then turns, as the box comes
-//   down, into the plane of its base, so the box lands on it (dots_water.rs
-//   says why). A light that dips under it fades.
+// - The water: part 4's water (water.wgsl) lies level beneath the objects
+//   (dots_water.rs), mirroring the lights, their trails and the air's glow,
+//   its swell and drops drawing the mirror image out into streaks. A light
+//   that dips under it fades, and lights it from below; the lights moving
+//   through it set off ripples along their paths and stir the plankton,
+//   which glows.
 // - At the end the box lands, its trails collapse into its lights, and as
 //   part 4 is about to draw it flares up; part 4's slab takes over in white.
 // Module: the shared controls, dots_common.wgsl, this file and water.wgsl.
@@ -136,11 +136,13 @@ const FOG_SCATTER=.035;
 const FOG_DARK=1e-6;
 const NOISE_SIZE=128u;
 // The shade bobs: samples along each tip's 16 iterations, the glow's radius
-// in rows (the disc's area), its depth for the haze, how the film takes
-// the exposure past the palette's white (count 25) and the fibres.
+// in rows (the disc's area), its depth for the haze and the water (near
+// enough that the lowest of the path stays above the water as it lies by
+// default, dots_water.rs), how the film takes the exposure past the
+// palette's white (count 25) and the fibres.
 const SHADE_SAMPLES=64u;
 const SHADE_ROWS=7.1;
-const SHADE_DEPTH=700.0;
+const SHADE_DEPTH=220.0;
 const SHADE_OVER=.22;
 const FIBRE_RADIUS=.3;
 const FIBRE_LIGHT=vec3f(.55,.75,1.0)*2.2;
@@ -158,18 +160,40 @@ const FLARE_SWELL=1.4;
 const SLAB_FLASH=2.5;
 const SLAB_SETTLE=.9;
 const SLAB_HANDOVER=.16;
-// The water: how deep under it a light still shows (camera units; it
-// fades exponentially). The mirror's gain (dc.water.x, part 4's, chosen
-// for part 4's steep view, where water reflects only 2 to 7%) raises the
-// reflectance F to 1 - (1 - F)^gain, about gain F where F is small, as in
-// part 4, but never past a perfect mirror where this level view meets the
-// water near grazing.
-const UNDER_REACH=12.0;
-// The swell's height here, of part 4's as tuned (authored): this level
-// view meets the water far nearer grazing than part 4's, where the same
-// slopes turn the mirror image much further, so the water is calmer while
-// part 3's objects fly over it.
-const CALM=.35;
+// The water: a light under it fades over WATER_CLARITY (water.wgsl). The
+// mirror's gain (dc.water.x, part 4's, chosen for part 4's steep view,
+// where water reflects only 2 to 7%) raises the reflectance F to
+// 1 - (1 - F)^gain, about gain F where F is small, as in part 4, but never
+// past a perfect mirror where this level view meets the water near
+// grazing (water_share).
+// The lights in the water light it: their light scattered toward the
+// camera along the ray refracted down through the surface, by the waves
+// and the ripples, so it shimmers with them (single scattering in a
+// uniform medium, exact for a point light along a half line), dimmed over
+// the water's clarity as the light under it is, so a light deep in it
+// lights it broadly and dimly, one near the surface brightly where it is;
+// UNDER_SCATTER of it scattered, the white blue of the lights (authored);
+// softened within UNDER_SOFT of the light. What the water scatters also
+// blurs a light seen through it (forward scattering, authored): its disc
+// widens by UNDER_BLUR of the water its light comes through.
+const UNDER_SCATTER=.12;
+const UNDER_BLUR=.04;
+const UNDER_SOFT=2.0;
+const UNDER_TINT=vec3f(.55,.72,1.0);
+// The plankton (authored): a light moving through the water stirs it, and
+// the plankton in it glows where it is stirred, white blue, PLANKTON_LIGHT
+// at its brightest, and fades with the lifetime the controls give. Each
+// ripple (a stretch of a light's path, dots_water.rs) stirs it along its
+// line as the light passes, PLANKTON_SPLASH wide, and then wherever its
+// rings pass, for as long as they take to pass (the ring packet's fastest
+// and slowest group velocities, water.wgsl), less as they fade and spread
+// (PLANKTON_SPREAD), until PLANKTON_STIRRED seconds (dots_water.rs keeps
+// the ripples for that and four lifetimes): a glowing line behind the
+// light, spreading as a band, glowing on as it fades.
+const PLANKTON_LIGHT=vec3f(.6,.78,1.0)*.25;
+const PLANKTON_SPLASH=6.0;
+const PLANKTON_SPREAD=12.0;
+const PLANKTON_STIRRED=1.2;
 
 // ---- Bindings -----------------------------------------------------------------------
 // The samples: for each light, SAMPLES + 1 along its trail, then for each
@@ -190,12 +214,28 @@ struct Sample { a:vec4f, b:vec4f }
 @group(1) @binding(7) var fog_noise_out:texture_storage_3d<rgba16float,write>;
 // The composite's inputs: part 5's modern view at the zoom's magnification
 // (HDR), the light painted (rgb, and the shade count in a), the haze (half
-// resolution) and the light's mirror image in the water, painted as the
-// light is.
+// resolution), the light's mirror image in the water, painted as the
+// light is, and what the lights do to the water (half resolution).
 @group(2) @binding(1) var underlay:texture_2d<f32>;
 @group(2) @binding(2) var painted:texture_2d<f32>;
 @group(2) @binding(3) var haze:texture_2d<f32>;
 @group(2) @binding(4) var mirror_image:texture_2d<f32>;
+// What the lights do to the water, at half resolution (dots_water_field).
+@group(2) @binding(5) var water_field:texture_2d<f32>;
+// The ripples the lights set off along their paths through the water
+// (dots_water.rs, DotsPreview::ripples_at), newest first; then zeros. Each
+// along a line on the water (across and back) from where the light was at
+// its start to where it has reached, its rings starting at each point as
+// the light passed it: its age at its start and how long the light took
+// along it (seconds), and its strength (a drop's at 1).
+struct Ripple { line:vec4f, time:vec4f }
+const MAX_RIPPLES=320u;
+@group(0) @binding(9) var<storage,read> ripples:array<Ripple,MAX_RIPPLES>;
+// The lights in the water (DotsPreview::under_at), those near each other
+// together: their mean place in the camera's space and how many; then
+// zeros.
+const MAX_UNDER=128u;
+@group(0) @binding(10) var<storage,read> under_lights:array<vec4f,MAX_UNDER>;
 
 const DOT_SAMPLES=POINTS*(SAMPLES+1u);
 const SHADE_BASE=DOT_SAMPLES;
@@ -206,29 +246,111 @@ const LIGHTS=POINTS+SHADE_DISCS;
 const MIRROR_BASE=LIGHTS_BASE+LIGHTS;
 
 // ---- The water ---------------------------------------------------------------------------
-// Where it lies at continuous dot frame tau (dots_water.rs, Water): level,
-// the camera dc.water_plane.z above it, until the box comes down; then
-// turning as the box's centre comes down, eased, until it lies in the
-// box's base, tilted by dc.water_plane.x, the camera dc.water_plane.y above
-// it. Its up normal, in the dots' camera space (its x is 0, so the same in
-// the display's square units), and the camera's height above it.
+// Where it lies (dots_water.rs, Water): level below the camera, or as
+// tilted, dc.water_plane.x, the camera dc.water_plane.y above it. Its up
+// normal, in the dots' camera space (its x is 0, so the same in the
+// display's square units), and the camera's height above it.
 struct Plane { up:vec3f, height:f32 }
-fn water_plane(tau:f32)->Plane {
-    var s=0.0;
-    let last=dot_frames[u32(max(last_dot_frame(),0.0))].translation.y;
-    if tau>=dc.water_plane.w && last>0.0 {
-        let k=clamp(dot_state(tau).translation.y/last,0.0,1.0);
-        s=k*k*(3.0-2.0*k);
-    }
-    let a=s*dc.water_plane.x;
-    return Plane(vec3f(0.0,-cos(a),-sin(a)),mix(dc.water_plane.z,dc.water_plane.y,s));
+fn water_now()->Plane {
+    let a=dc.water_plane.x;
+    return Plane(vec3f(0.0,-cos(a),-sin(a)),dc.water_plane.y);
 }
-// The water now: as the dots stand, or level before them.
-fn water_now()->Plane {return water_plane(select(-1.0,dot_position(),dots_shown()));}
 fn water_height(w:Plane,c:vec3f)->f32 {return dot(c,w.up)+w.height;}
 fn mirrored(w:Plane,c:vec3f)->vec3f {return c-2.0*water_height(w,c)*w.up;}
-// The share of light it mirrors at reflectance f (see UNDER_REACH).
-fn water_mirror(f:f32)->f32 {return 1.0-pow(1.0-clamp(f,0.0,1.0),max(dc.water.x,1.0));}
+// Where the ray from the camera to point p (the display's square units)
+// below the plane {x: dot(x, up) + height = 0} comes out of it, bent there
+// by Snell's law: in the plane through the camera, p and the normal, the
+// point between the camera's foot and p's where the sines of the angles
+// the ray makes with the normal, above and below, are WATER_ETA apart
+// (found by halving: their ratio grows along the way). p itself where it
+// lies above the plane.
+fn refraction_point(p:vec3f,up:vec3f,height:f32)->vec3f {
+    let depth=-(dot(p,up)+height);
+    if depth<=0.0 {return p;}
+    let foot=-height*up;
+    let across=p+depth*up-foot;
+    let reach=length(across);
+    if reach<1e-3 {return foot;}
+    var lo=0.0;
+    var hi=reach;
+    for(var j=0;j<24;j++) {
+        let x=.5*(lo+hi);
+        let y=reach-x;
+        if x*sqrt(y*y+depth*depth)>WATER_ETA*y*sqrt(x*x+height*height) {hi=x;} else {lo=x;}
+    }
+    return foot+across*(.5*(lo+hi)/reach);
+}
+// The water's slope at water point q (across, and back from below the
+// camera) as the composite draws it: the swell, the drops and the
+// ripples, for something whose footprint there is `footprint` (units,
+// across and back).
+fn surface_slope(q:vec2f,footprint:vec2f)->vec2f {
+    var g=water_slope(q,dc.water,footprint).xy;
+    let f=footprint.x;
+    for(var i=0u;i<MAX_DROPS;i++) {g+=drop_slope(q,dc.drops[i],f);}
+    let gain=dc.water_lights.x;
+    if gain<=0.0 {return g;}
+    for(var i=0u;i<MAX_RIPPLES;i++) {
+        let r=ripples[i];
+        if r.time.z<=0.0 {break;}
+        let along=r.line.zw-r.line.xy;
+        let x=clamp(dot(q-r.line.xy,along)/max(dot(along,along),1e-6),0.0,1.0);
+        g+=gain*r.time.z*drop_slope(q,vec4f(r.line.xy+along*x,r.time.x-x*r.time.y,1.0),f);
+    }
+    return g;
+}
+// What the camera sees of camera point c under the water: bent where its
+// light comes out of the calm water, then again through the water as it
+// lies there, a plane through that point tilted by its slopes, so the
+// swell, the drops and the ripples move it; at the distance it lies along
+// the bent ray, in the camera's space. The water its light comes through
+// (units), and the share of its light that reaches the camera: what the
+// surface lets through (Fresnel), and the bent rays' spreading as they
+// leave the water, by cos(in air) / (eta^2 cos(in water)) of what they
+// would without it (as the camera is much further from the surface than
+// the light), so from this low view a light under the water dims steeply
+// toward the horizon as its image flattens.
+struct Seen { c:vec3f, path:f32, light:f32 }
+fn seen_through(w:Plane,c:vec3f)->Seen {
+    let p=square(c);
+    var s=refraction_point(p,w.up,w.height);
+    let back=vec3f(0.0,w.up.z,-w.up.y);
+    let q=vec2f(s.x,dot(s+w.height*w.up,back));
+    let toward=dot(normalize(s),w.up);
+    let pixel=length(s)*200.0/(FOCAL*u.screen.y);
+    let g=surface_slope(q,vec2f(pixel,pixel/max(-toward,.01))/max(-toward,.2));
+    let n=normalize(w.up-g.x*vec3f(1,0,0)-g.y*back);
+    s=refraction_point(p,n,-dot(s,n));
+    let path=length(p-s);
+    let a=normalize(s)*(length(s)+path);
+    let air=-dot(normalize(s),n);
+    let water=-dot((p-s)/max(path,1e-4),n);
+    let spread=air/(WATER_ETA*WATER_ETA*max(water,1e-3));
+    return Seen(vec3f(a.x/COLUMN,a.yz),path,(1.0-water_fresnel(air))*min(spread,1.0));
+}
+// How brightly the plankton glows r units from a point of a ripple's
+// line, t seconds after the light passed it, for a lifetime `life` (see
+// PLANKTON_LIGHT): stirred there at once, and at r while the rings pass,
+// from r over the fastest group velocity to r over the slowest; its light
+// rising toward the stirring and falling once it stops, by the lifetime.
+fn plankton(r:f32,t:f32,life:f32)->f32 {
+    // Not yet reached by the rings (or past the splash): dark.
+    if t<=0.0 || r>max(DROP_REACH*min(t,PLANKTON_STIRRED),3.0*PLANKTON_SPLASH) {return 0.0;}
+    var glow=exp(-t/life)*exp(-.5*r*r/(PLANKTON_SPLASH*PLANKTON_SPLASH));
+    let first=r/DROP_REACH;
+    let last=min(r/DROP_CG_MIN,PLANKTON_STIRRED);
+    if t>first && last>first {
+        let stir=exp(-first/DROP_FADE)/(1.0+r/PLANKTON_SPREAD);
+        glow+=stir*(exp(-(t-min(t,last))/life)-exp(-(t-first)/life));
+    }
+    return glow;
+}
+// The lights' power at the head of their trails, as the haze takes it.
+fn head_power()->f32 {
+    return POWER*(BREATH.x+BREATH.y*low_at(0.0))*(1.0+FLARE_GAIN*flare(0.0));
+}
+// The share of light it mirrors at reflectance f, raised by the gain.
+fn water_mirror(f:f32)->f32 {return water_share(f,dc.water.x);}
 
 // ---- The exposure -----------------------------------------------------------------------
 // The age of sample k, in frames.
@@ -294,17 +416,21 @@ fn dot_sample(n:u32,i:u32,k:u32) {
     let fl=flare(age);
     let r0=POINT_RADIUS*(1.0+FLARE_SWELL*fl);
     let end=1.0-smoothstep(.7,1.0,age/sample_age(SAMPLES));
-    // The water as it lay then: a light under it fades, and only one above
-    // it has a mirror image.
-    let w=water_plane(tau);
+    // A light under the water is seen through it, bent at its surface,
+    // fading and blurring over the water its light comes through; only one
+    // above it has a mirror image.
+    let w=water_now();
     let h=water_height(w,c);
-    let under=exp(-max(-h,0.0)/UNDER_REACH);
+    var seen=Seen(c,0.0,1.0);
+    if h<0.0 {seen=seen_through(w,c);}
+    let under=seen.light*exp(-seen.path/WATER_CLARITY);
+    let blur=FOCAL*UNDER_BLUR*seen.path/max(seen.c.z,1.0);
     // The waves light the lights and their trails, not the air.
     let steady=POWER*(BREATH.x+BREATH.y*low_at(age))*(1.0+FLARE_GAIN*fl)*end;
     let power=steady*(1.0+waves(obj,age));
     let b=vec4f(power*under,exposure_to(age),age,select(0.0,1.0,alive));
     let focus=s.translation.z;
-    samples_out[n]=Sample(light_disc(c,focus,r0),b);
+    samples_out[n]=Sample(light_disc(seen.c,focus,sqrt(r0*r0+blur*blur)),b);
     samples_out[MIRROR_BASE+n]=Sample(light_disc(mirrored(w,c),focus,r0),vec4f(power*smoothstep(-.5,.5,h),b.yzw));
     if k==0u {
         samples_out[LIGHTS_BASE+i]=Sample(vec4f(c,select(0.0,steady*under,alive)),vec4f(0));
@@ -326,7 +452,7 @@ fn shade_sample(n:u32,t:u32,k:u32) {
     // 0 for a tip under the water).
     let s=source_of_scene(q);
     let c=vec3f((s-vec2f(160.0,100.0))*SHADE_DEPTH/FOCAL,SHADE_DEPTH);
-    let w=water_plane(-1.0);
+    let w=water_now();
     let m=mirrored(w,c);
     let above=smoothstep(-.5,.5,water_height(w,c));
     samples_out[MIRROR_BASE+n]=Sample(vec4f(scene_of_source(project(m)),SHADE_ROWS*SHADE_DEPTH/m.z,m.z),vec4f(above,b.yzw));
@@ -687,47 +813,115 @@ fn uv_of_square(p:vec3f)->vec2f {
 // camera is focused on lies from the water, and spread over the slopes too
 // small to draw in the plane of incidence, which draws it out into
 // streaks; by the water's reflectance, raised by the mirror's gain.
-fn water_light(uv:vec2f)->vec3f {
+// Where the ray through uv meets the water: the ray (the display's square
+// units), the point, its distance, how steeply the ray falls on it, the
+// water's own coordinates (across, and back from below the camera) and its
+// axis back; a distance of -1 where the ray passes above it.
+struct WaterHit { d:vec3f, p:vec3f, reach:f32, toward:f32, q:vec2f, back:vec3f }
+fn water_hit(uv:vec2f,w:Plane)->WaterHit {
     let s=source_of_scene(scene_of_uv(uv));
     let d=normalize(vec3f((s.x-160.0)*COLUMN,s.y-100.0,FOCAL));
-    let w=water_now();
     let toward=dot(d,w.up);
-    if toward>=-1e-4 {return vec3f(0);}
+    let back=vec3f(0.0,w.up.z,-w.up.y);
+    if toward>=-1e-4 {return WaterHit(d,vec3f(0),-1.0,toward,vec2f(0),back);}
     let reach=-w.height/toward;
     let p=d*reach;
-    // The water's own coordinates: across, and back from below the
-    // camera, which stays put as the water turns.
-    let back=vec3f(0.0,w.up.z,-w.up.y);
-    let q=vec2f(p.x,dot(p+w.height*w.up,back));
-    var g=water_slope(q,vec4f(dc.water.x,dc.water.y*CALM,dc.water.zw));
-    let footprint=reach*200.0/(FOCAL*u.screen.y)/max(-toward,.2);
-    g+=drop_slope(q,dc.drops[0],footprint)+drop_slope(q,dc.drops[1],footprint)
-        +drop_slope(q,dc.drops[2],footprint)+drop_slope(q,dc.drops[3],footprint)
-        +drop_slope(q,dc.drops[4],footprint)+drop_slope(q,dc.drops[5],footprint);
-    let n=normalize(w.up-g.x*vec3f(1,0,0)-g.y*back);
+    return WaterHit(d,p,reach,toward,vec2f(p.x,dot(p+w.height*w.up,back)),back);
+}
+// A pixel's size on the water (half resolution's twice the drawable's),
+// across and back (foreshortened).
+fn water_pixel(h:WaterHit,scale:f32)->vec2f {
+    let pixel=scale*h.reach*200.0/(FOCAL*u.screen.y);
+    return vec2f(pixel,pixel/max(-h.toward,.01));
+}
+// At half resolution, what the lights do to the water where the ray
+// through uv meets it, as tuned: the ripples' slope (xy), the plankton's
+// glow (z) and the lights' under it (w), seen through calm water (the
+// composite adds the swell and the drops, and takes these smoothly
+// between its pixels).
+@fragment fn dots_water_field(v:Vertex)->@location(0) vec4f {
+    dots_begin();
+    let w=water_now();
+    let h=water_hit(v.uv,w);
+    if h.reach<0.0 {return vec4f(0);}
+    let footprint=water_pixel(h,2.0).x/max(-h.toward,.2);
+    let lights=dc.water_lights;
+    var g=vec2f(0);
+    var stirred=0.0;
+    for(var i=0u;i<MAX_RIPPLES;i++) {
+        let r=ripples[i];
+        if r.time.z<=0.0 {break;}
+        // The nearest point of its line, and how long since the light
+        // passed it.
+        let along=r.line.zw-r.line.xy;
+        let u=clamp(dot(h.q-r.line.xy,along)/max(dot(along,along),1e-6),0.0,1.0);
+        let at=r.line.xy+along*u;
+        let age=r.time.x-u*r.time.y;
+        if lights.x>0.0 {g+=r.time.z*drop_slope(h.q,vec4f(at,age,1.0),footprint);}
+        if lights.z>0.0 {stirred+=r.time.z*plankton(length(h.q-at),age,max(lights.w,.01));}
+    }
+    var under=0.0;
+    if lights.y>0.0 {
+        let into=refract(h.d,w.up,1.0/WATER_ETA);
+        for(var j=0u;j<MAX_UNDER;j++) {
+            let l=under_lights[j];
+            if l.w<=0.0 {break;}
+            let o=square(l.xyz)-h.p;
+            let along=dot(o,into);
+            let b=max(length(o-along*into),UNDER_SOFT);
+            under+=l.w*(.5*PI+atan(along/b))/b*exp(-length(o)/WATER_CLARITY);
+        }
+    }
+    return vec4f(lights.x*g,lights.z*stirred,lights.y*UNDER_SCATTER*head_power()*under);
+}
+// The water where the ray through uv meets it: the light's mirror image
+// (painted at the mirror images of the lights, so on calm water it shows
+// where it is painted), moved by the swell's, the drops' and the ripples'
+// slopes as the reflected ray turns, taken at the distance the mirror
+// image of what the camera is focused on lies from the water, and spread
+// over the slopes too small to draw in the plane of incidence, which draws
+// it out into streaks; by the water's reflectance, raised by the mirror's
+// gain. And what comes up through it: the lights under it, their light
+// scattered in the water, and the plankton (the half-resolution field).
+fn water_light(uv:vec2f)->vec3f {
+    let w=water_now();
+    let h=water_hit(uv,w);
+    if h.reach<0.0 {return vec3f(0);}
+    let d=h.d;
+    let pixel=water_pixel(h,1.0);
+    let swell=water_slope(h.q,dc.water,pixel);
+    let footprint=pixel.x/max(-h.toward,.2);
+    let field=textureSampleLevel(water_field,linear,uv,0.0);
+    var g=swell.xy+field.xy;
+    g+=drop_slope(h.q,dc.drops[0],footprint)+drop_slope(h.q,dc.drops[1],footprint)
+        +drop_slope(h.q,dc.drops[2],footprint)+drop_slope(h.q,dc.drops[3],footprint)
+        +drop_slope(h.q,dc.drops[4],footprint)+drop_slope(h.q,dc.drops[5],footprint);
+    let n=normalize(w.up-g.x*vec3f(1,0,0)-g.y*h.back);
     // The mirror image lies about as far beyond the water as the mirror
     // image of what the camera is focused on; water further off than that
     // shows it where the slopes turn the ray back, which is left out: there
     // the calm water's image (none, as nothing lies so far) is taken.
     let subject=select(vec3f(0.0,0.0,SHADE_DEPTH),dc.focus.yzw,dots_shown());
-    let image=max(length(square(mirrored(w,subject)))-reach,0.0);
-    let away=normalize(d-toward*w.up);
+    let image=max(length(square(mirrored(w,subject)))-h.reach,0.0);
+    let away=normalize(d-h.toward*w.up);
     var c=vec3f(0);
     var weight=0.0;
     for(var j=0;j<5;j++) {
         let x=f32(j-2)*.8;
-        let nj=normalize(n+away*WATER_FINE*x);
+        let nj=normalize(n+away*(WATER_FINE+swell.z)*x);
         let r=reflect(d,nj);
         let rise=dot(r,w.up);
         if rise<=0.0 {continue;}
         let wj=exp(-.5*x*x);
         weight+=wj;
-        let at=uv_of_square(p+image*(r-2.0*rise*w.up));
+        let at=uv_of_square(h.p+image*(r-2.0*rise*w.up));
         if any(at<vec2f(0)) || any(at>vec2f(1)) {continue;}
         let m=textureSampleLevel(mirror_image,linear,at,0.0);
         c+=wj*water_mirror(water_fresnel(dot(nj,-d)))*(m.rgb+shade_light(m.a));
     }
-    return c/max(weight,1e-4);
+    c/=max(weight,1e-4);
+    let below=field.z*PLANKTON_LIGHT+field.w*UNDER_TINT;
+    return c+(1.0-water_fresnel(dot(n,-d)))*below;
 }
 @fragment fn dots_style(v:Vertex)->@location(0) vec4f {
     dots_begin();

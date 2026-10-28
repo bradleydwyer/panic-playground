@@ -57,9 +57,14 @@ pub const REST_LINE_COMPARE: usize = 236;
 /// Seconds over which modern part 4 takes over from part 3's view at the
 /// slab (authored); part 3's renderer still draws until then.
 pub const HANDOVER: f64 = 0.35;
-/// The modern view's samples of each layer's displacement: one per raster
-/// of the layer (the even rasters 0 to 224, the odd 1 to 225).
-pub const LAYER_SAMPLES: usize = PLASMA_RASTERS / 2;
+/// The modern view's sheets carry the plasma on below its last raster,
+/// down to the water they stand in (authored: the original shows black
+/// there, then the logo): its stride rule continued over all 400 rasters
+/// (see [`PlasmaPreview::sheet_rasters`]). Its samples of each layer's
+/// displacement: one per raster of the layer (the even rasters, and the
+/// odd).
+pub const SHEET_RASTERS: usize = RASTERS;
+pub const LAYER_SAMPLES: usize = SHEET_RASTERS / 2;
 /// How far the modern view smooths each layer's displacement down the
 /// screen: a Gaussian's deviation, in the layer's rasters (authored).
 pub const LAYER_SMOOTH: f64 = 3.0;
@@ -180,18 +185,26 @@ pub struct PlasmaBlock {
     /// and the direction up it.
     pub sheet_back: [f32; 4],
     pub sheet_back_size: [f32; 4],
-    /// The water ([`WaterTuning`]): the mirror's gain, the swell's height
-    /// (its slopes' scale), the swell's own clock (seconds) and its size
-    /// (its wavelengths' scale).
+    /// The water ([`WaterTuning`]): part 4's mirror gain
+    /// ([`WaterTuning::part4_mirror_gain`]), the swell's height (its
+    /// slopes' scale), the swell's own clock (seconds) and its size (its
+    /// wavelengths' scale).
     pub water: [f32; 4],
     /// The drops on the water ([`PlasmaPreview::drops`]): each one's place
     /// on it (across, and back from below the slab's near top edge), its
     /// age (seconds) and 1, or all 0 for none.
     pub drops: [[f32; 4]; MAX_DROPS],
+    /// The ground (part 3's water, [`Stone::floor`]): its point below the
+    /// slab's near top edge, slide included, and its tilt (radians).
+    pub ground: [f32; 4],
 }
 
-/// The water's mirror gain by default (authored; see plasma_light.wgsl,
-/// shade_water): water reflects only 2 to 7% at this camera's angles.
+/// The water's mirror gain by default (authored), as part 3 takes it
+/// (dots_light.wgsl): chosen for part 4's old ground, the slab's base,
+/// which part 4's camera met at 45 to 60 degrees, where water reflects
+/// only 3 to 6%. Part 4's level water it meets near grazing, where water
+/// mirrors enough as it is, so part 4 takes no gain by default
+/// ([`WaterTuning::part4_mirror_gain`]; see plasma_light.wgsl).
 pub const WATER_MIRROR: f64 = 3.0;
 /// The live tuning (the preview's number keys): each a step of x1.25,
 /// between these steps (from the authored swell and rate). The mirror's
@@ -204,6 +217,12 @@ pub const WATER_STEPS: (i32, i32) = (-6, 12);
 pub const SWELL_HEIGHT_STEPS: (i32, i32) = (-10, 12);
 pub const DROP_STEPS: (i32, i32) = (-6, 7);
 const TUNING_STEP: f64 = 1.25;
+/// The water drains (authored, chosen by eye): from the level part 3 left
+/// it at, as it lies at part 4's start (plasma_stone.rs, Stone::ground_depth),
+/// it falls, eased, to DRAIN_DEPTH below the camera between the clip times
+/// DRAIN, uncovering the slab.
+const DRAIN: (f64, f64) = (186.0, 200.0);
+const DRAIN_DEPTH: f64 = 222.0;
 /// The drops (authored): how many can be on the water at once, how long
 /// each lasts (plasma_light.wgsl's DROP_LIFE), the range of the intervals
 /// between them (seconds, at the default rate), and how long after the
@@ -260,6 +279,12 @@ impl WaterTuning {
         (WATER_MIRROR * TUNING_STEP.powi(self.mirror))
             .clamp(WATER_MIRROR_RANGE.0, WATER_MIRROR_RANGE.1)
     }
+    /// Part 4's mirror gain: 1, water as it is, by default, stepped by the
+    /// same key from there (to about x0.33 and x3.05 at the ends; below 1
+    /// it mirrors less than water does).
+    pub fn part4_mirror_gain(&self) -> f64 {
+        TUNING_STEP.powi(self.mirror)
+    }
     pub fn swell_height(&self) -> f64 {
         if self.height < SWELL_HEIGHT_STEPS.0 {
             0.0
@@ -304,14 +329,14 @@ impl WaterTuning {
     /// at a fixed time, the intervals between them each between
     /// DROP_INTERVALS (from a hash of k and `seed`) over the rate, the
     /// first at `span.0` and none so late that it would outlast `span.1`;
-    /// each falls where `place` puts it. Up to MAX_DROPS at once: their
-    /// places, ages and 1.
+    /// each falls where `place` puts it (given its number and when it
+    /// falls). Up to MAX_DROPS at once: their places, ages and 1.
     pub fn drops(
         &self,
         seconds: f64,
         span: (f64, f64),
         seed: u64,
-        place: impl Fn(u64) -> Option<[f64; 2]>,
+        place: impl Fn(u64, f64) -> Option<[f64; 2]>,
     ) -> [[f32; 4]; MAX_DROPS] {
         let mut out = [[0.0; 4]; MAX_DROPS];
         let rate = self.drop_rate();
@@ -326,7 +351,7 @@ impl WaterTuning {
             }
             let age = seconds - at;
             if age < DROP_LIFE
-                && let Some([x, back]) = place(k)
+                && let Some([x, back]) = place(k, at)
             {
                 out[n] = [x as f32, back as f32, age as f32, 1.0];
                 n += 1;
@@ -644,12 +669,34 @@ impl PlasmaPreview {
         )
     }
 
+    /// The start addresses the modern view's sheets take in frame `j`: the
+    /// first 226 rasters' as the scene walks them, then, where the code
+    /// jumps past the field to black, its stride rule carried on to all
+    /// 400 rasters (the stride table read on, around its end; authored),
+    /// so the plasma runs on down the sheets; carried on unwrapped, as the
+    /// modern view takes the field as one seamless helix (video memory's
+    /// 16-bit addresses would throw it 65,536 bytes along).
+    pub fn sheet_rasters(&self, j: usize) -> [f64; SHEET_RASTERS] {
+        let rasters = self.rasters(j);
+        let mut starts: [f64; SHEET_RASTERS] = std::array::from_fn(|y| rasters[y] as f64);
+        let s = self.frames[j].state;
+        let sift = &self.tables.sift;
+        let at = |i: usize| sift[i % sift.len()];
+        for y in PLASMA_RASTERS..SHEET_RASTERS {
+            let stride = at(s.add1 + y - 1)
+                .wrapping_add(at(s.add2 + y - 1))
+                .wrapping_add(100);
+            starts[y] = starts[y - 1] + stride as f64 * 2.0;
+        }
+        starts
+    }
+
     /// Each layer's displacement in frame `j` (the even rasters', then the
     /// odd ones'), as the modern view takes it: raster r's start address
-    /// less the field's start and 200 bytes a raster, smoothed down the
-    /// layer's rasters, so it is a smooth function of height, and over the
-    /// neighbouring frames of the plasma, so it glides. Zero outside the
-    /// plasma's frames.
+    /// ([`PlasmaPreview::sheet_rasters`]) less the field's start and 200
+    /// bytes a raster, smoothed down the layer's rasters, so it is a smooth
+    /// function of height, and over the neighbouring frames of the plasma,
+    /// so it glides. Zero outside the plasma's frames.
     pub fn layers(&self, j: usize) -> [[f32; LAYER_SAMPLES]; 2] {
         self.glided(j, |k| self.layers_down(k))
     }
@@ -705,7 +752,7 @@ impl PlasmaPreview {
 
     /// Frame `j`'s layers' displacements smoothed down the screen only.
     fn layers_down(&self, j: usize) -> [[f64; LAYER_SAMPLES]; 2] {
-        let starts = self.rasters(j);
+        let starts = self.sheet_rasters(j);
         let reach = (3.0 * LAYER_SMOOTH).ceil() as isize;
         // The Gaussian's weights, worked out once (the same for every tap).
         let kernel: Vec<f64> = (-reach..=reach)
@@ -715,7 +762,7 @@ impl PlasmaPreview {
         for (layer, smooth) in out.iter_mut().enumerate() {
             let offset = |k: usize| {
                 let r = 2 * k + layer;
-                starts[r] as f64 - FIELD_START as f64 - (FIELD_ROW * r) as f64
+                starts[r] - FIELD_START as f64 - (FIELD_ROW * r) as f64
             };
             for (k, value) in smooth.iter_mut().enumerate() {
                 let (mut sum, mut weight) = (0.0, 0.0);
@@ -857,7 +904,11 @@ impl PlasmaPreview {
                 let lowest = (WATER_MIRROR_RANGE.0 / WATER_MIRROR).ln() / TUNING_STEP.ln();
                 let highest = (WATER_MIRROR_RANGE.1 / WATER_MIRROR).ln() / TUNING_STEP.ln();
                 w.mirror = (w.mirror + step).clamp(lowest.floor() as i32, highest.ceil() as i32);
-                format!("Water (parts 3 and 4): mirror x{:.2}", self.water_mirror())
+                format!(
+                    "Water (parts 3 and 4): mirror x{:.2} (part 4 x{:.2})",
+                    self.water_mirror(),
+                    self.water.part4_mirror_gain()
+                )
             }
             WaterKnob::Height => {
                 w.height = (w.height + step).clamp(SWELL_HEIGHT_STEPS.0 - 1, SWELL_HEIGHT_STEPS.1);
@@ -905,8 +956,9 @@ impl PlasmaPreview {
     /// The water's settings for the window's title.
     pub fn water_title(&self) -> String {
         format!(
-            "water: mirror ×{:.2}, swell ×{:.2} high ×{:.2} fast ×{:.2} long, {}",
+            "water: mirror ×{:.2} (part 4 ×{:.2}), swell ×{:.2} high ×{:.2} fast ×{:.2} long, {}",
             self.water_mirror(),
+            self.water.part4_mirror_gain(),
             self.swell_height(),
             self.swell_speed(),
             self.swell_size(),
@@ -928,20 +980,29 @@ impl PlasmaPreview {
         }
         let first = e.fade_in + DROP_FIRST;
         self.water
-            .drops(seconds, (first, e.dark), 0, |k| self.drop_place(k))
+            .drops(seconds, (first, e.dark), 0, |k, at| self.drop_place(k, at))
     }
 
-    /// Where drop k falls on the water (across, back), from a hash of k: a
-    /// point of the screen beside the slab, left or right, taken down to
-    /// the water; tried again where the slab, with a margin, would hide it.
-    fn drop_place(&self, k: u64) -> Option<[f64; 2]> {
+    /// How far below the camera the water lies at a clip time (see DRAIN).
+    pub fn ground_depth(&self, time: f64) -> f64 {
+        let s = ((time - DRAIN.0) / (DRAIN.1 - DRAIN.0)).clamp(0.0, 1.0);
+        let from = self.stone.ground_depth;
+        from + (DRAIN_DEPTH - from) * s * s * (3.0 - 2.0 * s)
+    }
+
+    /// Where drop k falls on the water (across, back), from a hash of k, at
+    /// part-4 seconds `at`: a point of the screen beside the slab, left or
+    /// right, taken down to the water as it lies then; tried again where
+    /// the slab, with a margin, would hide it.
+    fn drop_place(&self, k: u64, at: f64) -> Option<[f64; 2]> {
+        let depth = self.ground_depth(self.seconds(0) + at);
         (0..16).find_map(|attempt| {
             let h = |i: u64| drop_hash(k, attempt, i);
             let side = if h(0) < 0.5 { -1.0 } else { 1.0 };
             let across = side * (DROP_ACROSS.0 + (DROP_ACROSS.1 - DROP_ACROSS.0) * h(1));
             let row = DROP_ROWS.0 + (DROP_ROWS.1 - DROP_ROWS.0) * h(2);
             self.stone
-                .ground_point(160.0 + across * 1.2, row, DROP_CLEAR)
+                .ground_point_at(depth, 160.0 + across * 1.2, row, DROP_CLEAR)
         })
     }
 
@@ -980,10 +1041,12 @@ impl PlasmaPreview {
         let slide_rows = (line_compare - REST_LINE_COMPARE as f64) / 2.0;
         let pose = stone.pose(slide_rows);
         let handover = (1.0 - seconds.max(0.0) / HANDOVER).clamp(0.0, 1.0);
-        let [front, rear] = stone.sheets;
-        // The sheets, the floor (the slab's base) and the slab slide as one,
-        // as if the camera rose (authored): the slab exactly as before, the
-        // floor and the sheets, dark by then, with it.
+        // The water as it lies now, and the sheets standing in it.
+        let depth = self.ground_depth(time);
+        let [front, rear] = stone.sheets_at(depth);
+        // The sheets, the ground and the slab slide as one, as if the camera
+        // rose (authored): the slab exactly as before, the ground and the
+        // sheets, dark by then, with it.
         let slid = |p: [f64; 3]| -> [f32; 3] {
             std::array::from_fn(|k| (p[k] + pose[k] - stone.corner[k]) as f32)
         };
@@ -1075,8 +1138,16 @@ impl PlasmaPreview {
                 rear.up[1] as f32,
                 rear.up[2] as f32,
             ],
-            water: self.water.controls(seconds),
+            water: {
+                // With part 4's own mirror gain.
+                let [_, height, clock, size] = self.water.controls(seconds);
+                [self.water.part4_mirror_gain() as f32, height, clock, size]
+            },
             drops: self.drops(seconds),
+            ground: {
+                let [x, y, z] = slid(stone.floor_at(depth));
+                [x, y, z, stone.ground_tilt as f32]
+            },
         }
     }
 }
@@ -1266,7 +1337,6 @@ mod tests {
     fn check_drops_in_view(p: &PlasmaPreview) -> usize {
         let stone = &p.stone;
         let (back, down) = stone.axes();
-        let floor = stone.floor();
         // The silhouette of the block grown by DROP_CLEAR: its corners'
         // projections, which bound it (it is convex), in screen units
         // (columns are 5/6 of a row).
@@ -1299,8 +1369,11 @@ mod tests {
         let seen = drops_seen(p).0;
         for s in &seen {
             let [x, b] = s.place.map(|v| v as f64);
+            let depth = p.ground_depth(p.seconds(0) + s.at);
+            let floor = stone.floor_at(depth);
+            let along = stone.ground_axes().0;
             let point: [f64; 3] =
-                std::array::from_fn(|k| floor[k] + b * back[k] + if k == 0 { x } else { 0.0 });
+                std::array::from_fn(|k| floor[k] + b * along[k] + if k == 0 { x } else { 0.0 });
             let (column, row) = stone.project(point);
             assert!(
                 (113.0..200.0).contains(&row) && (column - 160.0).abs() < half_width,
@@ -1310,7 +1383,7 @@ mod tests {
                 !inside_hull((column * 5.0 / 6.0, row)),
                 "a drop behind the slab at column {column:.1}, row {row:.1}"
             );
-            let found = stone.ground_point(column, row, 0.0).unwrap();
+            let found = stone.ground_point_at(depth, column, row, 0.0).unwrap();
             assert!((found[0] - x).abs() < 1e-3 && (found[1] - b).abs() < 1e-3);
         }
         seen.len()
@@ -1656,15 +1729,18 @@ mod tests {
         assert!(!drops_seen(&p).0.is_empty());
     }
 
-    /// By default (chosen by eye with the keys) the mirror's gain is 3, the
-    /// swell is 6 steps of x1.25 higher and faster than authored, about
-    /// x3.8, at its authored size, and a drop falls every 1.2 s on average,
-    /// as the falls over the part show.
+    /// By default (chosen by eye with the keys) the mirror's gain is 3 (as
+    /// part 3 takes it; part 4 takes water as it is, 1), the swell is 6
+    /// steps of x1.25 higher and faster than authored, about x3.8, at its
+    /// authored size, and a drop falls every 1.2 s on average, as the falls
+    /// over the part show.
     #[test]
     fn the_water_starts_at_its_chosen_tuning() {
         let p = invented();
         let six = 1.25_f64.powi(6);
         assert_eq!(p.water_mirror(), 3.0);
+        assert_eq!(p.water.part4_mirror_gain(), 1.0);
+        assert_eq!(p.water.controls(20.0)[0], 3.0);
         assert!((p.swell_height() - six).abs() < 1e-12);
         assert!((p.swell_speed() - six).abs() < 1e-12);
         assert_eq!(p.swell_size(), 1.0);
@@ -1674,8 +1750,23 @@ mod tests {
         let mean = (seen.last().unwrap().at - seen[0].at) / (seen.len() - 1) as f64;
         assert!((mean - 1.2).abs() < 0.12, "a drop every {mean} s");
         let block = p.controls(p.seconds(0) + 20.0);
-        assert_eq!(block.water[0], 3.0);
+        assert_eq!(block.water[0], 1.0);
         assert_eq!(block.water[3], 1.0);
+    }
+
+    /// The mirror's key steps part 4's gain with part 3's, from water as it
+    /// is: x1.25 a step, to x1.25^-5 and x1.25^5 where part 3's stops at 1
+    /// and 8; part 4's controls carry it.
+    #[test]
+    fn the_mirror_key_steps_part_4s_gain_from_water_as_it_is() {
+        for (up, steps, part3) in [(false, -5, 1.0), (true, 5, 8.0)] {
+            let mut p = invented();
+            press(&mut p, WaterKnob::Mirror, up, 40, 5.0);
+            assert_eq!(p.water_mirror(), part3);
+            let gain = p.water.part4_mirror_gain();
+            assert!((gain - 1.25_f64.powi(steps)).abs() < 1e-12, "{gain}");
+            assert_eq!(p.controls(p.seconds(0) + 5.0).water[0], gain as f32);
+        }
     }
 
     /// The water's keys hold each knob within its range at both ends, and a

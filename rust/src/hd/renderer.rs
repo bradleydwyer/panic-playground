@@ -162,12 +162,13 @@ struct DotsBlock {
     // The port's eight echo levels (6-bit blue), echo k 4k frames old.
     echo_levels: array<vec4f,2>,
     // The water: mirror gain, swell height, swell clock, swell size; where
-    // it lies: the tilt and the camera's height above it at rest, the
-    // camera's height while level, the dot frame the box comes down from;
-    // the drops: place across and back, age, 1 (0 none).
+    // it lies: its tilt and the camera's height above it, unused; the
+    // drops: place across and back, age, 1 (0 none); the lights in it:
+    // ripples, glow and plankton, of the authored, the plankton's life.
     water: vec4f,
     water_plane: vec4f,
     drops: array<vec4f,6>,
+    water_lights: vec4f,
 }
 // Part 4's controls (hd/plasma.rs, PlasmaBlock), in u.plasma.
 struct PlasmaBlock {
@@ -208,9 +209,11 @@ struct PlasmaBlock {
     sheet_back: vec4f,
     sheet_back_size: vec4f,
     // The water: mirror gain, swell height, swell clock, swell size; the
-    // drops: place across and back, age, 1 (0 none).
+    // drops: place across and back, age, 1 (0 none); the ground: its point
+    // below the slab's near top edge, slide included, and its tilt.
     water: vec4f,
     drops: array<vec4f,6>,
+    ground: vec4f,
 }
 // Part 7's controls (hd/greetings.rs, GreetingsBlock), in u.greetings.
 struct GreetingsBlock {
@@ -1198,7 +1201,9 @@ impl Renderer {
             field_block.part3_view = [magnification, 0.0, 0.0, 0.0];
             self.part3_underlay = true;
         }
-        self.dots.as_mut().unwrap().resize(&self.device, size);
+        let renderer = self.dots.as_mut().unwrap();
+        renderer.resize(&self.device, size);
+        renderer.set_water(&self.queue, &dots.ripples_at(time), &dots.under_at(time));
         if view.comparison != 0 {
             self.upload_reference(dots.start + j, || dots.original_rgba(j));
         }
@@ -1231,7 +1236,9 @@ impl Renderer {
             if let (true, Some(dots)) = (block.camera[2] > 0.0, &clip.dots) {
                 let aspect = size.0 as f64 / size.1.max(1) as f64;
                 dots_controls = dots_block(clip, dots, time, aspect);
-                self.dots.as_mut().unwrap().resize(&self.device, size);
+                let renderer = self.dots.as_mut().unwrap();
+                renderer.resize(&self.device, size);
+                renderer.set_water(&self.queue, &dots.ripples_at(time), &dots.under_at(time));
                 self.part4_handover = true;
             }
         } else {
@@ -2311,9 +2318,10 @@ mod tests {
             water,
             water_plane,
             drops,
+            water_lights,
         ];
         assert_eq!(
-            expected.last().unwrap().1 + size_of::<[[f32; 4]; super::super::plasma::MAX_DROPS]>(),
+            expected.last().unwrap().1 + size_of::<[f32; 4]>(),
             size_of::<DotsBlock>()
         );
         for (name, source) in [
@@ -2432,7 +2440,8 @@ mod tests {
                     | "shade_trail_mirrored"
                     | "swept" => &[(1, 2)],
                     "dots_haze" => &[(1, 2), (1, 3), (1, 4), (1, 5)],
-                    "dots_style" => &[(1, 2), (2, 1), (2, 2), (2, 3), (2, 4)],
+                    "dots_water_field" => &[],
+                    "dots_style" => &[(1, 2), (2, 1), (2, 2), (2, 3), (2, 4), (2, 5)],
                     n => panic!("unexpected entry point {n}"),
                 };
                 let uses = info.get_entry_point(index);
@@ -2524,9 +2533,10 @@ mod tests {
             sheet_back_size,
             water,
             drops,
+            ground,
         ];
         assert_eq!(
-            expected.last().unwrap().1 + size_of::<[[f32; 4]; super::super::plasma::MAX_DROPS]>(),
+            expected.last().unwrap().1 + size_of::<[f32; 4]>(),
             size_of::<PlasmaBlock>()
         );
         for (name, source) in [

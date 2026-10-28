@@ -308,11 +308,16 @@ The modern look is light painting, a long exposure in a dark, hazy space:
   discs shaped by a seven-bladed diaphragm. A haze and drifting fog glow
   round them, they breathe with the bass, and each order of the tune sends
   a plane of light sweeping through the object.
-- The objects fly over part 4's water, which mirrors the lights, their
+- The objects fly through part 4's water, which mirrors the lights, their
   trails and the glowing haze, a slow swell drawing the reflection out into
-  streaks and the odd drop sending rings through it. It lies level below
-  them; as the box comes down at the end, the camera rises and tilts down
-  onto it, so the box lands on the water part 4's slab stands in.
+  streaks and the odd drop sending rings through it. It lies a little below
+  them, tilted 3 degrees so it rises further off, and rises through the
+  part, so they fly ever deeper through it, to the level part 4's slab
+  stands in. A light under the surface is bent and dimmed by the water and
+  lights it from below, and the lights moving through it set off ripples
+  along their paths and stir plankton, which glows white blue behind them.
+  With Shift, the number keys tune its tilt and depth, the plankton, the
+  glow under the water and the ripples.
 - The landed box's trails collapse into its lights, which flare up in the
   second before part 4's white slab takes over.
 
@@ -367,8 +372,10 @@ stone is seen by:
   comes from keeps the stone lit while the plasma is dark, and gives way
   as it rises.
 - The slab stands in still water that runs back to the foot of the
-  sheets, which stand on it and lean back from it like a book's open
-  pages. The water mirrors the plasma, long, quick swells drawing the
+  sheets, which stand in it and lean back from it like a book's open
+  pages, the plasma running on down them to the water. It is part 3's
+  water, as level as part 3 left it, and it drains from 186 to 200
+  seconds, uncovering the slab. The water mirrors the plasma, long, quick swells drawing the
   reflection out into wavering streaks of its colours, and every second or
   so a drop lands beside the slab and sends out a ring of ripples. The
   water is lit only by the sheets, so it comes up and fades with them.

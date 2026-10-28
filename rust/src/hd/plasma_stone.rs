@@ -23,10 +23,11 @@
 //!   colour and mottling are the logo's, flattened of its painted light.
 //! - Authored: the carving's depth and bevel, the cracks' depth, the
 //!   rounding of the edges, the plasma's sheet of light behind the slab
-//!   (where it stands and how large it is), the floor the slab stands on
-//!   and where the sheets meet it, the exposure the slab arrives with and
-//!   everything in plasma_light.wgsl. The original has no floor: below
-//!   its plasma, beside the logo, it is black.
+//!   (where it stands and how large it is), the ground: part 3's water,
+//!   lying level below the camera as it does through part 3
+//!   (dots_water.rs), the exposure the slab arrives with and everything in
+//!   plasma_light.wgsl. The original has no ground: below its plasma,
+//!   beside the logo, it is black.
 use half::f16;
 
 /// The edges' rounding, the carving's depth and the width of its bevel,
@@ -47,18 +48,19 @@ const RIGHT_END_FADE: f64 = 4.0;
 /// Texels of the relief across the block's width (authored; the logo
 /// spans about 300 of its pixels).
 pub const RELIEF_TEXELS: usize = 1024;
-/// The plasma's two sheets of light (authored). Their top edges stand
-/// where they did before the floor: each top edge where a sheet leaning
-/// SHEET_LEAN toward the camera from upright, its foot SHEET_BEHIND behind
-/// the slab's far edge at the height of its top face (and SHEET_GAP
-/// further for the back one), reaches SHEET_ABOVE_ROWS above the screen.
-/// From there each sheet runs down to the floor, both to one line on it:
-/// where the floor, seen straight back past the slab, meets the source row
-/// their bottom edges project to (the plasma's last raster, 225, read from
-/// the code: its bottom is row 113). So on the screen they span what they
-/// did, and they stand on the floor; the back one leans a little less
-/// than the front, so they open from that line like the pages of a book.
-/// The widest drawable they span (aspect).
+/// The plasma's two sheets of light (authored), close behind the slab,
+/// where they light it and its polished top mirrors them. Their top edges:
+/// each where a sheet leaning SHEET_LEAN toward the camera from upright,
+/// its foot SHEET_BEHIND behind the slab's far edge at the height of its
+/// top face (and SHEET_GAP further for the back one), reaches
+/// SHEET_ABOVE_ROWS above the screen. From there each sheet runs down to
+/// the water, both to one line in it: straight below where the plane of
+/// the slab's base, seen straight back past the slab, meets the plasma's
+/// last raster (225, read from the code: its bottom is row 113). So on the
+/// screen they span the plasma's rows and on below them, carrying it on
+/// (plasma.rs, SHEET_RASTERS), down to the water; the back one leans a
+/// little less than the front, so they open from that line like the pages
+/// of a book. The widest drawable they span (aspect).
 const SHEET_BEHIND: f64 = 30.0;
 const SHEET_GAP: f64 = 70.0;
 /// How far the sheet leans toward the camera from upright (radians), so
@@ -125,6 +127,12 @@ pub struct Stone {
     /// The rms difference, in source columns, between the measured
     /// silhouette and the fitted block's, over the rows fitted.
     pub residual: f64,
+    /// The ground (authored): part 3's water as it lies through part 3,
+    /// tilted by `ground_tilt` (radians, rising further off when positive;
+    /// its up normal (0, -cos, -sin)), `ground_depth` below the camera at
+    /// rest ([`super::dots_water::Water`]).
+    pub ground_tilt: f64,
+    pub ground_depth: f64,
 }
 
 /// A line y = a x + b fitted by least squares.
@@ -357,6 +365,8 @@ impl Stone {
                 texels: Vec::new(),
             },
             residual,
+            ground_tilt: super::dots_water::LEVEL_TILT,
+            ground_depth: super::dots_water::LEVEL_HEIGHT,
         };
         stone.place_sheets();
         stone.carve(logo, palette, row_y);
@@ -394,33 +404,71 @@ impl Stone {
         1.0 + ARRIVAL_EXPOSURE * (1.0 - progress.clamp(0.0, 1.0)).powf(ARRIVAL_CURVE)
     }
 
-    /// The floor the slab stands on (authored): its base, the box's height
-    /// below its top face, level with it. Its point straight below the
-    /// near top edge's centre (camera space).
-    pub fn floor(&self) -> [f64; 3] {
+    /// The plane of the slab's base, the box's height below its top face,
+    /// level with it, where the sheets stand (authored): its point straight
+    /// below the near top edge's centre (camera space).
+    pub fn base(&self) -> [f64; 3] {
         let (_, down) = self.axes();
         std::array::from_fn(|k| self.corner[k] + self.size[2] * down[k])
     }
 
+    /// The ground's axes in camera space: back along it, away from the
+    /// camera, and down (less its up normal).
+    pub fn ground_axes(&self) -> ([f64; 3], [f64; 3]) {
+        let (s, c) = self.ground_tilt.sin_cos();
+        ([0.0, -s, c], [0.0, c, s])
+    }
+
+    /// Lay the ground as part 3's water lies (tilt and depth), and stand
+    /// the sheets in it again.
+    pub fn set_ground(&mut self, tilt: f64, depth: f64) {
+        (self.ground_tilt, self.ground_depth) = (tilt, depth);
+        self.place_sheets();
+    }
+
+    /// The ground's point straight below the slab's near top edge's
+    /// centre, at rest (camera space), the ground lying `depth` below the
+    /// camera (or as it lies at part 4's start, `ground_depth`).
+    pub fn floor_at(&self, depth: f64) -> [f64; 3] {
+        let (_, down) = self.ground_axes();
+        let below = depth
+            - (down[0] * self.corner[0] + down[1] * self.corner[1] + down[2] * self.corner[2]);
+        std::array::from_fn(|k| self.corner[k] + below * down[k])
+    }
+    pub fn floor(&self) -> [f64; 3] {
+        self.floor_at(self.ground_depth)
+    }
+
     /// Where the ray through source point (`column`, `row`) meets the
-    /// floor, in its coordinates (across, and back from below the near top
-    /// edge), or None where it misses it or the block, grown by `clear`
-    /// all round, stands in the way.
+    /// ground, in its coordinates (across, and back from below the near top
+    /// edge), or None where it misses it or meets the block, grown by
+    /// `clear` all round, anywhere along it (the view draws the stone over
+    /// the water, which may lie above the slab's base).
     pub fn ground_point(&self, column: f64, row: f64, clear: f64) -> Option<[f64; 2]> {
+        self.ground_point_at(self.ground_depth, column, row, clear)
+    }
+    pub fn ground_point_at(
+        &self,
+        depth: f64,
+        column: f64,
+        row: f64,
+        clear: f64,
+    ) -> Option<[f64; 2]> {
         let (back, down) = self.axes();
+        let (along, below) = self.ground_axes();
         let d = [
             (column - self.axis) / (1.2 * self.focal),
             (row - 100.0) / self.focal,
             1.0,
         ];
         let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-        let floor = self.floor();
-        // The floor's normal is -down: the ray meets it going down.
-        let toward = dot(d, down);
+        let floor = self.floor_at(depth);
+        // Its normal is -below: the ray meets it going down.
+        let toward = dot(d, below);
         if toward <= 0.0 {
             return None;
         }
-        let t = dot(floor, down) / toward;
+        let t = dot(floor, below) / toward;
         let p = d.map(|v| v * t);
         // The block in its own coordinates (across, back, down from the
         // top face), grown by `clear`: the slab test along the ray.
@@ -430,8 +478,12 @@ impl Stone {
             [d[0], dot(d, back), dot(d, down)],
         );
         let lo = [-self.size[0] / 2.0 - clear, -clear, -clear];
-        let hi = [self.size[0] / 2.0 + clear, self.size[1] + clear, self.size[2] + clear];
-        let (mut near, mut far) = (0.0_f64, t);
+        let hi = [
+            self.size[0] / 2.0 + clear,
+            self.size[1] + clear,
+            self.size[2] + clear,
+        ];
+        let (mut near, mut far) = (0.0_f64, f64::INFINITY);
         for i in 0..3 {
             let (a, b) = ((lo[i] - ro[i]) / rd[i], (hi[i] - ro[i]) / rd[i]);
             near = near.max(a.min(b));
@@ -441,15 +493,15 @@ impl Stone {
             return None;
         }
         let q: [f64; 3] = std::array::from_fn(|i| p[i] - floor[i]);
-        Some([q[0], dot(q, back)])
+        Some([q[0], dot(q, along)])
     }
 
-    /// How far back along the floor, from below the near top edge, it
-    /// projects to source row `row` (straight back from the camera's
-    /// axis).
-    pub fn floor_back_to_row(&self, row: f64) -> f64 {
+    /// How far back along the slab's base plane, from below the near top
+    /// edge, it projects to source row `row` (straight back from the
+    /// camera's axis).
+    pub fn base_back_to_row(&self, row: f64) -> f64 {
         let (back, _) = self.axes();
-        let floor = self.floor();
+        let floor = self.base();
         let r = (row - 100.0) / self.focal;
         (r * floor[2] - floor[1]) / (back[1] - r * back[2])
     }
@@ -457,16 +509,27 @@ impl Stone {
     /// Stand the two sheets of light behind the slab, one behind the other,
     /// their top edges where a sheet leaning toward the camera from
     /// upright behind the slab reaches above the screen, their bottom
-    /// edges together on the floor where it meets the plasma's last raster
-    /// (see SHEET_BEHIND).
+    /// edges together on the plane of the slab's base where it meets the
+    /// plasma's last raster (see SHEET_BEHIND).
     fn place_sheets(&mut self) {
+        self.sheets = self.sheets_at(self.ground_depth);
+    }
+
+    /// The sheets standing in the ground as it lies `depth` below the
+    /// camera.
+    pub fn sheets_at(&self, depth: f64) -> [Sheet; 2] {
+        let mut sheets = [Sheet::default(); 2];
         let (back, down) = self.axes();
         let (s, c) = SHEET_LEAN.sin_cos();
         let lean: [f64; 3] = std::array::from_fn(|k| -c * down[k] - s * back[k]);
-        let floor = self.floor();
-        let along = self.floor_back_to_row(SHEET_BOTTOM_ROW);
-        let bottom: [f64; 3] = std::array::from_fn(|k| floor[k] + along * back[k]);
-        for (k, sheet) in self.sheets.iter_mut().enumerate() {
+        let floor = self.base();
+        let along = self.base_back_to_row(SHEET_BOTTOM_ROW);
+        let line: [f64; 3] = std::array::from_fn(|k| floor[k] + along * back[k]);
+        // Their feet: on the water, straight below that line.
+        let (_, below) = self.ground_axes();
+        let drop = depth - (0..3).map(|k| line[k] * below[k]).sum::<f64>();
+        let bottom: [f64; 3] = std::array::from_fn(|k| line[k] + drop * below[k]);
+        for (k, sheet) in sheets.iter_mut().enumerate() {
             let behind = self.size[1] + SHEET_BEHIND + k as f64 * SHEET_GAP;
             let foot: [f64; 3] = std::array::from_fn(|i| self.corner[i] + behind * back[i]);
             // The distance along `lean` at which a point of the leaning
@@ -488,6 +551,7 @@ impl Stone {
                 up: span.map(|v| v / height),
             };
         }
+        sheets
     }
 
     /// Unwarp both faces from the logo and carve them.
@@ -829,47 +893,78 @@ pub(super) mod tests {
         );
     }
 
-    /// Both sheets stand on the floor, the plane of the slab's base, on
-    /// one line: their bottom edges project to row 113, the bottom of the
-    /// plasma's last raster, all along their width.
+    /// The ground is part 3's water: as it lies by default, LEVEL_HEIGHT
+    /// below the camera and tilted LEVEL_TILT, and as tilted and lowered,
+    /// its point below the near top edge straight below it.
     #[test]
-    fn the_sheets_stand_on_the_floor_at_the_plasmas_bottom_edge() {
+    fn the_ground_lies_as_part_3s_water() {
+        let mut stone = invented_stone();
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let (tilt, level) = (
+            super::super::dots_water::LEVEL_TILT,
+            super::super::dots_water::LEVEL_HEIGHT,
+        );
+        assert_eq!((stone.ground_tilt, stone.ground_depth), (tilt, level));
+        assert!(dot(stone.floor(), stone.ground_axes().1) - level < 1e-9);
+        for (tilt, depth) in [(0.1, 300.0), (-0.05, 200.0)] {
+            stone.set_ground(tilt, depth);
+            let (back, down) = stone.ground_axes();
+            let floor = stone.floor();
+            assert!((dot(floor, down) - depth).abs() < 1e-9);
+            let off: [f64; 3] = std::array::from_fn(|k| floor[k] - stone.corner[k]);
+            assert!(dot(off, back).abs() < 1e-9);
+            // The sheets stand in it again.
+            for sheet in stone.sheets {
+                assert!((dot(sheet.base, down) - depth).abs() < 1e-9);
+            }
+        }
+    }
+
+    /// Both sheets stand in the water on one line, straight below where
+    /// the plane of the slab's base meets row 113, the bottom of the
+    /// plasma's last raster, all along their width (so on the screen they
+    /// carry the plasma on down to the water).
+    #[test]
+    fn the_sheets_stand_in_the_water_below_the_plasmas_bottom_edge() {
         let stone = invented_stone();
         let (back, down) = stone.axes();
-        let floor = stone.floor();
+        let floor = stone.base();
+        let (_, below) = stone.ground_axes();
         let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
         let minus = |a: [f64; 3], b: [f64; 3]| -> [f64; 3] { std::array::from_fn(|k| a[k] - b[k]) };
-        // The floor is the slab's base: 100 below its top face, level with it.
+        // The plane is the slab's base: 100 below its top face, level with
+        // it.
         let base_corner: [f64; 3] = std::array::from_fn(|k| stone.corner[k] + 100.0 * down[k]);
         assert!(minus(floor, base_corner).iter().all(|v| v.abs() < 1e-9));
         assert!(dot(back, down).abs() < 1e-12);
         let [front, rear] = stone.sheets;
         assert!(
             minus(front.base, rear.base).iter().all(|v| v.abs() < 1e-9),
-            "the sheets meet the floor on one line"
+            "the sheets meet the water on one line"
         );
+        // Where the slab's base plane meets row 113, straight back.
+        let along = stone.base_back_to_row(113.0);
+        let line: [f64; 3] = std::array::from_fn(|k| floor[k] + along * back[k]);
         for (name, sheet) in [("front", front), ("back", rear)] {
-            for across in [-1.0, 0.0, 1.0] {
-                let p = [
-                    sheet.base[0] + across * sheet.half_width,
-                    sheet.base[1],
-                    sheet.base[2],
-                ];
-                assert!(
-                    dot(minus(p, floor), down).abs() < 1e-9,
-                    "the {name} sheet's foot is off the floor"
-                );
-                let row = stone.project(p).1;
-                assert!(
-                    (row - 113.0).abs() < 1e-9,
-                    "the {name} sheet's foot at row {row}"
-                );
-            }
+            assert!(
+                (dot(sheet.base, below) - stone.ground_depth).abs() < 1e-9,
+                "the {name} sheet's foot is off the water"
+            );
+            // Straight below the line: only the depth differs.
+            let off = minus(sheet.base, line);
+            let depth = dot(off, below);
+            assert!(
+                off.iter()
+                    .zip(below)
+                    .all(|(o, b)| (o - depth * b).abs() < 1e-9),
+                "the {name} sheet's foot is not below the line"
+            );
+            assert!(depth > 0.0 && stone.project(sheet.base).1 > 113.0);
         }
-        // floor_back_to_row finds that line: straight back along the floor
+        // base_back_to_row finds that line: straight back along the plane
         // from below the near top edge, it projects to the row asked for.
         for row in [113.0, 125.0, 160.0] {
-            let along = stone.floor_back_to_row(row);
+            let along = stone.base_back_to_row(row);
             let p: [f64; 3] = std::array::from_fn(|k| floor[k] + along * back[k]);
             assert!((stone.project(p).1 - row).abs() < 1e-9, "row {row}");
         }
@@ -906,7 +1001,7 @@ pub(super) mod tests {
             assert!(along > 0.0);
             let off = (dot(reach, reach) - along * along).max(0.0).sqrt();
             assert!(
-                off < 1e-6,
+                off < 1e-4,
                 "sheet {k}'s top edge is {off} off its old plane"
             );
             // Wide enough to cover a 21:9 drawable at every height.

@@ -11,8 +11,20 @@
 // waves (swell_wave), their periods with the square root of the
 // wavelength as deep water's are, the longest's WATER_PERIOD seconds (the
 // scale chosen by eye). The slopes too small to draw: their spread, in the
-// plane of incidence, which draws the mirror image out into streaks.
+// plane of incidence, which draws the mirror image out into streaks. Both
+// parts see the water from a level camera, near grazing, where the same
+// slopes turn the mirror image much further than from part 4's old steep
+// view, for which the swell's height was tuned: so the swell is CALM of
+// that (authored). A wave shorter than a few pixels where it is seen is
+// not drawn (it would alias into rows of dashes toward the horizon): its
+// slopes join the spread, so far off the water is a blurred mirror.
 const WATER_ETA=1.333;
+const CALM=.35;
+// How far one sees into it (units, authored): what lies under it, a light
+// in part 3 or the stone in part 4, fades by e over this much water: about
+// 0.7 m at the drops' scale, so part 3's lights still show, and light the
+// water, most of a box's height down.
+const WATER_CLARITY=110.0;
 const WATER_PERIOD=7.5;
 const WATER_LONGEST=280.0;
 const WATER_FINE=.025;
@@ -53,18 +65,29 @@ fn water_fresnel(c:f32)->f32 {
     let p=(WATER_ETA*ci-ct)/(WATER_ETA*ci+ct);
     return .5*(s*s+p*p);
 }
+// The share of light the water mirrors at reflectance f, raised by the
+// mirror's gain: 1 - (1 - f)^gain, about gain f where f is small (in part
+// 4's old steep view, as it was, gain times f), and never past a perfect
+// mirror where a level view meets the water near grazing. A gain of 1 is
+// water as it is (part 4's by default); below 1 (part 4's keys) it
+// mirrors less than water does.
+fn water_share(f:f32,gain:f32)->f32 {return 1.0-pow(1.0-clamp(f,0.0,1.0),max(gain,0.0));}
 // One wave of the swell: its slope (the height's gradient, across and
-// back) at point q of the water at the swell's clock t (water.z). Its
-// height is steepness / k times sin(k u.q - w t + phase), its period deep
-// water's for its wavelength. The tuned size scales the wavelengths (the
-// periods following, as deep water's do) and the height the slopes.
-fn swell_wave(q:vec2f,water:vec4f,dir:vec2f,wavelength:f32,steepness:f32,phase:f32)->vec2f {
+// back) at point q of the water at the swell's clock t (water.z), and in z
+// the slope it would give were it too fine to draw where a pixel covers
+// `footprint` of the water (across and back). Its height is steepness / k
+// times sin(k u.q - w t + phase), its period deep water's for its
+// wavelength. The tuned size scales the wavelengths (the periods
+// following, as deep water's do) and the height the slopes.
+fn swell_wave(q:vec2f,water:vec4f,dir:vec2f,wavelength:f32,steepness:f32,phase:f32,footprint:vec2f)->vec3f {
     let u=normalize(dir);
     let t=water.z;
     let size=water.w;
     let k=(2.0*PI/wavelength)/size;
     let w=(2.0*PI/(WATER_PERIOD*sqrt(wavelength/WATER_LONGEST)))/sqrt(size);
-    return u*(steepness*water.y)*cos(k*dot(u,q)-w*t+phase);
+    let slope=steepness*water.y*CALM;
+    let drawn=smoothstep(3.0,6.0,wavelength*size/max(length(u*footprint),1e-4));
+    return vec3f(u*slope*drawn*cos(k*dot(u,q)-w*t+phase),slope*(1.0-drawn));
 }
 fn drop_omega(k:f32)->f32 {return sqrt(DROP_G*k+DROP_TENSION*k*k*k);}
 fn drop_group(k:f32)->f32 {return (DROP_G+3.0*DROP_TENSION*k*k)/(2.0*drop_omega(k));}
@@ -99,15 +122,16 @@ fn drop_slope(q:vec2f,drop:vec4f,footprint:f32)->vec2f {
     return rel/r*amplitude*life*drawn*inner*sin(k*r-w*t);
 }
 // The water's slope at point q of it (across, and back from the camera)
-// at the swell's clock: the swell, four waves, mostly coming from far off
-// toward the camera (in part 4 from the sheets). (A ring of ripples from
-// part 4's slab was tried and left out: the water near the slab is hidden
-// behind it, and further out the ring's slopes run across the line of
-// sight and hardly move the mirror image.)
-fn water_slope(q:vec2f,water:vec4f)->vec2f {
-    var g=swell_wave(q,water,vec2f(.3,-1),280.0,.026,0.0);
-    g+=swell_wave(q,water,vec2f(-.7,-.7),175.0,.018,1.7);
-    g+=swell_wave(q,water,vec2f(1,-.35),115.0,.012,4.1);
-    g+=swell_wave(q,water,vec2f(-.25,1),78.0,.008,2.6);
+// at the swell's clock, where a pixel covers `footprint` of it (across and
+// back): the swell, four waves, mostly coming from far off toward the
+// camera (in part 4 from the sheets), and in z the slopes too fine to draw
+// there. (A ring of ripples from part 4's slab was tried and left out: the
+// water near the slab is hidden behind it, and further out the ring's
+// slopes run across the line of sight and hardly move the mirror image.)
+fn water_slope(q:vec2f,water:vec4f,footprint:vec2f)->vec3f {
+    var g=swell_wave(q,water,vec2f(.3,-1),280.0,.026,0.0,footprint);
+    g+=swell_wave(q,water,vec2f(-.7,-.7),175.0,.018,1.7,footprint);
+    g+=swell_wave(q,water,vec2f(1,-.35),115.0,.012,4.1,footprint);
+    g+=swell_wave(q,water,vec2f(-.25,1),78.0,.008,2.6,footprint);
     return g;
 }

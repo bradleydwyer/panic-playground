@@ -21,7 +21,7 @@
 //!   continuous iterations with a floating-point sine.
 //! - Authored: everything the modern view adds (dots_light.wgsl and the
 //!   values marked authored here).
-use super::dots_water::Water;
+use super::dots_water::{LightsInWater, Ripple, Water};
 use super::plasma::MAX_DROPS;
 #[cfg(doc)]
 use super::plasma::WaterTuning;
@@ -188,6 +188,10 @@ pub struct DotsBlock {
     pub water: [f32; 4],
     pub water_plane: [f32; 4],
     pub drops: [[f32; 4]; MAX_DROPS],
+    /// The lights in the water, as tuned ([`LightsInWater::controls`]):
+    /// their ripples' strength, their glow's and the plankton's, of the
+    /// authored, and how long the plankton glows (seconds).
+    pub water_lights: [f32; 4],
 }
 
 /// The replay's position: a frame, the scene and video memory after it.
@@ -255,8 +259,12 @@ pub struct DotsPreview {
     /// The last dot frame as part 4's wait holds it.
     wait: (Vec<u8>, Vec<u8>),
     pub events: DotsEvents,
-    /// The modern view's water (authored; dots_water.rs).
+    /// The modern view's water (authored; dots_water.rs), and the ripples
+    /// the lights set off in it, in time order.
     pub water: Water,
+    pub ripples: Vec<Ripple>,
+    /// The lights' ripples and glow in the water, as tuned.
+    pub lights: LightsInWater,
     replay: Replay,
 }
 
@@ -375,7 +383,8 @@ impl DotsPreview {
             .iter()
             .position(|f| f.phase >= Phase::Shades)
             .unwrap_or(0);
-        let water = Water::new(&tables.objects[tables.order[7]], &dot_frames)?;
+        let water = Water::new(events.slab);
+        let ripples = water.ripples(&tables, &dot_frames, events.dots);
         let order_starts = (shades.max(1)..positions.len())
             .filter(|&j| positions[j] >> 8 != positions[j - 1] >> 8)
             .map(|j| (start + j) as f64 / FRAME_RATE as f64)
@@ -394,6 +403,8 @@ impl DotsPreview {
             wait,
             events,
             water,
+            ripples,
+            lights: LightsInWater::default(),
             replay: Replay {
                 checkpoints,
                 music: positions,
@@ -754,8 +765,9 @@ impl DotsPreview {
                 [levels[4], levels[5], levels[6], levels[7]],
             ],
             water: [0.0; 4],
-            water_plane: self.water.controls(),
+            water_plane: self.water.controls(seconds),
             drops: [[0.0; 4]; MAX_DROPS],
+            water_lights: self.lights.controls(),
         }
     }
 }

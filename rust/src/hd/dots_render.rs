@@ -8,6 +8,7 @@
 //! into an underlay of their own (renderer.rs), at the zoom's
 //! magnification (`FieldBlock::part3_view`).
 use super::dots::{DotsPreview, POINTS, SHADE_DISCS};
+use super::dots_water::{MAX_RIPPLES, MAX_UNDER};
 use super::renderer::wgsl_parts;
 use wgpu::util::DeviceExt;
 use wgpu::*;
@@ -67,6 +68,9 @@ struct Targets {
     painted: TextureView,
     mirror: TextureView,
     haze: TextureView,
+    /// What the lights do to the water (ripples' slope, plankton, glow
+    /// under it), at half resolution.
+    water: TextureView,
     /// Faithful HD's marks: the shade count and the echo level.
     count: TextureView,
     level: TextureView,
@@ -77,6 +81,10 @@ struct Targets {
 
 pub(super) struct DotsRenderer {
     data: BindGroup,
+    /// The ripples on the water this frame ([`DotsPreview::ripples_at`]),
+    /// and the lights under it ([`DotsPreview::under_at`]).
+    ripples: Buffer,
+    under: Buffer,
     samples_write: BindGroup,
     samples_read: BindGroup,
     light_layout: BindGroupLayout,
@@ -91,6 +99,7 @@ pub(super) struct DotsRenderer {
     mirror_trails: RenderPipeline,
     mirror_shades: RenderPipeline,
     haze: RenderPipeline,
+    water_field: RenderPipeline,
     style: RenderPipeline,
     marks_shade: RenderPipeline,
     marks_dot: RenderPipeline,
@@ -326,8 +335,20 @@ impl DotsRenderer {
                 entry(6, all, sampled()),
                 entry(7, all, sampled()),
                 entry(8, all, BindingType::Sampler(SamplerBindingType::Filtering)),
+                entry(9, all, storage(true)),
+                entry(10, all, storage(true)),
             ],
         });
+        let list = |label, bytes: usize| {
+            device.create_buffer(&BufferDescriptor {
+                label: Some(label),
+                size: bytes as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let ripples = list("Part 3 ripples", MAX_RIPPLES * 32);
+        let under = list("Part 3 lights in the water", MAX_UNDER * 16);
         let data = device.create_bind_group(&BindGroupDescriptor {
             label: Some("Part 3 data"),
             layout: &data_layout,
@@ -367,6 +388,14 @@ impl DotsRenderer {
                 BindGroupEntry {
                     binding: 8,
                     resource: BindingResource::Sampler(&sampler),
+                },
+                BindGroupEntry {
+                    binding: 9,
+                    resource: ripples.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 10,
+                    resource: under.as_entire_binding(),
                 },
             ],
         });
@@ -481,7 +510,7 @@ impl DotsRenderer {
                 entries: &entries,
             })
         };
-        let light_layout = images_layout("Part 3 modern images", &[1, 2, 3, 4]);
+        let light_layout = images_layout("Part 3 modern images", &[1, 2, 3, 4, 5]);
         let faithful_layout = images_layout("Part 3 faithful images", &[1, 2, 3]);
         let layout = |groups: &[&BindGroupLayout]| {
             let groups: Vec<Option<&BindGroupLayout>> = groups.iter().map(|&g| Some(g)).collect();
@@ -577,6 +606,14 @@ impl DotsRenderer {
             "dots_haze",
             &[target(hdr, None)],
         );
+        let water_field = pipeline(
+            "Part 3 water field",
+            &layout(&[&data_layout]),
+            &light_module,
+            "fullscreen",
+            "dots_water_field",
+            &[target(hdr, None)],
+        );
         let style = pipeline(
             "Part 3 modern",
             &layout(&[&data_layout, &read_layout, &light_layout]),
@@ -647,6 +684,8 @@ impl DotsRenderer {
         );
         Self {
             data,
+            ripples,
+            under,
             samples_write,
             samples_read,
             light_layout,
@@ -661,6 +700,7 @@ impl DotsRenderer {
             mirror_trails,
             mirror_shades,
             haze,
+            water_field,
             style,
             marks_shade,
             marks_dot,
@@ -684,6 +724,7 @@ impl DotsRenderer {
         let painted = view("Part 3 light painted", size, hdr);
         let mirror = view("Part 3 light's mirror image", size, hdr);
         let haze = view("Part 3 haze", half, hdr);
+        let water = view("Part 3 water field", half, hdr);
         let count = view("Part 3 shade count", size, TextureFormat::R16Float);
         let level = view("Part 3 echo level", size, TextureFormat::R16Float);
         let images = |layout, views: &[&TextureView]| {
@@ -702,7 +743,7 @@ impl DotsRenderer {
         };
         let light_images = images(
             &self.light_layout,
-            &[&underlay_hdr, &painted, &haze, &mirror],
+            &[&underlay_hdr, &painted, &haze, &mirror, &water],
         );
         let faithful_images = images(&self.faithful_layout, &[&count, &level, &underlay_out]);
         self.targets = Some(Targets {
@@ -712,11 +753,23 @@ impl DotsRenderer {
             painted,
             mirror,
             haze,
+            water,
             count,
             level,
             light_images,
             faithful_images,
         });
+    }
+
+    /// The ripples on the water this frame, and the lights under it.
+    pub fn set_water(
+        &self,
+        queue: &Queue,
+        ripples: &[[f32; 8]; MAX_RIPPLES],
+        under: &[[f32; 4]; MAX_UNDER],
+    ) {
+        queue.write_buffer(&self.ripples, 0, bytemuck::cast_slice(ripples));
+        queue.write_buffer(&self.under, 0, bytemuck::cast_slice(under));
     }
 
     /// Where part 5's view goes during the hold and the zoom: its modern
@@ -790,6 +843,12 @@ impl DotsRenderer {
             pass.draw(0..6, 0..POINTS as u32 * (TRAIL_SAMPLES + AFTER_SAMPLES));
             pass.set_pipeline(&self.mirror_shades);
             pass.draw(0..6, 0..2 * SHADE_DISCS as u32 * SHADE_SAMPLES);
+        }
+        {
+            let mut pass = Self::pass(encoder, "Part 3 water field", &[&targets.water]);
+            pass.set_bind_group(0, &self.data, &[]);
+            pass.set_pipeline(&self.water_field);
+            pass.draw(0..3, 0..1);
         }
         {
             let mut pass = Self::pass(encoder, "Part 3 haze", &[&targets.haze]);
