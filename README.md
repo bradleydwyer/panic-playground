@@ -10,9 +10,11 @@ So far this covers the opening through the PANIC logo, the square transition,
 experiments with the following double scroller, part 6's interference
 rings as a pool of liquid chrome under neon, part 5's deep Mandelbrot
 zoom and molten Mandelbrot mountain, part 3's shade bobs and morphing
-dots as light painting, part 4's plasma as the light on a carved stone
-slab standing in water, part 7's greetings as crystal letters in a lighthouse's beam, and part 8's
-ending as an endless wall of green monitors switched off. The idea is to keep the
+dots as light painting through rising water, part 4's plasma as the light
+on a carved stone slab standing in that water, which then breaks up into
+the dust of part 7's lighthouse, part 7's greetings as crystal letters in
+the lighthouse's beam, and part 8's ending as an endless wall of green
+monitors switched off. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
 letters that refract the stars behind them, a mirrored plate that reflects the
 warp, motion blur, a starfield that ramps into warp, a heated metal logo with
@@ -374,9 +376,9 @@ stone is seen by:
 - The slab stands in still water that runs back to the foot of the
   sheets, which stand in it and lean back from it like a book's open
   pages, the plasma running on down them to the water. It is part 3's
-  water, as level as part 3 left it; it drains from 186 to 200
-  seconds, uncovering the slab, and drains away from under it as the
-  plasma fades out. The water mirrors the plasma, long, quick swells drawing the
+  water, as level as part 3 left it; it drains from 186 to 200 seconds,
+  uncovering the slab, and drains away from under it as the plasma fades
+  out. The water mirrors the plasma, long, quick swells drawing the
   reflection out into wavering streaks of its colours, and every second or
   so a drop lands beside the slab and sends out a ring of ripples. The
   water is lit only by the sheets, so it comes up and fades with them.
@@ -391,16 +393,16 @@ stone is seen by:
   its top edge down, along a ragged edge, over about 1.6 seconds, and
   each grain floats up into the dark, drifting on part 7's air, and
   settles onto the path of one of part 7's dust motes, a grain for each
-  of its 211,000 motes, so by 228.5 seconds the dust in part 7's air is
-  the slab. Part 7's lighthouse comes up as it starts to break, its fade
+  of its 211,000 or so motes, so by 228.5 seconds the dust in part 7's air
+  is the slab. Part 7's lighthouse comes up as it starts to break, its fade
   from black played 1.19 seconds early, and lights the stone and the
   rising grains. Without part 7 (`--plasma`), the slab slides away as in
   the original.
 
 The stone, its carving and finish, the sheets, the water, the lighting,
-the arrival and the break-up are authored; the positions, motion and timing are the port's. Faithful HD
-(**M**) shows the original's rasters at display resolution, the field
-smooth along each raster. The [renderer notes](rust/README.md#part-4-plasma)
+the arrival and the break-up are authored; the positions, motion and
+timing are the port's. Faithful HD (**M**) shows the original's rasters at
+display resolution, the field smooth along each raster. The [renderer notes](rust/README.md#part-4-plasma)
 say what is read, what is interpreted and what is authored.
 
 ### Part 7: Greetings
