@@ -2,9 +2,9 @@
 
 Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
-[![Watch the whole demo, as it stands, on YouTube](https://img.youtube.com/vi/-nAwvG7XNOE/maxresdefault.jpg)](https://youtu.be/-nAwvG7XNOE)
+[![Watch the whole demo, as it stands, on YouTube](https://img.youtube.com/vi/hyygt2N2go4/maxresdefault.jpg)](https://youtu.be/hyygt2N2go4)
 
-[▶ Watch the whole demo, as it stands, on YouTube](https://youtu.be/-nAwvG7XNOE)
+[▶ Watch the whole demo, as it stands, on YouTube](https://youtu.be/hyygt2N2go4)
 
 So far this covers the opening through the PANIC logo, the square transition,
 experiments with the following double scroller, part 6's interference
@@ -278,7 +278,7 @@ in.
 
 ### Part 3: Dots
 
-![Part 3: morphing dots as light painting](docs/images/part3-dots.jpg)
+![Part 3: lights painting over the water, glowing under its surface and mirrored in it](docs/images/part3-dots.jpg)
 
 `--dots` carries on through part 3 and part 4's wait to the first frame
 part 4 draws, with the music unbroken:
@@ -331,7 +331,7 @@ interpreted and what is authored.
 
 ### Part 4: Plasma
 
-![Part 4: the stone slab in water lit by the plasma, a drop's rings spreading](docs/images/part4-plasma.jpg)
+![Part 4: the stone slab half out of the water under the plasma, mirrored in it](docs/images/part4-plasma.jpg)
 
 `--plasma` carries on through part 4 to part 7's first frame, with the
 music unbroken:

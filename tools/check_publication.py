@@ -115,10 +115,14 @@ BINARY_FILES = {
         {'74c44f42ec028fc5aed2602bc606fccb3afa6ea85b1599ae8f8def3cf71516e6'},
     'docs/images/intro.jpg':
         {'7bdd61aae86406be18769a9a72b0854720bace759dc4b0376938883ebae49888'},
-    'docs/images/part3-dots.jpg':
-        {'4e7100686f604550292f58992724da9c7f49d09b080ffa85dc90e27bd2f06b5c'},
-    'docs/images/part4-plasma.jpg':
-        {'6ed909f6578243fc3b50ac818db8496142a6c1905bd3661d9ed2f189041b0951'},
+    'docs/images/part3-dots.jpg': {
+        '4e7100686f604550292f58992724da9c7f49d09b080ffa85dc90e27bd2f06b5c',
+        '58a9503c0fe88982de9eb9623721d93ce37fe0985db6f0e065b88c2bb8c1819d',
+    },
+    'docs/images/part4-plasma.jpg': {
+        '6ed909f6578243fc3b50ac818db8496142a6c1905bd3661d9ed2f189041b0951',
+        'e7db0d1b91a86bd1aa181d11ffa6f1ee4eaae8ece7a0c9724ceea84b69eebbd1',
+    },
     'docs/images/part5-field.jpg':
         {'3ab628d7ff300317ec5659606dc573520e3532d70179a98bd34a762e7acfb106'},
     'docs/images/part6-rings.jpg': {
