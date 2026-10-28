@@ -190,6 +190,10 @@ pub struct PlasmaBlock {
     /// slopes' scale), the swell's own clock (seconds) and its size (its
     /// wavelengths' scale).
     pub water: [f32; 4],
+    /// The modern view's break-up into part 7's dust
+    /// ([`super::slab_breakup`]): 1 while it runs (renderer.rs sets it),
+    /// and its grid: cells across, down the top face, down the front face.
+    pub breakup: [f32; 4],
     /// The drops on the water ([`PlasmaPreview::drops`]): each one's place
     /// on it (across, and back from below the slab's near top edge), its
     /// age (seconds) and 1, or all 0 for none.
@@ -220,8 +224,12 @@ const TUNING_STEP: f64 = 1.25;
 /// The water drains (authored, chosen by eye): from the level part 3 left
 /// it at, as it lies at part 4's start (plasma_stone.rs, Stone::ground_depth),
 /// it falls, eased, to DRAIN_DEPTH below the camera between the clip times
-/// DRAIN, uncovering the slab.
+/// DRAIN, uncovering the slab; then over the plasma's fade out (its first
+/// frame below its full level to its first dark one, observed) it drains
+/// away, eased, to DRAINED below the slab's lowest edge, so by part 4's end
+/// it has gone from under the slab.
 const DRAIN: (f64, f64) = (186.0, 200.0);
+const DRAINED: f64 = 40.0;
 const DRAIN_DEPTH: f64 = 222.0;
 /// The drops (authored): how many can be on the water at once, how long
 /// each lasts (plasma_light.wgsl's DROP_LIFE), the range of the intervals
@@ -985,9 +993,22 @@ impl PlasmaPreview {
 
     /// How far below the camera the water lies at a clip time (see DRAIN).
     pub fn ground_depth(&self, time: f64) -> f64 {
-        let s = ((time - DRAIN.0) / (DRAIN.1 - DRAIN.0)).clamp(0.0, 1.0);
-        let from = self.stone.ground_depth;
-        from + (DRAIN_DEPTH - from) * s * s * (3.0 - 2.0 * s)
+        let eased = |from: f64, to: f64, s: f64| {
+            let s = s.clamp(0.0, 1.0);
+            from + (to - from) * s * s * (3.0 - 2.0 * s)
+        };
+        let level = eased(
+            self.stone.ground_depth,
+            DRAIN_DEPTH,
+            (time - DRAIN.0) / (DRAIN.1 - DRAIN.0),
+        );
+        let e = &self.events;
+        if e.fade_out < 0.0 || e.dark <= e.fade_out {
+            return level;
+        }
+        let gone = self.stone.lowest_depth() + DRAINED;
+        let since = time - self.seconds(0) - e.fade_out;
+        eased(level, gone.max(level), since / (e.dark - e.fade_out))
     }
 
     /// Where drop k falls on the water (across, back), from a hash of k, at
@@ -1009,6 +1030,29 @@ impl PlasmaPreview {
     /// Everything part 4 puts in `u.plasma` at a clip time, but the music's
     /// cue strengths, which the renderer adds.
     pub fn controls(&self, time: f64) -> PlasmaBlock {
+        self.block(time, true)
+    }
+
+    /// Whether the modern view's slab is breaking up into part 7's dust at
+    /// a clip time ([`super::slab_breakup`]): from the slide's first frame,
+    /// for BREAK_UP seconds, into part 7.
+    pub fn breaks_up(&self, time: f64) -> bool {
+        let slide = self.seconds(0) + self.events.slide;
+        self.events.slide >= 0.0 && (slide..slide + super::slab_breakup::BREAK_UP).contains(&time)
+    }
+
+    /// Part 4's controls while its slab breaks up, with its grid: as
+    /// [`PlasmaPreview::controls`], but the slab doesn't slide away (it
+    /// breaks up where it rests, and part 4's view keeps drawing it over
+    /// part 7's first frame and on).
+    pub fn breaking(&self, time: f64, grid: [u32; 3]) -> PlasmaBlock {
+        let mut block = self.block(time, false);
+        block.logo[3] = 0.0;
+        block.breakup = [1.0, grid[0] as f32, grid[1] as f32, grid[2] as f32];
+        block
+    }
+
+    fn block(&self, time: f64, slides: bool) -> PlasmaBlock {
         let (j, f) = self.moment(time);
         let frame = &self.frames[j];
         let last = self.frames.len() - 1;
@@ -1039,7 +1083,7 @@ impl PlasmaPreview {
         }
         let stone = &self.stone;
         let slide_rows = (line_compare - REST_LINE_COMPARE as f64) / 2.0;
-        let pose = stone.pose(slide_rows);
+        let pose = stone.pose(if slides { slide_rows } else { 0.0 });
         let handover = (1.0 - seconds.max(0.0) / HANDOVER).clamp(0.0, 1.0);
         // The water as it lies now, and the sheets standing in it.
         let depth = self.ground_depth(time);
@@ -1143,6 +1187,7 @@ impl PlasmaPreview {
                 let [_, height, clock, size] = self.water.controls(seconds);
                 [self.water.part4_mirror_gain() as f32, height, clock, size]
             },
+            breakup: [0.0; 4],
             drops: self.drops(seconds),
             ground: {
                 let [x, y, z] = slid(stone.floor_at(depth));
@@ -1834,6 +1879,50 @@ mod tests {
     /// moment of the part and however often it is changed, then runs on at
     /// the new speed; so the waves never jump. The other keys leave the
     /// clock alone.
+    /// Where part 7 follows, the slab breaks up where it rests: from the
+    /// slide's first frame for BREAK_UP seconds, the slab and the sheets
+    /// at rest, the grid in the controls and part 7's frame not blanked.
+    #[test]
+    fn the_slab_breaks_up_where_it_rests() {
+        use super::super::slab_breakup::BREAK_UP;
+        let p = invented();
+        let slide = p.seconds(0) + p.events.slide;
+        assert!(!p.breaks_up(slide - 0.01));
+        assert!(p.breaks_up(slide) && p.breaks_up(slide + BREAK_UP - 0.01));
+        assert!(!p.breaks_up(slide + BREAK_UP));
+        let rest = p.controls(slide - 0.25);
+        for t in [slide, slide + 0.6, p.seconds(0) + p.events.part7, slide + 3.0] {
+            let b = p.breaking(t, [300, 120, 60]);
+            assert_eq!(b.slab_origin, rest.slab_origin, "{t}");
+            assert_eq!((b.sheet, b.sheet_back), (rest.sheet, rest.sheet_back), "{t}");
+            assert_eq!(b.logo[3], 0.0, "{t}");
+            assert_eq!(b.breakup, [1.0, 300.0, 120.0, 60.0], "{t}");
+        }
+        assert_eq!(p.controls(slide).breakup, [0.0; 4]);
+    }
+
+    /// The water drains from where part 3 left it to DRAIN_DEPTH by the
+    /// end of DRAIN, and over the plasma's fade out away from under the
+    /// slab, DRAINED below its lowest edge by dark; it never rises.
+    #[test]
+    fn the_water_drains_away_from_under_the_slab_by_dark() {
+        let p = invented();
+        let e = p.events;
+        let at = |s: f64| p.ground_depth(p.seconds(0) + s);
+        assert!(p.seconds(0) + e.fade_out > DRAIN.1);
+        assert!((at(e.fade_out) - DRAIN_DEPTH).abs() < 1e-9);
+        let gone = p.stone.lowest_depth() + DRAINED;
+        assert!(gone > DRAIN_DEPTH, "the slab stands in the drained water");
+        assert!((at(e.dark) - gone).abs() < 1e-9);
+        assert!((at(e.part7) - gone).abs() < 1e-9);
+        let mut last = at(0.0);
+        for k in 0..=500 {
+            let depth = at(k as f64 * 0.1);
+            assert!(depth >= last - 1e-9, "the water rose at {}", k as f64 * 0.1);
+            last = depth;
+        }
+    }
+
     #[test]
     fn changing_the_swell_speed_does_not_move_its_clock() {
         let mut p = invented();

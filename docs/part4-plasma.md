@@ -1,7 +1,8 @@
 # Part 4's ground
 
 These notes cover the ground in modern part 4 (light on stone), where its two
-sheets of light stand now, and the slab's right end. They belong to the Rust
+sheets of light stand now, the slab's break-up into part 7's dust and the
+slab's right end. They belong to the Rust
 intro experiment, under the terms in [rust/NOTICE](../rust/NOTICE). The rest
 of the part is described under Part 4 in [rust/README.md](../rust/README.md).
 
@@ -19,8 +20,10 @@ say where it lies there.
 The ground is now part 3's water, carried on: it lies level, tilted as part
 3's lies (3 degrees by default, rising further off), as far below the camera
 as part 3 left it at the slab frame, and from 186 to 200 seconds it drains,
-eased, to 222 units below the camera, uncovering the slab
-(`dots_water.rs`, `plasma.rs`'s `DRAIN`). The sheets stand in it, on the
+eased, to 222 units below the camera, uncovering the slab; over the plasma's
+fade out (219.33 to 222.87) it drains away, eased, to 40 units below the
+slab's lowest edge, gone from under the slab by part 4's end
+(`dots_water.rs`, `plasma.rs`'s `DRAIN` and `DRAINED`). The sheets stand in it, on the
 water straight below the line where the slab's base plane meets row 113,
 the plasma carried on down them below its last raster to the water
 (`PlasmaPreview::sheet_rasters`). Part 4's mirror gain is 1, water as it
@@ -176,13 +179,17 @@ row 210.
   flare and while the plasma is dark.
 - **The fades:** the ground emerges as the plasma's level rises (187.51 to
   191.06) and fades with it (219.33 to 222.87).
-- **The slide:** the original moves only the logo, by the line compare. Here
+- **The slide:** the original moves only the logo, by the line compare.
+  Where part 7 follows, the slab breaks up where it rests into part 7's
+  dust instead (`slab_breakup.rs`; rust/README.md, part 4). Without it,
   the slab sinks along the camera's vertical as before, so its far edge
   follows the line compare, and the ground and the sheets move with it, as if
   the camera rose. A ground that stayed put would cut the slab off at its
   level before it reached the bottom of the frame. By then the sheets are dark
   and the ground unlit.
-- **The hand-over:** part 7 still opens from black at 225.43.
+- **The hand-over:** with the break-up, part 7's view is drawn from the
+  slide's cue on, its light coming up from black 1.19 s early; without
+  it, part 7 still opens from black at 225.43.
 - **Unchanged frames:** compared on 1440p stills, the frames from the slab
   frame to the plasma's first light, and those of the slide, differ from
   before only on the slab's right end (below), and the two grounds give the
@@ -190,6 +197,46 @@ row 210.
   were before the keys, but for a few dozen pixels a frame off by one
   level (the gain and the clock now read from the controls) and where a
   drop's rings are.
+
+## The break-up into part 7's dust
+
+All authored (`slab_breakup.rs`, `slab_breakup.wgsl`): the original slides
+the slab down off the screen from 2F00 and opens part 7 on black.
+
+- **Where part 7 follows,** from the slide's first frame, 224.24 s, the slab
+  stays where it rests and breaks up into part 7's dust. Without part 7
+  (`--plasma`) it slides away as before (In both, above).
+- **The grains:** its top and front faces are a jittered grid of cells, one
+  grain each, a Voronoi tiling of each face, with a cell for every one of
+  part 7's 211,224 motes (a few over: those grains float up and fade).
+- **The edge** along which grains come away runs from the top face's far
+  edge forward and on down the front face over 1.6 s, ragged by a smooth
+  noise, each grain a little earlier or later.
+- **Drawing it:** part 4's view keeps drawing the slab at rest into two
+  targets of part 7's: the picture, how much of the slab still stands in
+  alpha (each cell gone once its grain has, softened over a pixel at the
+  cells' edges), and the stone's surface, its normal and albedo. Part 7's
+  renderer makes those targets only while the slab breaks up. Part 7's
+  view draws its own scene from the cue, lights the stone's surface with
+  its beam and lamp glow (the carving's shadows left out) and draws the
+  slab over its scene, behind the dust and the lit air in front of it.
+- **The flight:** each grain, from rest where it was, floats up, carried by
+  part 7's air, and eases onto the path of its mote over 1.6 to 2.2 s, then
+  is that mote, drawn as the mote is. On the way its light turns from the
+  slab's (as part 4's key light and the lighthouse light it, flickering as
+  it tumbles in the key light) to a mote's, and its shape from its cell to
+  the mote's disc.
+- **The matching:** motes and cells are matched by where they show as part 7
+  begins, both in 64 columns of equal count, left to right, each from the
+  bottom up, so each grain rises to a mote above it, or level with it, in
+  the same part of the screen.
+- **Part 7's light** comes up from the cue, 1.19 s before part 7's first
+  frame: the original's fade from black played that much early, held at
+  its full level after, and before its first frame its colours' phase, and
+  with it the beam, turns on at the pace of its first second.
+- **The end:** the last grains have settled by 4.3 s after the cue, 228.54 s,
+  before the words rise; from then on part 7's frames are as before, byte
+  for byte.
 
 ## The slab's right end
 

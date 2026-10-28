@@ -24,10 +24,10 @@ pub(super) fn faithful_source() -> String {
     wgsl_parts(&[COMMON, FAITHFUL])
 }
 
-/// The modern module: the shared controls, greetings_common.wgsl and
-/// greetings_light.wgsl.
+/// The modern module: the shared controls, greetings_common.wgsl,
+/// slab_breakup.wgsl and greetings_light.wgsl.
 pub(super) fn light_source() -> String {
-    wgsl_parts(&[COMMON, LIGHT])
+    wgsl_parts(&[COMMON, super::slab_breakup::WGSL, LIGHT])
 }
 
 /// The modern view's monster, a module of its own: the shared controls,
@@ -69,6 +69,9 @@ pub(super) enum Caustics {
 struct Targets {
     size: (u32, u32),
     geometry: TextureView,
+    /// Part 4's view of its slab while it breaks up into the dust: the
+    /// picture and the stone's surface (only while it does).
+    slab: Option<[TextureView; 2]>,
     dust_front: TextureView,
     dust_full: TextureView,
     air_front: TextureView,
@@ -83,6 +86,10 @@ pub(super) struct GreetingsRenderer {
     /// The original frame uploaded to `original`.
     original_frame: Option<usize>,
     motes: u32,
+    /// The grains part 4's slab breaks up into ([`super::slab_breakup`]).
+    grains: u32,
+    /// Bound for part 4's slab's images while it isn't breaking up.
+    no_slab: TextureView,
     #[cfg(test)]
     transmission_map: Texture,
     transmission: TextureView,
@@ -114,6 +121,9 @@ pub(super) struct GreetingsRenderer {
     /// ([`GreetingsPreview::photons_can_move_light`]); where they can't, the
     /// trace and the caustics are skipped and their map only cleared.
     pub traces_photons: bool,
+    /// Whether part 4's slab is breaking up into the dust
+    /// ([`GreetingsRenderer::break_slab`]).
+    breaks_slab: bool,
 }
 
 const HDR: TextureFormat = TextureFormat::Rgba16Float;
@@ -276,6 +286,13 @@ impl GreetingsRenderer {
             bytemuck::cast_slice(&letter_words(preview)),
         );
         let motes = buffer("Part 7 dust", bytemuck::cast_slice(&preview.motes));
+        // Each grain's mote; one entry at least, for the binding.
+        let mut cell_motes = preview.breakup.motes.clone();
+        cell_motes.push(super::slab_breakup::NO_MOTE);
+        let cell_motes = buffer(
+            "Part 7 dust from part 4's slab",
+            bytemuck::cast_slice(&cell_motes),
+        );
         let indices: Vec<u8> = (0..=255).collect();
         let palettes: Vec<u8> = (0..frames)
             .flat_map(|j| super::field::rgba(&indices, preview.palette(j)))
@@ -420,6 +437,7 @@ impl GreetingsRenderer {
                         visibility,
                         BindingType::Sampler(SamplerBindingType::Filtering),
                     ),
+                    entry(12, visibility, storage),
                 ],
             });
             let group = device.create_bind_group(&BindGroupDescriptor {
@@ -444,6 +462,7 @@ impl GreetingsRenderer {
                         binding: 11,
                         resource: BindingResource::Sampler(&repeat),
                     },
+                    resource(12, &cell_motes),
                 ],
             });
             (layout, group)
@@ -452,7 +471,12 @@ impl GreetingsRenderer {
         let unfiltered = sampled(TextureSampleType::Float { filterable: false });
         let scene_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("Part 7 scene's inputs"),
-            entries: &[entry(2, all, unfiltered), entry(3, all, sampled(FLOAT))],
+            entries: &[
+                entry(2, all, unfiltered),
+                entry(3, all, sampled(FLOAT)),
+                entry(13, all, sampled(FLOAT)),
+                entry(14, all, sampled(FLOAT)),
+            ],
         });
         let fragment = ShaderStages::FRAGMENT;
         let style_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -460,9 +484,12 @@ impl GreetingsRenderer {
             entries: &[
                 entry(1, fragment, sampled(FLOAT)),
                 entry(2, fragment, unfiltered),
+                entry(3, fragment, sampled(FLOAT)),
                 entry(4, fragment, sampled(FLOAT)),
                 entry(5, fragment, sampled(FLOAT)),
                 entry(6, fragment, sampled(FLOAT)),
+                entry(13, fragment, sampled(FLOAT)),
+                entry(14, fragment, sampled(FLOAT)),
             ],
         });
         let photons = device.create_buffer(&BufferDescriptor {
@@ -684,6 +711,7 @@ impl GreetingsRenderer {
             original,
             original_frame: None,
             motes: preview.motes.len() as u32,
+            grains: preview.breakup.cells(),
             #[cfg(test)]
             transmission_map,
             transmission,
@@ -708,6 +736,15 @@ impl GreetingsRenderer {
             monster,
             shows_monster: false,
             traces_photons: true,
+            breaks_slab: false,
+            no_slab: texture(
+                device,
+                "Part 7 no slab",
+                (1, 1),
+                HDR,
+                TextureUsages::TEXTURE_BINDING,
+            )
+            .create_view(&Default::default()),
         }
     }
 
@@ -741,25 +778,12 @@ impl GreetingsRenderer {
         let half = (size.0.div_ceil(2).max(1), size.1.div_ceil(2).max(1));
         let air_front = make("Part 7 lit air in front", half, HDR);
         let air_full = make("Part 7 lit air", half, HDR);
-        let scene_inputs = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("Part 7 scene's inputs"),
-            layout: &self.scene_layout,
-            entries: &[view(2, &geometry), view(3, &self.transmission)],
-        });
-        let style_inputs = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("Part 7 picture's inputs"),
-            layout: &self.style_layout,
-            entries: &[
-                view(1, &dust_front),
-                view(2, &geometry),
-                view(4, &dust_full),
-                view(5, &air_front),
-                view(6, &air_full),
-            ],
-        });
+        let (scene_inputs, style_inputs) =
+            self.inputs(device, [&geometry, &dust_front, &dust_full, &air_front, &air_full], None);
         self.targets = Some(Targets {
             size,
             geometry,
+            slab: None,
             dust_front,
             dust_full,
             air_front,
@@ -767,6 +791,83 @@ impl GreetingsRenderer {
             scene_inputs,
             style_inputs,
         });
+        self.breaks_slab = false;
+    }
+
+    /// The scene's and the picture's inputs: the blocks, the dust in front
+    /// and all of it, the air in front and all of it, and part 4's slab's
+    /// picture and surface (or the 1 x 1 stand-in).
+    fn inputs(
+        &self,
+        device: &Device,
+        [geometry, dust_front, dust_full, air_front, air_full]: [&TextureView; 5],
+        slab: Option<&[TextureView; 2]>,
+    ) -> (BindGroup, BindGroup) {
+        let [picture, surface] = slab.map_or([&self.no_slab; 2], |[p, s]| [p, s]);
+        let scene_inputs = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Part 7 scene's inputs"),
+            layout: &self.scene_layout,
+            entries: &[
+                view(2, geometry),
+                view(3, &self.transmission),
+                view(13, picture),
+                view(14, surface),
+            ],
+        });
+        let style_inputs = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("Part 7 picture's inputs"),
+            layout: &self.style_layout,
+            entries: &[
+                view(1, dust_front),
+                view(2, geometry),
+                view(3, &self.transmission),
+                view(4, dust_full),
+                view(5, air_front),
+                view(6, air_full),
+                view(13, picture),
+                view(14, surface),
+            ],
+        });
+        (scene_inputs, style_inputs)
+    }
+
+    /// Whether the targets for a drawable size are made.
+    pub fn has_targets(&self) -> bool {
+        self.targets.is_some()
+    }
+
+    /// Whether part 4's slab is breaking up into the dust (renderer.rs fills
+    /// u.plasma and has part 4's view draw the slab into
+    /// [`GreetingsRenderer::slab`]): the dust then draws a grain for each
+    /// cell of the slab, each mote still on its way from it. Its images are
+    /// made for the drawable size while it does, and dropped after. Call
+    /// [`GreetingsRenderer::resize`] first.
+    pub fn break_slab(&mut self, device: &Device, breaks: bool) {
+        self.breaks_slab = breaks;
+        let t = self.targets.as_ref().unwrap();
+        if breaks == t.slab.is_some() {
+            return;
+        }
+        let slab = breaks.then(|| {
+            let usage = TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING;
+            ["Part 7 part 4's slab", "Part 7 part 4's slab's surface"]
+                .map(|label| texture(device, label, t.size, HDR, usage).create_view(&Default::default()))
+        });
+        let (scene_inputs, style_inputs) = self.inputs(
+            device,
+            [&t.geometry, &t.dust_front, &t.dust_full, &t.air_front, &t.air_full],
+            slab.as_ref(),
+        );
+        let t = self.targets.as_mut().unwrap();
+        (t.slab, t.scene_inputs, t.style_inputs) = (slab, scene_inputs, style_inputs);
+    }
+
+    /// Where part 4's view draws its slab while it breaks up (HDR): the
+    /// picture, how much of the slab still stands in alpha, and the stone's
+    /// surface. Call [`GreetingsRenderer::break_slab`] first.
+    pub fn slab(&self) -> [&TextureView; 2] {
+        let [picture, surface] = self.targets.as_ref().unwrap().slab.as_ref().unwrap();
+        [picture, surface]
     }
 
     fn pass<'a>(
@@ -826,7 +927,12 @@ impl GreetingsRenderer {
             pass.set_bind_group(0, &self.data, &[]);
             pass.set_bind_group(1, &t.scene_inputs, &[]);
             pass.set_pipeline(&self.dust);
-            pass.draw(0..6, 0..self.motes);
+            let count = if self.breaks_slab {
+                self.grains
+            } else {
+                self.motes
+            };
+            pass.draw(0..6, 0..count);
         }
         {
             let mut pass = Self::pass(encoder, "Part 7 air", &[&t.air_front, &t.air_full]);

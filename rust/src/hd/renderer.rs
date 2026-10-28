@@ -208,10 +208,13 @@ struct PlasmaBlock {
     // The back sheet: bottom edge's centre, height; half width, up.
     sheet_back: vec4f,
     sheet_back_size: vec4f,
-    // The water: mirror gain, swell height, swell clock, swell size; the
-    // drops: place across and back, age, 1 (0 none); the ground: its point
-    // below the slab's near top edge, slide included, and its tilt.
+    // The water: mirror gain, swell height, swell clock, swell size.
     water: vec4f,
+    // The break-up into part 7's dust: 1 while it runs; its grid's cells
+    // across, down the top face, down the front face.
+    breakup: vec4f,
+    // The drops: place across and back, age, 1 (0 none); the ground: its
+    // point below the slab's near top edge, slide included, and its tilt.
     drops: array<vec4f,6>,
     ground: vec4f,
 }
@@ -460,6 +463,9 @@ pub struct Renderer {
     /// Part 7's, likewise.
     greetings: Option<GreetingsRenderer>,
     part7: bool,
+    /// Whether the moment shows part 4's slab breaking up into part 7's
+    /// dust (modern view): part 4's view draws the slab, part 7's the rest.
+    slab_breaking: bool,
     /// Part 8's, likewise.
     ending: Option<EndingRenderer>,
     part8: bool,
@@ -735,6 +741,7 @@ impl Renderer {
                 part4_handover: false,
                 greetings: None,
                 part7: false,
+                slab_breaking: false,
                 ending: None,
                 part8: false,
             },
@@ -768,6 +775,7 @@ impl Renderer {
         self.part3 = false;
         self.part4 = false;
         self.part7 = false;
+        self.slab_breaking = false;
         self.part8 = false;
         self.glyphs_active = false;
         self.scroller = false;
@@ -819,15 +827,7 @@ impl Renderer {
             ));
         }
         if let Some(plasma) = &clip.plasma {
-            if self.plasma.is_none() {
-                self.plasma = Some(PlasmaRenderer::new(
-                    &self.device,
-                    &self.queue,
-                    &self.uniform,
-                    self.output_format,
-                    plasma,
-                ));
-            }
+            self.start_plasma(plasma);
             if plasma.frame_at(time).is_some() {
                 return self.prepare_plasma(clip, plasma, view);
             }
@@ -1213,6 +1213,19 @@ impl Renderer {
         u
     }
 
+    /// Part 4's renderer, made when first needed.
+    fn start_plasma(&mut self, plasma: &PlasmaPreview) {
+        if self.plasma.is_none() {
+            self.plasma = Some(PlasmaRenderer::new(
+                &self.device,
+                &self.queue,
+                &self.uniform,
+                self.output_format,
+                plasma,
+            ));
+        }
+    }
+
     /// Part 4: the shared controls for this moment, with the music's cues;
     /// in its first moments, part 3's controls too, for its modern view to
     /// hand over from; and the original frame when a comparison shows it,
@@ -1254,7 +1267,40 @@ impl Renderer {
         let mut u = base_uniforms(clip, view, self.srgb, part_state(PART4_PHASE, j, time));
         u.dots = dots_controls;
         u.plasma = block;
+        self.break_slab(clip, view, &mut u);
         u
+    }
+
+    /// In the modern view, from part 4's slide on, part 4's slab breaking up
+    /// where it rests into part 7's dust ([`super::slab_breakup`]), part 7's
+    /// view drawn from before its first frame (black until then): both
+    /// parts' controls, part 4's at rest with the grid.
+    fn break_slab(&mut self, clip: &Clip, view: View, u: &mut Uniforms) {
+        let (Some(plasma), Some(greetings)) = (&clip.plasma, &clip.greetings) else {
+            return;
+        };
+        let time = view.time;
+        let grid = greetings.breakup.grid;
+        let breaking = view.modern && plasma.breaks_up(time) && greetings.breakup.cells() > 0;
+        if !breaking {
+            if let Some(renderer) = self.greetings.as_mut().filter(|r| r.has_targets()) {
+                renderer.break_slab(&self.device, false);
+            }
+            return;
+        }
+        let hits = u.plasma.hit_strength;
+        u.plasma = plasma.breaking(time, grid);
+        u.plasma.hit_strength = hits;
+        self.start_plasma(plasma);
+        self.plasma.as_mut().unwrap().resize(&self.device, view.size);
+        let ahead = plasma.events.part7 - plasma.events.slide;
+        u.greetings = greetings.breaking_controls(time, ahead);
+        let renderer = self.greetings.as_mut().unwrap();
+        renderer.resize(&self.device, view.size);
+        renderer.break_slab(&self.device, true);
+        renderer.shows_monster = false;
+        renderer.traces_photons = greetings.photons_can_move_light(&u.greetings);
+        self.slab_breaking = true;
     }
 
     /// Part 7: the shared controls for this moment, and the original frame
@@ -1282,6 +1328,7 @@ impl Renderer {
         u.greetings = greetings.controls(time);
         self.greetings.as_mut().unwrap().traces_photons =
             greetings.photons_can_move_light(&u.greetings);
+        self.break_slab(clip, view, &mut u);
         u
     }
 
@@ -1428,6 +1475,16 @@ impl Renderer {
             } else {
                 ending.draw_faithful(encoder, view);
             }
+            self.draw_hud(encoder, view);
+            return;
+        }
+        if let (true, Some(plasma), Some(greetings)) =
+            (self.slab_breaking, &self.plasma, &self.greetings)
+        {
+            let [picture, surface] = greetings.slab();
+            plasma.draw_breaking(encoder, picture, surface);
+            greetings.draw_style(encoder, self.modern_renderer.hdr_target());
+            self.modern_renderer.post(encoder, view);
             self.draw_hud(encoder, view);
             return;
         }
@@ -2532,6 +2589,7 @@ mod tests {
             sheet_back,
             sheet_back_size,
             water,
+            breakup,
             drops,
             ground,
         ];
@@ -2620,7 +2678,7 @@ mod tests {
                 let allowed: &[(u32, u32)] = match entry.name.as_str() {
                     "fullscreen" | "faithful" | "plasma_sheet" => &[],
                     "plasma_downsample" => &[(1, 3)],
-                    "plasma_style" => &[(1, 1), (1, 2)],
+                    "plasma_style" | "plasma_breaking" => &[(1, 1), (1, 2)],
                     n => panic!("unexpected entry point {n}"),
                 };
                 let uses = info.get_entry_point(index);
@@ -2747,8 +2805,10 @@ mod tests {
                     "trace_photons" => &[(1, 7)],
                     "count_splats" | "list_splats" => &[(1, 8), (1, 9), (1, 10), (1, 11)],
                     "photon_vertex" | "photon_fragment" => &[(1, 8), (1, 12)],
-                    "dust_vertex" | "dust_fragment" | "air" => &[(1, 2), (1, 3)],
-                    "style" => &[(1, 1), (1, 2), (1, 4), (1, 5), (1, 6)],
+                    // Part 4's slab's picture and surface (13, 14) while it
+                    // breaks up into the dust.
+                    "dust_vertex" | "dust_fragment" | "air" => &[(1, 2), (1, 3), (1, 13), (1, 14)],
+                    "style" => &[(1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 13), (1, 14)],
                     n => panic!("unexpected entry point {n}"),
                 };
                 let uses = info.get_entry_point(index);

@@ -47,12 +47,21 @@
 //   lamp sees it: the block's shadow, and bright, coloured caustics shaped
 //   by the cut, which light the dust and the air beyond. The cut and the
 //   block's edges flare.
+// - The start: part 4's slab breaks up where it rests into the dust
+//   (slab_breakup.rs, slab_breakup.wgsl): each grain floats up from it
+//   into the dark, drifting with the air, onto the path of a mote, and from
+//   there on is that mote; on its way its light turns from the slab's to a
+//   mote's, and its shape from its cell of the slab to a mote's disc. The
+//   lighthouse is lit from the slab's first breaking (greetings.rs,
+//   breaking_controls) and lights the slab too, by its surface as part 4's
+//   view gives it.
 // - The end: the beam swings to the lens (authored motion, from a little
 //   before the original's feedback fade), its forward scattering flooding
 //   the picture, which the fade then blends toward white at the original's
 //   timing and levels; the monster develops out of the white
 //   (greetings_monster.wgsl).
-// Module: the shared controls, greetings_common.wgsl and this file.
+// Module: the shared controls, greetings_common.wgsl, slab_breakup.wgsl and
+// this file.
 
 // ---- The look (authored) -------------------------------------------------------
 // The camera's distance from the strips' plane (greetings::CAMERA_DISTANCE;
@@ -147,6 +156,25 @@ const MOTE_BAND=.008;
 // The motes' light from the lamp's glow alone, everywhere (in the beam's
 // units times MOTE_GAIN).
 const MOTE_AMBIENT=.1;
+// The grains of part 4's slab (authored): how long one takes to reach its
+// mote (seconds, the least and the most), how soon it floats freely from
+// rest (seconds), how fast it rises, spreads across and moves away
+// (rows a second, at most), over how long its light turns from the slab's
+// to a mote's in the lighthouse's light (seconds), and how fast it tumbles (radians a second, at most)
+// in part 4's key light (plasma_light.wgsl, KEY_DIR: toward the light, in
+// part 4's camera space).
+const GRAIN_TRAVEL=vec2f(1.6,2.2);
+const GRAIN_EASE=.5;
+const GRAIN_RISE=40.0;
+const GRAIN_SPREAD=10.0;
+const GRAIN_AWAY=30.0;
+const GRAIN_LIGHT=.6;
+const GRAIN_SPIN=8.0;
+const SLAB_KEY=vec3f(-.5,-.55,-.67);
+// How strongly the lighthouse lights part 4's slab while it breaks up
+// (authored, chosen by eye): its beam, and the lamp's glow everywhere.
+const SLAB_BEAM=60.0;
+const SLAB_GLOW=6.0;
 // The blocks: half a side (greetings_type::FACE / 2), the edges' rounding,
 // the slots (greetings::SLOT_ROWS, SLOTS), and the turn per step of the
 // sine's view index (90 degrees over 16, read as a turn of the column).
@@ -214,6 +242,9 @@ const SWING_LEAD=.45;
 // a sampler that repeats it.
 @group(0) @binding(10) var density_noise:texture_3d<f32>;
 @group(0) @binding(11) var repeat:sampler;
+// Each grain of part 4's slab's mote (slab_breakup::Breakup::motes), or
+// BREAKUP_NO_MOTE.
+@group(0) @binding(12) var<storage,read> cell_motes:array<u32>;
 // The passes' images: the dust in front of the blocks and all of it; the
 // blocks' geometry (coverage, strip * 16 + slot, the ray's distance to
 // them, and to them where they are solid, else 1e9); the strips'
@@ -240,6 +271,11 @@ const SWING_LEAD=.45;
 @group(1) @binding(10) var<storage,read_write> splats_out:array<u32>;
 @group(1) @binding(11) var<storage,read_write> splat_draw:array<u32,4>;
 @group(1) @binding(12) var<storage,read> splats_in:array<u32>;
+// Part 4's view of its slab while it breaks up: its light, and how much of
+// it still stands (alpha); and its surface, its normal (part 4's camera
+// space) and its albedo over the stone's colour (0 off it).
+@group(1) @binding(13) var slab_view:texture_2d<f32>;
+@group(1) @binding(14) var slab_surface:texture_2d<f32>;
 
 // ---- The beam -----------------------------------------------------------------------
 // The stars' colour, (v, 8v/9, 7v/9) as the scanout shows it, in linear
@@ -386,8 +422,8 @@ fn swirl(x:vec3f,t:f32,wavelength:f32,reach:f32,slow:f32)->vec3f {
 }
 // Where the air that was at x when part 7 began has been carried by the
 // moment: the drift, the large swirls, and the small over them.
-fn flow(x:vec3f)->vec3f {
-    let t=greetings_seconds();
+fn flow(x:vec3f)->vec3f {return flow_at(x,greetings_seconds());}
+fn flow_at(x:vec3f,t:f32)->vec3f {
     let y=x+DRIFT*t+swirl(x,t,SWIRL_LARGE.x,SWIRL_LARGE.y,1.0);
     return y+swirl(y,t,SWIRL_SMALL.x,SWIRL_SMALL.y,.4);
 }
@@ -797,8 +833,10 @@ struct AirOut { @location(0) front:vec4f, @location(1) full:vec4f }
     greetings_begin();
     let pixel=vec2i(v.position.xy);
     let full=min(pixel*2,vec2i(u.screen.xy)-1);
-    let depth=textureLoad(geometry,full,0).w;
+    var depth=textureLoad(geometry,full,0).w;
     let q=scene_of_uv(v.uv);
+    // While part 4's slab breaks up, the air in front of it too.
+    if breakup_on() {depth=min(depth,breakup_distance(q));}
     let d=normalize(vec3f(q,CAMERA_DISTANCE));
     let near=(AIR_NEAR+CAMERA_DISTANCE)/d.z;
     let far=(AIR_FAR+CAMERA_DISTANCE)/d.z;
@@ -871,9 +909,22 @@ struct DustVertex {
     @location(1) @interpolate(flat) colour:vec3f,
     @location(2) @interpolate(flat) radius:f32,
     @location(3) @interpolate(flat) distance:f32,
+    // A grain still in its cell's shape (else all 0): its site in its
+    // face's cells, its cell's index, 1; the map from the screen (pixels,
+    // up) to the face's cells; how far it shows as a disc, and the cells a
+    // pixel spans.
+    @location(4) @interpolate(flat) grain:vec4f,
+    @location(5) @interpolate(flat) shape:vec4f,
+    @location(6) @interpolate(flat) disc:vec2f,
 }
+// While part 4's slab breaks up, an instance for each of its grains (which
+// draws its mote once it has reached it); else for each mote.
 @vertex fn dust_vertex(@builtin(vertex_index) corner:u32,@builtin(instance_index) n:u32)->DustVertex {
     greetings_begin();
+    if breakup_on() {return grain_vertex(corner,n);}
+    return mote_vertex(corner,n);
+}
+fn mote_vertex(corner:u32,n:u32)->DustVertex {
     var out:DustVertex;
     out.position=vec4f(2,2,2,1);
     if stage()>STAGE_WHITE+.5 || intensity()<=0.0 {return out;}
@@ -916,12 +967,149 @@ struct DustVertex {
 }
 struct DustOut { @location(0) front:vec4f, @location(1) full:vec4f }
 @fragment fn dust_fragment(v:DustVertex)->DustOut {
+    if v.grain.w>.5 {return grain_fragment(v);}
     let r=length(v.offset)/v.radius;
     // A soft disc, its edge a little brighter, as out of focus light is.
     let disc=(1.0-smoothstep(.75,1.05,r))*(.85+.25*smoothstep(.4,.95,r));
     let c=v.colour*disc;
     // In front of the blocks, or behind them (seen through the crystal).
-    let hidden=textureLoad(geometry,vec2i(v.position.xy),0).w<v.distance;
+    let hidden=dust_depth(v.position.xy)<v.distance;
+    return DustOut(vec4f(select(c,vec3f(0),hidden),1),vec4f(c,1));
+}
+
+// ---- Part 4's slab breaking up into the dust -----------------------------------------
+// The lighthouse's light on part 4's slab where pixel shows it (scene point
+// q): the beam and the lamp's glow falling on its surface (part 4's view
+// of it; the carving's shadows left out), diffusely, the stone's albedo.
+// Part 4 lights it by its own key light; this adds the lighthouse's.
+fn slab_lit(pixel:vec2i,q:vec2f)->vec3f {
+    let s=textureLoad(slab_surface,pixel,0);
+    let distance=breakup_distance(q);
+    if s.w<=0.0 || distance>=1e8 {return vec3f(0);}
+    let x=CAMERA+normalize(vec3f(q,CAMERA_DISTANCE))*distance;
+    // Part 4's camera space runs y down, this scene's up.
+    let n=normalize(vec3f(s.x,-s.y,s.z));
+    let cosine=max(dot(n,normalize(lamp()-x)),0.0);
+    if cosine<=0.0 {return vec3f(0);}
+    var beam=vec3f(0);
+    for(var i=0u;i<2u;i++) {
+        beam+=light_at(x,beam_axis(SHUTTER*f32(i)),f32(i)*3.1)*.5;
+    }
+    let albedo=vec3f(u.plasma.slab_size.zw,u.plasma.stone.x)*s.w;
+    return albedo/PI*(beam*SLAB_BEAM+lamp_falloff(x)*SLAB_GLOW)*cosine*intensity();
+}
+// Grain n of the slab (slab_breakup.wgsl's grid): nothing until it comes
+// away (part 4's view still draws it); then, from rest where it was, it
+// floats up, spreading and moving away a little, carried by the air, and
+// eases onto its mote's path, reaching it after its travel; from then on it
+// is its mote, drawn as the mote is. On its way its light turns from the
+// slab's where it was (part 4's view of it), flickering as it tumbles in
+// part 4's key light, to the mote's, its size shrinks with the distance
+// to the mote's, and its shape turns from its cell to the mote's disc. A
+// grain without a mote fades as it floats.
+fn grain_vertex(corner:u32,n:u32)->DustVertex {
+    var out:DustVertex;
+    out.position=vec4f(2,2,2,1);
+    let cell=breakup_cell(n);
+    if cell.x<0 {return out;}
+    let site=breakup_site(cell);
+    let age=breakup_seconds()-breakup_release(cell,site);
+    if age<0.0 {return out;}
+    let h=vec4f(breakup_hash(cell,3u),breakup_hash(cell,4u),breakup_hash(cell,5u),breakup_hash(cell,6u));
+    let mote=cell_motes[n];
+    let has_mote=mote!=BREAKUP_NO_MOTE;
+    let k=clamp(age/mix(GRAIN_TRAVEL.x,GRAIN_TRAVEL.y,h.x),0.0,1.0);
+    if has_mote && k>=1.0 {return mote_vertex(corner,mote);}
+    if !has_mote && k>=1.0 {return out;}
+    let arrive=k*k*k*(k*(k*6.0-15.0)+10.0);
+    // Where it was, and how its cell maps to the screen there (pixels, up,
+    // a cell).
+    let was=breakup_point(cell.x,site);
+    let home=breakup_scene(was);
+    let per_row=u.screen.y/200.0;
+    let cell_map=mat2x2f((breakup_scene(breakup_point(cell.x,site+vec2f(1,0)))-home)*per_row,
+        (breakup_scene(breakup_point(cell.x,site+vec2f(0,1)))-home)*per_row);
+    let start=CAMERA+normalize(vec3f(home,CAMERA_DISTANCE))*length(was);
+    // Floating up from rest, carried by the air, then onto its mote.
+    let t=greetings_seconds();
+    let free=age-GRAIN_EASE*(1.0-exp(-age/GRAIN_EASE));
+    var x=start+vec3f((h.y-.5)*2.0*GRAIN_SPREAD,GRAIN_RISE*mix(.6,1.4,h.z),GRAIN_AWAY*(h.w-.3))*free;
+    x+=flow_at(start,t)-flow_at(start,t-age);
+    var m=vec4f(0,0,0,h.x);
+    if has_mote {
+        m=motes[mote];
+        x=mix(x,mote_place(m),arrive);
+    }
+    let index=floor(m.w);
+    let size=m.w-index;
+    let to_camera=CAMERA-x;
+    let distance=length(to_camera);
+    // Its light as a mote, as mote_vertex has it.
+    var lit=vec3f(0);
+    let seed=select(f32(n),f32(mote),has_mote);
+    for(var i=0u;i<3u;i++) {
+        lit+=light_at(x,beam_axis(SHUTTER*f32(i)*.5),seed+f32(i)*2.1);
+    }
+    let beam=lit*phase(normalize(x-lamp()),to_camera/distance,MOTE_G)/3.0*MOTE_GAIN;
+    let glow=MOTE_AMBIENT*lamp_falloff(x);
+    let dust=star_colour()*(beam+glow+MOTE_BAND*star_light(index,gc.sweep.x))*(.3+2.2*size*size)*intensity();
+    // Its light as the slab's: tumbling about an axis in its face, lit by
+    // part 4's key light as the face was.
+    let face=select(-breakup_back(),-breakup_down(),cell.x==0);
+    let axis=normalize(cross(face,vec3f(cos(h.w*6.2832),sin(h.w*6.2832),.3)));
+    let turn=(h.z-.5)*2.0*GRAIN_SPIN*age;
+    let normal=face*cos(turn)+cross(axis,face)*sin(turn);
+    let key=normalize(SLAB_KEY);
+    let flicker=(abs(dot(normal,key))+.2)/(max(dot(face,key),0.0)+.2);
+    let at=vec2i(clamp(uv_of_scene(home),vec2f(0),vec2f(1))*(u.screen.xy-1.0));
+    let slab=(textureSampleLevel(slab_view,linear,uv_of_scene(home),0.0).rgb+slab_lit(at,home))*flicker;
+    var colour=mix(slab,dust,smoothstep(0.0,GRAIN_LIGHT,age));
+    if !has_mote {colour*=1.0-smoothstep(.3,1.0,k);}
+    // Its size: its cell, smaller with the distance and turned edge on as
+    // it tumbles, toward the mote's core; out of focus as the mote is.
+    let scale=u.screen.y/1080.0;
+    let squash=max(abs(cos(turn)),.1);
+    let shape_map=cell_map*(length(was)/distance)*mat2x2f(1,0,0,mix(squash,1.0,arrive));
+    let det=abs(determinant(shape_map));
+    if det<1e-8 {return out;}
+    let cell_radius=sqrt(det/PI);
+    let core=mix(cell_radius,MOTE_RADIUS*(.7+1.6*size)*scale,arrive);
+    let coc=min(BOKEH*abs(1.0-CAMERA_DISTANCE/distance),BOKEH_MAX)*scale;
+    let radius=max(core,coc);
+    let rounded=max(smoothstep(0.0,.25,arrive),smoothstep(.6,1.4,coc/cell_radius));
+    colour*=mix(1.0,(core*core)/(radius*radius),rounded);
+    if max(colour.r,max(colour.g,colour.b))<1e-5 {return out;}
+    let q=project(x);
+    let c=array<vec2f,6>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(-1,1),vec2f(1,-1),vec2f(1,1))[corner];
+    let extent=max((length(shape_map[0])+length(shape_map[1]))*1.2,radius*1.6)+1.0;
+    let uv=uv_of_scene(q);
+    let ndc=vec2f(uv.x*2.0-1.0,1.0-uv.y*2.0)+c*extent*2.0/u.screen.xy;
+    out.position=vec4f(ndc,0,1);
+    out.offset=c*extent;
+    out.colour=colour;
+    out.radius=radius;
+    out.distance=distance;
+    let inverse=mat2x2f(shape_map[1].y,-shape_map[0].y,-shape_map[1].x,shape_map[0].x)*(1.0/determinant(shape_map));
+    out.grain=vec4f(site,f32(n),1.0);
+    out.shape=vec4f(inverse[0],inverse[1]);
+    out.disc=vec2f(rounded,1.0/sqrt(det));
+    return out;
+}
+// The nearest of the blocks and, while it breaks up, part 4's slab, along
+// the ray through a pixel (1e9 none): the dust beyond is behind them.
+fn dust_depth(pixel:vec2f)->f32 {
+    let depth=textureLoad(geometry,vec2i(pixel),0).w;
+    if !breakup_on() {return depth;}
+    return min(depth,breakup_distance(scene_of_uv(pixel/u.screen.xy)));
+}
+fn grain_fragment(v:DustVertex)->DustOut {
+    let cell=breakup_cell(u32(v.grain.z));
+    let p=v.grain.xy+mat2x2f(v.shape.xy,v.shape.zw)*v.offset;
+    let shape=clamp(.5+breakup_edge(cell,v.grain.xy,p).inside/v.disc.y,0.0,1.0);
+    let r=length(v.offset)/v.radius;
+    let disc=(1.0-smoothstep(.75,1.05,r))*(.85+.25*smoothstep(.4,.95,r));
+    let c=v.colour*mix(shape,disc,v.disc.x);
+    let hidden=dust_depth(v.position.xy)<v.distance;
     return DustOut(vec4f(select(c,vec3f(0),hidden),1),vec4f(c,1));
 }
 
@@ -1099,6 +1287,13 @@ fn crystal(s:u32,k:f32,p:vec3f,d:vec3f,footprint:f32)->vec3f {
         // held back a little over it (authored), so the word stays readable.
         let front=textureLoad(dust_front,pixel,0).rgb+air_in_front(pixel,g.w)*FRONT_HAZE;
         c=mix(open,front+crystal(s,k,p,d,footprint),g.x);
+    }
+    // Part 4's slab where it still stands, behind the dust and the lit air
+    // in front of it.
+    if breakup_on() {
+        let slab=textureLoad(slab_view,pixel,0);
+        let front=textureLoad(dust_front,pixel,0).rgb+air_in_front(pixel,breakup_distance(q));
+        c=mix(c,slab.rgb+slab_lit(pixel,q)+front,slab.a);
     }
     // The fade to white, at the original's levels.
     let w=clamp(gc.sweep.z,0.0,1.0);

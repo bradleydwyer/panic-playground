@@ -39,8 +39,9 @@
 //   visible while the plasma is dark, lighting it no more than the plasma
 //   will, and gives way as it rises.
 // - The floor (the original has none: below its plasma it is black): part
-//   3's water, level, lying as part 3 left it and draining from 186 to 200
-//   s, uncovering the slab (plasma.rs, DRAIN), through the same camera,
+//   3's water, level, lying as part 3 left it, draining from 186 to 200 s,
+//   uncovering the slab, and away from under it as the plasma fades out
+//   (plasma.rs, DRAIN), through the same camera,
 //   running back to the sheets, which stand in it below the plasma's last
 //   raster, the plasma carried on down them to it.
 //   By default it is water: a mirror of the sheets and their glow
@@ -66,8 +67,14 @@
 // - The music: each order's first row swells the sheets' light a little.
 // - A faint dither keeps the 8-bit output from banding.
 // - The slide: the slab sinks with the original's line compare; the floor
-//   and the sheets, dark by then, go with it, as if the camera rose.
-// Module: the shared controls, plasma_common.wgsl and this file.
+//   and the sheets, dark by then, go with it, as if the camera rose. Where
+//   part 7 follows, the slab instead breaks up where it rests into part
+//   7's dust (slab_breakup.wgsl): this view draws it into targets of part
+//   7's, how much of it still stands in alpha and its surface (its normal
+//   and albedo) in a second, and part 7's view lights it by the lighthouse
+//   and flies the grains that have come away.
+// Module: the shared controls, plasma_common.wgsl, slab_breakup.wgsl, this
+// file and water.wgsl.
 
 // ---- The look (authored) -------------------------------------------------------
 // The sheet's power (its radiance is the original's colour, linear, times
@@ -570,7 +577,10 @@ fn grain(l:vec3f)->f32 {
     let q=l/GRAIN;
     return .55*noise(q)+.3*noise(q*2.7+7.1)+.15*noise(q*7.3+3.3);
 }
-fn shade_stone(p:vec3f,d:vec3f)->vec3f {
+// The stone's surface at p: its normal (the grain's bump in it), albedo
+// and roughness.
+struct StoneSurface { n:vec3f, albedo:vec3f, roughness:f32 }
+fn stone_surface(p:vec3f)->StoneSurface {
     var n=slab_normal(p);
     let l=slab_local(p);
     let size=slab_size();
@@ -589,6 +599,13 @@ fn shade_stone(p:vec3f,d:vec3f)->vec3f {
     n=normalize(n-GRAIN_BUMP*cut/e*(bump-dot(bump,n)*n));
     let albedo=vec3f(pc.slab_size.zw,pc.stone.x)*r.g*(1.0-.22*r.b)*(1.0-.3*r.a)
         *(1.0+GRAIN_ALBEDO*(g-.5)*2.0);
+    return StoneSurface(n,albedo,roughness);
+}
+fn shade_stone(p:vec3f,d:vec3f)->vec3f {
+    let surface=stone_surface(p);
+    let n=surface.n;
+    let albedo=surface.albedo;
+    let roughness=surface.roughness;
     let v=-d;
     let ao=occlusion(p,n);
     let level=select(0.0,clamp(pc.palette.y/63.0,0.0,1.0),field_written());
@@ -836,11 +853,26 @@ fn shade_ground(p:vec3f,d:vec3f)->vec3f {
     }
     return vec4f(c*.25,1);
 }
-@fragment fn plasma_style(v:Vertex)->@location(0) vec4f {
+@fragment fn plasma_style(v:Vertex)->@location(0) vec4f {return picture(v).light;}
+// While the slab breaks up, part 7's view takes it in two images: the
+// picture, how much of the slab still stands in alpha; and the stone's
+// surface (its normal, part 4's camera space, and its albedo over the
+// stone's colour; 0 off it), which part 7 lights by its lamp and beam.
+struct Breaking { @location(0) light:vec4f, @location(1) surface:vec4f }
+@fragment fn plasma_breaking(v:Vertex)->Breaking {
+    let p=picture(v);
+    return Breaking(p.light,p.surface);
+}
+struct Picture { light:vec4f, surface:vec4f }
+fn picture(v:Vertex)->Picture {
     plasma_begin();
     let pixel=vec2i(v.position.xy);
     let s=source_of_scene(scene_of_uv(v.uv));
     var c=vec3f(0);
+    // While the slab breaks up, how much of it still stands here (else 1),
+    // and its surface.
+    var standing=select(1.0,0.0,breakup_on());
+    var surface=vec4f(0);
     if !part7_shown() {
         let d=ray_of_source(s);
         let t=march(d);
@@ -855,6 +887,13 @@ fn shade_ground(p:vec3f,d:vec3f)->vec3f {
         if t>0.0 && !ground {
             c=shade_stone(d*t,d);
             reach=t;
+            if breakup_on() {
+                let l=slab_local(d*t);
+                let top=l.z<slab_size().z*.5 && l.z<l.y+3.0;
+                standing=breakup_standing(d,select(1,0,top));
+                let stone=stone_surface(d*t);
+                surface=vec4f(stone.n,stone.albedo.g/max(pc.slab_size.w,1e-6));
+            }
         } else {
             // The two sheets of light, the front one sharp and the back one
             // through it, softer; below them, the ground.
@@ -878,5 +917,5 @@ fn shade_ground(p:vec3f,d:vec3f)->vec3f {
     }
     if pc.camera.z>0.0 {c=mix(c,textureLoad(part3_view,pixel,0).rgb,pc.camera.z);}
     c*=1.0+DITHER*(hash3(vec3f(vec2f(pixel),7.0))-.5);
-    return vec4f(max(c,vec3f(0)),1);
+    return Picture(vec4f(max(c,vec3f(0)),standing),surface);
 }

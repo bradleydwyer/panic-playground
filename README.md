@@ -374,8 +374,9 @@ stone is seen by:
 - The slab stands in still water that runs back to the foot of the
   sheets, which stand in it and lean back from it like a book's open
   pages, the plasma running on down them to the water. It is part 3's
-  water, as level as part 3 left it, and it drains from 186 to 200
-  seconds, uncovering the slab. The water mirrors the plasma, long, quick swells drawing the
+  water, as level as part 3 left it; it drains from 186 to 200
+  seconds, uncovering the slab, and drains away from under it as the
+  plasma fades out. The water mirrors the plasma, long, quick swells drawing the
   reflection out into wavering streaks of its colours, and every second or
   so a drop lands beside the slab and sends out a ring of ripples. The
   water is lit only by the sheets, so it comes up and fades with them.
@@ -384,10 +385,20 @@ stone is seen by:
   plays.
 - Part 3's flare overexposes the camera, and the exposure settles over the
   original's 64 frames of fade from white, so the carving comes out of the
-  white first. The slab sinks with the original's line compare.
+  white first.
+- At the original's slide cue the slab doesn't slide away: it breaks up
+  where it rests into part 7's dust. It comes apart into fine grains from
+  its top edge down, along a ragged edge, over about 1.6 seconds, and
+  each grain floats up into the dark, drifting on part 7's air, and
+  settles onto the path of one of part 7's dust motes, a grain for each
+  of its 211,000 motes, so by 228.5 seconds the dust in part 7's air is
+  the slab. Part 7's lighthouse comes up as it starts to break, its fade
+  from black played 1.19 seconds early, and lights the stone and the
+  rising grains. Without part 7 (`--plasma`), the slab slides away as in
+  the original.
 
-The stone, its carving and finish, the sheets, the water, the lighting and
-the arrival are authored; the positions, motion and timing are the port's. Faithful HD
+The stone, its carving and finish, the sheets, the water, the lighting,
+the arrival and the break-up are authored; the positions, motion and timing are the port's. Faithful HD
 (**M**) shows the original's rasters at display resolution, the field
 smooth along each raster. The [renderer notes](rust/README.md#part-4-plasma)
 say what is read, what is interpreted and what is authored.
@@ -414,6 +425,10 @@ from the port and checked against it frame by frame.
 
 The modern look is a lighthouse in dusty air:
 
+- It begins before its first frame, as part 4's slab breaks up into its
+  dust (above): the lighthouse is lit from 224.24, the original's fade
+  from black played 1.19 seconds early, its beam already turning, and
+  every mote rises from the slab and settles onto its own path by 228.5.
 - The turning colours become one broad, soft cream lighthouse beam from
   a lamp in the middle of the frame, turning once every 1.8 seconds (half the
   original's speed), tilted toward us, its faint outer edge brushing the

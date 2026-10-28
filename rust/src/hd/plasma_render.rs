@@ -30,9 +30,10 @@ pub(super) fn faithful_source() -> String {
 }
 
 /// The modern module: the shared controls, plasma_common.wgsl,
-/// plasma_light.wgsl and the water it shares with part 3.
+/// slab_breakup.wgsl, plasma_light.wgsl and the water it shares with part
+/// 3.
 pub(super) fn light_source() -> String {
-    wgsl_parts(&[COMMON, LIGHT, WATER])
+    wgsl_parts(&[COMMON, super::slab_breakup::WGSL, LIGHT, WATER])
 }
 
 pub(super) struct PlasmaRenderer {
@@ -51,6 +52,9 @@ pub(super) struct PlasmaRenderer {
     sheet: RenderPipeline,
     downsample: RenderPipeline,
     style: RenderPipeline,
+    /// The modern view while its slab breaks up into part 7's dust
+    /// (slab_breakup.rs): the picture and the stone's surface.
+    breaking: RenderPipeline,
 }
 
 fn texture(
@@ -375,11 +379,21 @@ impl PlasmaRenderer {
             label: Some("Part 4 faithful HD"),
             source: ShaderSource::Wgsl(faithful_source().into()),
         });
-        let pipeline = |label: &str,
-                        layout: &PipelineLayout,
-                        module: &ShaderModule,
-                        fragment: &str,
-                        format: TextureFormat| {
+        let pipelines = |label: &str,
+                         layout: &PipelineLayout,
+                         module: &ShaderModule,
+                         fragment: &str,
+                         formats: &[TextureFormat]| {
+            let targets: Vec<Option<ColorTargetState>> = formats
+                .iter()
+                .map(|&format| {
+                    Some(ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: ColorWrites::ALL,
+                    })
+                })
+                .collect();
             device.create_render_pipeline(&RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
@@ -393,11 +407,7 @@ impl PlasmaRenderer {
                     module,
                     entry_point: Some(fragment),
                     compilation_options: Default::default(),
-                    targets: &[Some(ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: ColorWrites::ALL,
-                    })],
+                    targets: &targets,
                 }),
                 primitive: Default::default(),
                 depth_stencil: None,
@@ -405,6 +415,13 @@ impl PlasmaRenderer {
                 multiview_mask: None,
                 cache: None,
             })
+        };
+        let pipeline = |label: &str,
+                        layout: &PipelineLayout,
+                        module: &ShaderModule,
+                        fragment: &str,
+                        format: TextureFormat| {
+            pipelines(label, layout, module, fragment, &[format])
         };
         let faithful = pipeline(
             "Part 4 faithful HD",
@@ -434,6 +451,13 @@ impl PlasmaRenderer {
             "plasma_style",
             hdr,
         );
+        let breaking = pipelines(
+            "Part 4 modern, its slab breaking up",
+            &layout(&[&data_layout, &light_layout]),
+            &light_module,
+            "plasma_breaking",
+            &[hdr, hdr],
+        );
         Self {
             data,
             original,
@@ -447,6 +471,7 @@ impl PlasmaRenderer {
             sheet: sheet_pipeline,
             downsample,
             style,
+            breaking,
         }
     }
 
@@ -521,6 +546,48 @@ impl PlasmaRenderer {
     /// The modern view into the HDR target: the sheet's light and its
     /// levels, then the slab and the composite.
     pub fn draw_style(&self, encoder: &mut CommandEncoder, hdr: &TextureView) {
+        self.draw_sheets(encoder);
+        let mut pass = Self::pass(encoder, "Part 4 modern", hdr);
+        pass.set_bind_group(0, &self.data, &[]);
+        pass.set_bind_group(1, &self.targets.as_ref().unwrap().3, &[]);
+        pass.set_pipeline(&self.style);
+        pass.draw(0..3, 0..1);
+    }
+
+    /// The modern view while its slab breaks up, into part 7's targets
+    /// (HDR): the picture, how much of the slab still stands in alpha, and
+    /// the stone's surface.
+    pub fn draw_breaking(
+        &self,
+        encoder: &mut CommandEncoder,
+        picture: &TextureView,
+        surface: &TextureView,
+    ) {
+        self.draw_sheets(encoder);
+        let attachment = |view| {
+            Some(RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::TRANSPARENT),
+                    store: StoreOp::Store,
+                },
+            })
+        };
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("Part 4 modern, its slab breaking up"),
+            color_attachments: &[attachment(picture), attachment(surface)],
+            ..Default::default()
+        });
+        pass.set_bind_group(0, &self.data, &[]);
+        pass.set_bind_group(1, &self.targets.as_ref().unwrap().3, &[]);
+        pass.set_pipeline(&self.breaking);
+        pass.draw(0..3, 0..1);
+    }
+
+    /// The sheet's light and its levels.
+    fn draw_sheets(&self, encoder: &mut CommandEncoder) {
         {
             let mut pass = Self::pass(encoder, "Part 4 sheet of light", &self.sheet_targets[0]);
             pass.set_bind_group(0, &self.data, &[]);
@@ -538,11 +605,6 @@ impl PlasmaRenderer {
             pass.set_pipeline(&self.downsample);
             pass.draw(0..3, 0..1);
         }
-        let mut pass = Self::pass(encoder, "Part 4 modern", hdr);
-        pass.set_bind_group(0, &self.data, &[]);
-        pass.set_bind_group(1, &self.targets.as_ref().unwrap().3, &[]);
-        pass.set_pipeline(&self.style);
-        pass.draw(0..3, 0..1);
     }
 
     /// Faithful HD into the output.

@@ -66,6 +66,9 @@ RESEARCH_FILES = {
     'rust/src/hd/plasma_render.rs', 'rust/src/hd/plasma_common.wgsl',
     'rust/src/hd/plasma_faithful.wgsl', 'rust/src/hd/plasma_light.wgsl',
     'rust/src/hd/water.wgsl',
+    # Part 4's slab breaking up into part 7's dust (authored), shared by
+    # both parts' modern views.
+    'rust/src/hd/slab_breakup.rs', 'rust/src/hd/slab_breakup.wgsl',
     # Part 7: its state and tables, the letterforms derived from the user's
     # data at load (no glyph data), its GPU side, the shared shader code,
     # faithful HD, the modern lighthouse and the authored letters' outlines.

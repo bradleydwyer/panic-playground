@@ -19,3 +19,4 @@ pub mod plasma_stone;
 pub mod renderer;
 pub mod rings;
 mod rings_render;
+pub mod slab_breakup;

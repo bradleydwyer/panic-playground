@@ -25,8 +25,9 @@
 //!   rounding of the edges, the plasma's sheet of light behind the slab
 //!   (where it stands and how large it is), the ground: part 3's water,
 //!   lying level below the camera as it does through part 3
-//!   (dots_water.rs), the exposure the slab arrives with and everything in
-//!   plasma_light.wgsl. The original has no ground: below its plasma,
+//!   (dots_water.rs), the slab's break-up into part 7's dust
+//!   (slab_breakup.rs), the exposure the slab arrives with and everything
+//!   in plasma_light.wgsl. The original has no ground: below its plasma,
 //!   beside the logo, it is black.
 use half::f16;
 
@@ -424,6 +425,21 @@ impl Stone {
     pub fn set_ground(&mut self, tilt: f64, depth: f64) {
         (self.ground_tilt, self.ground_depth) = (tilt, depth);
         self.place_sheets();
+    }
+
+    /// How far below the camera the slab's lowest edge lies, as the
+    /// ground's depth is taken (along its down).
+    pub fn lowest_depth(&self) -> f64 {
+        let (back, down) = self.axes();
+        let (_, below) = self.ground_axes();
+        [0.0, self.size[1]]
+            .iter()
+            .map(|&b| {
+                (0..3)
+                    .map(|k| (self.corner[k] + b * back[k] + self.size[2] * down[k]) * below[k])
+                    .sum::<f64>()
+            })
+            .fold(f64::MIN, f64::max)
     }
 
     /// The ground's point straight below the slab's near top edge's

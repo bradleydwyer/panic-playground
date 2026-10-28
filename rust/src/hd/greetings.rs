@@ -35,6 +35,7 @@ use super::greetings_type::{
     GLYPH_BASE, GLYPH_ROW, GLYPH_STRIDE, LETTERS, LetterSource, Letterforms, letterforms,
 };
 use super::plasma::PlasmaPreview;
+use super::slab_breakup::Breakup;
 use crate::{
     data::Data,
     engine::{FRAME_RATE, SAMPLE_RATE},
@@ -226,6 +227,9 @@ pub struct GreetingsPreview {
     pub letterforms: Letterforms,
     /// The modern view's dust; see [`motes`].
     pub motes: Vec<[f32; 4]>,
+    /// Part 4's slab breaking up into that dust, each grain settling as a
+    /// mote ([`super::slab_breakup`]).
+    pub breakup: Breakup,
     /// The star colours' phase (unwrapped) on the first frame of the fade
     /// to white, which the modern view's slowed beam is anchored to.
     pub white_phase: f64,
@@ -383,6 +387,7 @@ impl GreetingsPreview {
             .iter()
             .find(|f| f.stage == Stage::White)
             .map_or(0.0, |f| f.phase);
+        let dust = motes(&planes);
         Ok(Self {
             white_phase,
             beam_period: BEAM_PERIOD,
@@ -392,7 +397,8 @@ impl GreetingsPreview {
             lamp_centred: true,
             start,
             letterforms: letterforms(LetterSource::Outlines(LETTERS))?,
-            motes: motes(&planes),
+            breakup: Breakup::new(&plasma.stone, &dust),
+            motes: dust,
             frames,
             palettes,
             shown,
@@ -741,6 +747,28 @@ impl GreetingsPreview {
         )
     }
 
+    /// Part 7's controls while part 4's slab breaks up into its dust
+    /// ([`super::slab_breakup`]), which starts `ahead` seconds before part
+    /// 7's first frame (authored): its light is there from then, the
+    /// original's fade in from black played `ahead` seconds early, and
+    /// before its first frame its colours' phase, and with it the beam,
+    /// turns on at the pace of its first second.
+    pub fn breaking_controls(&self, time: f64, ahead: f64) -> GreetingsBlock {
+        let mut block = self.controls(time);
+        block.sweep[1] = block.sweep[1].max(self.controls(time + ahead).sweep[1]);
+        let start = self.seconds(0);
+        if time < start {
+            let span = (FRAME_RATE as usize).min(self.frames.len() - 1);
+            let pace = (self.frames[span].phase - self.frames[0].phase) / span as f64;
+            let phase = self.frames[0].phase - (start - time) * FRAME_RATE as f64 * pace;
+            let (beam_phase, beam_rate) = self.beam_turn(phase);
+            block.sweep[0] = phase as f32;
+            block.beam[0] = beam_phase as f32;
+            block.beam[3] = beam_rate as f32;
+        }
+        block
+    }
+
     /// Everything part 7 puts in `u.greetings` at a clip time.
     pub fn controls(&self, time: f64) -> GreetingsBlock {
         let (j, f) = self.moment(time);
@@ -886,6 +914,7 @@ mod tests {
             },
             letterforms: letterforms(LetterSource::Outlines(LETTERS)).unwrap(),
             motes: Vec::new(),
+            breakup: Breakup::default(),
             white_phase: 13.0,
             beam_period: BEAM_PERIOD,
             beam_tilt: BEAM_TILT,
@@ -1148,6 +1177,35 @@ mod tests {
     /// to turn round), 15 rows above, when the preview puts it back (O), at
     /// every moment of the part; nothing else the controls give changes
     /// with it.
+    /// While part 4's slab breaks up, part 7's light runs `ahead` early,
+    /// never below its own, from black at the slab's first breaking; and
+    /// before its first frame its colours, and with them the beam, turn on
+    /// at its first frames' pace, meeting its own at its first frame.
+    #[test]
+    fn part7s_light_comes_up_with_the_slabs_break_up() {
+        let mut p = invented();
+        for (j, f) in p.frames.iter_mut().enumerate() {
+            f.intensity = (j as f64 * 8.0).min(64.0);
+        }
+        let start = p.seconds(0);
+        let ahead = 5.0 / FRAME_RATE as f64;
+        assert_eq!(p.breaking_controls(start - ahead, ahead).sweep[1], 0.0);
+        for k in 0..40 {
+            let t = start - ahead + k as f64 * 0.005;
+            let (early, own) = (p.breaking_controls(t, ahead), p.controls(t));
+            assert_eq!(early.sweep[1], p.controls(t + ahead).sweep[1], "{t}");
+            assert!(early.sweep[1] >= own.sweep[1], "{t}");
+        }
+        let (at, own) = (p.breaking_controls(start, ahead), p.controls(start));
+        assert_eq!(
+            (at.sweep[0], at.beam[0], at.beam[3]),
+            (own.sweep[0], own.beam[0], own.beam[3])
+        );
+        let before = p.breaking_controls(start - 1.0 / FRAME_RATE as f64, ahead);
+        assert!((at.sweep[0] - before.sweep[0] - 1.0).abs() < 1e-5);
+        assert!(before.beam[0] < at.beam[0]);
+    }
+
     #[test]
     fn the_lamp_shows_on_the_frames_middle_or_back_on_the_sweeps_centre() {
         let mut g = invented();

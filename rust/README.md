@@ -1685,19 +1685,24 @@ and motion, and on the block fitted to the logo.
 - The ground, which the original lacks, is part 3's water reaching back
   to the sheets, which stand in it, the plasma carried on down them to it:
   calm water mirroring them, with an occasional drop, or with **D**
-  polished dark stone. It lies as part 3 left it, and drains from 186 to
-  200 s, uncovering the slab. The number keys tune the water (part 3's
-  too). It shows only by their light, so only while the plasma is lit
+  polished dark stone. It lies as part 3 left it, drains from 186 to
+  200 s, uncovering the slab, and over the plasma's fade out (219.33 to
+  222.87) drains away to 40 units below the slab's lowest edge. The number
+  keys tune the water (part 3's too). It shows only by their light, so only while the plasma is lit
   ([docs/part4-plasma.md](../docs/part4-plasma.md)).
 - The arrival: on the slab frame part 3's own modern view, its box flared,
   is still drawn, and gives way to this one over 0.35 s. The stone comes in
   overexposed, white rather than its colour, and the exposure settles over
   the original's 64 frames, so the carving, the darkest, comes out of the
   white first.
-- Each order's first row swells the sheet's light a little; the slab sinks
-  along the camera's vertical so its far edge, the top of its silhouette,
-  follows the original's line compare, the floor and the dark sheets with
-  it.
+- Each order's first row swells the sheet's light a little.
+- From the slide's first frame, with part 7 loaded, the slab breaks up
+  where it rests into part 7's dust instead of sliding away, every mote
+  rising from it and settled by 228.54 s
+  ([docs/part4-plasma.md](../docs/part4-plasma.md#the-break-up-into-part-7s-dust)).
+  Without part 7 (`--plasma`) the slab sinks along the camera's vertical
+  so its far edge, the top of its silhouette, follows the original's line
+  compare, the floor and the dark sheets with it.
 
 Part 3's view during the handover is part 3's renderer at a moment past
 its last frame, which it already handles (its slab frame is held and the
@@ -1822,6 +1827,9 @@ All of it is authored, on the port's timing, positions and motion:
   rows long reaching 7, quicker; being curls, they neither gather nor thin
   the air. The air's thicker and thinner regions (a smooth, tiling noise)
   are carried by the same flow.
+- The part begins before its first frame, while part 4's slab breaks up
+  into its dust (part 4 above), its light coming up 1.19 s early; from
+  228.54 s the frames are as before.
 - The dust is motes in the air, seeded from the original's stars: each
   star's screen position, six motes at depths along its ray from in front
   of the strips to behind them, filling the air evenly, so at rest they
