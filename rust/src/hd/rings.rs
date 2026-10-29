@@ -76,11 +76,13 @@ pub const PANIC_WINDOW: usize = NEW_SET_FIRST_WINDOW + 2 * PATTERN_WINDOWS;
 /// The word's length in seconds, over which the change runs: instrument
 /// 44's 5,137 samples, played at E-4 from its 12,000 Hz, take about 0.34 s.
 pub const PANIC_FADE: f64 = 0.34;
-/// The window in which the tune says "panic" again: order 0B plays pattern
-/// 51 again (read from P.P), so instrument 44 comes back on its row 0, as
-/// window 160 begins (61.87 s). From then on the pool's lamps cycle through
-/// the colours (authored; rings_pool.wgsl).
-pub const PANIC_AGAIN_WINDOW: usize = PANIC_WINDOW + PATTERN_WINDOWS;
+/// The window in which the pool takes its colours: the downbeat of the bar
+/// after the tune's second "panic" (order 0B, pattern 51 again, at window
+/// 160, 61.87 s), order 0C's row 0, where pattern 52 strikes on nearly
+/// every channel (read from P.P), as window 192 begins (65.56 s). From then
+/// on the pool's lamps cycle through the colours (authored, at the owner's
+/// request; rings_pool.wgsl).
+pub const COLOURS_WINDOW: usize = PANIC_WINDOW + 2 * PATTERN_WINDOWS;
 #[path = "rings_authored.rs"]
 mod authored;
 pub use authored::{
@@ -2085,13 +2087,13 @@ pub static POOL: StyleInfo = StyleInfo {
     controls: pool_controls,
 };
 
-/// The pool style's `u.rings_style` values: the seconds since the tune
-/// said "panic" again (x of the first; -1 before, and throughout without
-/// that window).
+/// The pool style's `u.rings_style` values: the seconds since the colours
+/// came in ([`COLOURS_WINDOW`]; x of the first; -1 before, and throughout
+/// without that window).
 fn pool_controls(preview: &RingsPreview, _: &RingsControls, time: f64) -> [[f32; 4]; 4] {
     let mut c = [[0.0; 4]; 4];
     c[0][0] = -1.0;
-    if let Some(window) = preview.windows.get(PANIC_AGAIN_WINDOW) {
+    if let Some(window) = preview.windows.get(COLOURS_WINDOW) {
         let said = (preview.start + window.start) as f64 / FRAME_RATE as f64;
         if time >= said {
             c[0][0] = (time - said) as f32;
@@ -2444,9 +2446,9 @@ mod tests {
     #[test]
     fn the_pool_rises_as_the_tune_says_panic() {
         // Invented windows, 8 frames each from part-6 frame 100: the word
-        // comes as PANIC_WINDOW begins, at frame 100 + 8 * 128, and again
-        // as PANIC_AGAIN_WINDOW does.
-        let windows: Vec<SymbolWindow> = (0..PANIC_AGAIN_WINDOW + 4)
+        // comes as PANIC_WINDOW begins, at frame 100 + 8 * 128, and the
+        // colours as COLOURS_WINDOW does.
+        let windows: Vec<SymbolWindow> = (0..COLOURS_WINDOW + 4)
             .map(|i| SymbolWindow {
                 mask: (i % 16) as u8,
                 start: 100 + 8 * i,
@@ -2463,8 +2465,8 @@ mod tests {
         assert!(at(said + 0.25 * PANIC_FADE) < half);
         assert_eq!(at(said + PANIC_FADE), 1.0);
         assert_eq!(at(said + 1.0), 1.0);
-        // The pool's lamps start cycling when it comes again.
-        let again = (100 + 8 * PANIC_AGAIN_WINDOW) as f64 / FRAME_RATE as f64;
+        // The pool's lamps start cycling on the downbeat a bar later.
+        let again = (100 + 8 * COLOURS_WINDOW) as f64 / FRAME_RATE as f64;
         let since = |t: f64| preview.controls(t).rings_style[0][0];
         assert_eq!(since(again - 0.01), -1.0);
         assert!((since(again + 0.5) - 0.5).abs() < 1e-5);

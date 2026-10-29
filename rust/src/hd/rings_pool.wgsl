@@ -28,11 +28,12 @@
 //   shades), the softbox and room, the neon's height and everything else
 //   that is seen.
 //
-// When the tune says "panic" again (rings::PANIC_AGAIN_WINDOW, 61.87 s),
-// the lamps and the room take a field of colours across the screen, as a
-// colour picker lays them out (authored): the hues across, paler toward
-// the top and deeper toward the bottom, scrolling round as RGB lights
-// cycle, so the chrome's light runs through the spectrum across the pool.
+// On the downbeat of the bar after the tune's second "panic"
+// (rings::COLOURS_WINDOW, 65.56 s), the lamps and the room take a field of
+// colours across the screen, as a colour picker lays them out (authored):
+// the hues across, paler toward the top and deeper toward the bottom,
+// scrolling round as RGB lights cycle, so the chrome's light runs through
+// the spectrum across the pool.
 //
 // The timing follows the original exactly: black before the first symbol,
 // then the neon on black, with no pool, until the rings fade in. They come
@@ -102,7 +103,7 @@ const POOL_SHADOW=1.0;
 // The lamps' colours and power: the scroller's cool and warm extremes.
 const POOL_COOL=vec3f(.12,.52,1.0)*2.5;
 const POOL_WARM=vec3f(1.0,.27,.055)*2.2;
-// From the tune's second "panic", the colour field scrolls round once every
+// From that downbeat, the colour field scrolls round once every
 // POOL_CYCLE seconds: 32 of its rows (speed 3 at tempo 130, read from P.P,
 // so 0.0577 s a row). The lamps take it at POOL_RGB's brightness, twice
 // theirs, and the room's walls POOL_RGB_ROOM times as bright as before.
@@ -113,9 +114,9 @@ const POOL_RGB_ROOM=2.5;
 fn hue_rgb(h:f32)->vec3f {
     return clamp(abs(fract(h+vec3f(0,2.0/3.0,1.0/3.0))*6.0-3.0)-1.0,vec3f(0),vec3f(1));
 }
-// How far the colour field has come in: 0 until the tune says "panic"
-// again (u.rings_style[0].x, seconds since it, -1 before), 1 by the word's
-// end.
+// How far the colour field has come in: 0 until the downbeat
+// (u.rings_style[0].x, seconds since it, -1 before), 1 0.34 s after, as
+// long as the word took.
 fn pool_rgb()->f32 {return smoothstep(0.0,.34,u.rings_style[0].x);}
 // The colour field at the pixel being drawn (pool_surface sets it): the
 // hue across the screen, scrolling, white toward the top and dimmer
