@@ -8,6 +8,7 @@
 // and .w (the bump shape), u.next_palette (the 8x8 tile image), u.waves and
 // u.screen.z. The waves also need find_waves() (scroller.wgsl) to have set
 // the wave_* variables for the pixel; with u.waves.x at 0 they are off.
+// The folds also read u.backdrop_motion.w and u.glyphs.w.
 // ---- Backdrop -------------------------------------------------------------
 // Read from the port (scenes/scroller.rs; the ignored clip test checks it on
 // every scroll frame): pixel (sx,sy) of the 320x200 frame shows cell
@@ -43,46 +44,83 @@ fn grid_point(p:vec3f)->vec3f {
 }
 fn grid_direction(d:vec3f)->vec3f {return vec3f(d.x*15.0,-d.y*12.5,d.z*15.0)/wall_scale();}
 fn world_normal(n:vec3f)->vec3f {return normalize(vec3f(n.x*15.0,-n.y*12.5,n.z*15.0));}
-// ---- Wall waves (optional) ----
+// ---- Wall folds (optional) ----
 // Authored, with nothing like it in the original, whose wall is flat: the
-// bumps ride a slow swell, lit from the side so its crests cast shadows. The
-// waves are a pure function of the clip time, so seeking and captures agree.
-// They are anchored to the screen, and the wall's sway carries the bumps
-// through them. Heights and positions are in tile widths from the screen
-// centre, y up. u.waves.x: the depth, eased in with the reveal, 0 when off;
-// .y: the exposure in seconds; .z: the side light's strength, eased likewise;
-// .w: the swing, 1 to -1 and back (clip::WAVE_TURN): the height is the depth
-// times the swing, so the crests sink into troughs and rise again. The
-// slow swing's own rate of change is left out of the waves' rate.
-// At depth 1 (far too deep) a swell 2.6 tile widths high, about 15 tiles from
-// crest to crest, rolls to the right every 5.5 seconds; a slow one, 32 tiles
-// long, varies it along its crests. The default depth is 0.5.
-const SWELL=vec4f(.40,.12,1.15,2.6); // Wave number x and y, radians per second, height.
-const DRIFT=vec4f(-.10,.17,.30,.7);
-// The waves' greatest curvature at depth 1: each height times its wave number squared.
-const BEND=.48;
+// wall is cloth on its moving support (clip::ScrollerPreview::folds_at).
+// While the sway moves, the cloth is drawn taut; as it slows to a turn it
+// relaxes into folds across the way it was moving, which ride with the
+// wall and are drawn out again as it speeds away, lit from the side so
+// their crests cast shadows. They are a pure function of the clip time, so
+// seeking and captures agree. Heights and positions are in tile widths, y
+// up. u.waves.x: the depth, eased in with the reveal, 0 when off; .y: the
+// exposure in seconds; .z: the side light's strength, eased likewise; .w:
+// how much the folds stand, 0 to 1. u.backdrop_motion.w: their axis, the
+// way the cloth was drawn (radians, right and up), the crests lying across
+// it; u.glyphs.w: their phase, where along the axis they gathered (tile
+// widths in the wall). Three folds of different spacing, about 17, 12 and
+// 26 tiles, with soft crests and sharp creases, their crests wandering and
+// their height swelling along their length. At depth 1 (far too deep) the
+// largest stands 2.4 tile widths; the default depth is 0.5.
+const FOLD_K=vec3f(.37,.52,.24);    // Radians a tile width across the folds.
+const FOLD_H=vec3f(2.4,1.0,1.3);    // Heights at depth 1.
+const FOLD_CREASE=.25;              // Sharpens the creases, softens the crests.
+// Along the crests, one wander and one swell shared by the three, each
+// fold taking them at its own offset (radians): how far each fold's crest
+// wanders (radians of phase) and its height swells.
+const FOLD_WANDER=.045;             // Radians a tile width along the crests.
+const FOLD_SWELL=.055;
+const FOLD_SWAY=vec3f(1.3,1.0,1.5);
+const FOLD_OFFSET=vec3f(.5,2.2,3.9);
+// The folds' greatest curvature at depth 1, with a margin: each height times
+// its wave number squared, times the creases' 1 + 4 FOLD_CREASE.
+const BEND=1.4;
 fn waving()->bool {return u.waves.x>0.0;}
+// Whether the folds stand at all (a thousandth of a tile width): while they
+// lie flat, the wall is traced flat, as the same with no folds.
+fn folded()->bool {return u.waves.x*u.waves.w>1e-3;}
 // Height, slope and rate of rise (per second).
 struct Wave { h:f32, slope:vec2f, rate:f32 }
-// One long-crested travelling wave.
-fn swell(m:vec2f,t:f32,w:vec4f)->Wave {
-    let phase=dot(w.xy,m)-w.z*t;
-    let a=w.w*u.waves.x*u.waves.w;
-    let c=a*cos(phase);
-    return Wave(a*sin(phase),w.xy*c,-w.z*c);
+// Where screen point m (tile widths from the screen centre) lies in the
+// cloth `lag` seconds before the frame, and how fast the cloth moves.
+fn fold_point(m:vec2f,lag:f32)->vec2f {
+    let o=u.backdrop.xy-u.backdrop_motion.xy*(lag/max(u.waves.y,1e-6));
+    return m+vec2f(o.x,-1.2*o.y)/8.0;
 }
-// The waves at m, `lag` seconds before the frame.
+fn fold_velocity()->vec2f {
+    let v=u.backdrop_motion.xy/max(u.waves.y,1e-6);
+    return vec2f(v.x,-1.2*v.y)/8.0;
+}
+// The folds at m, `lag` seconds before the frame.
 fn wave_field(m:vec2f,lag:f32)->Wave {
-    let t=u.screen.z-lag;
-    let a=swell(m,t,SWELL);let b=swell(m,t,DRIFT);
-    return Wave(a.h+b.h,a.slope+b.slope,a.rate+b.rate);
+    if !folded() {return Wave(0.0,vec2f(0),0.0);}
+    let f=fold_point(m,lag);
+    let d=vec2f(cos(u.backdrop_motion.w),sin(u.backdrop_motion.w));
+    let e=vec2f(-d.y,d.x);
+    let along=dot(f,d)-u.glyphs.w;
+    let across=dot(f,e);
+    let wa=FOLD_WANDER*across;let sw=sin(wa);let cw=cos(wa);
+    let sa=FOLD_SWELL*across;let ss=sin(sa);let cs=cos(sa);
+    var h=0.0;
+    var g=vec2f(0); // Along and across.
+    for(var i=0;i<3;i++) {
+        // sin and cos of the shared angles at this fold's offset.
+        let co=cos(FOLD_OFFSET[i]);let so=sin(FOLD_OFFSET[i]);
+        let ph=FOLD_K[i]*along+FOLD_SWAY[i]*(sw*co+cw*so)+2.1*f32(i);
+        let dph=vec2f(FOLD_K[i],FOLD_SWAY[i]*FOLD_WANDER*(cw*co-sw*so));
+        let swell=.7+.3*(ss*so+cs*co);
+        let dswell=.3*FOLD_SWELL*(cs*so-ss*co);
+        let c=cos(ph);let s=sin(ph);
+        let p=-(c+FOLD_CREASE*(2.0*c*c-1.0));
+        let dp=s*(1.0+4.0*FOLD_CREASE*c);
+        h+=FOLD_H[i]*swell*p;
+        g+=FOLD_H[i]*(swell*dp*dph+vec2f(0.0,dswell*p));
+    }
+    let amp=u.waves.x*u.waves.w;
+    let slope=(d*g.x+e*g.y)*amp;
+    return Wave(h*amp,slope,dot(slope,fold_velocity()));
 }
 // Just the height, for marching towards the side light.
-fn wave_height(m:vec2f,lag:f32)->f32 {
-    let t=u.screen.z-lag;
-    let phase=vec2f(dot(SWELL.xy,m)-SWELL.z*t,dot(DRIFT.xy,m)-DRIFT.z*t);
-    return (SWELL.w*sin(phase.x)+DRIFT.w*sin(phase.y))*u.waves.x*u.waves.w;
-}
+fn wave_height(m:vec2f,lag:f32)->f32 {return wave_field(m,lag).h;}
 // The waves at this pixel, found once at the middle of its exposure
 // (find_waves): the field at wave_m, its world normal there and how much of
 // the side light its crests leave it.
@@ -97,11 +135,23 @@ fn wave_point(g:vec2f)->vec2f {
     let o=(vec2f(164,106)+u.backdrop.xy+wall_shift)/8.0;
     return vec2f(g.x-o.x,1.2*(o.y-g.y));
 }
-// The waves at grid point g, at this sample's moment: height and slope along
-// grid x and y.
+// The folds' curvature where the pixel meets them (xx, xy, yy), and that
+// point in the cloth (fold_point), set by find_waves.
+var<private> wave_bend:vec3f;
+var<private> wave_at:vec2f;
+// The folds at grid point g, a tile's centre: height and slope along grid x
+// and y. A tile rides with the folds, so this holds over the exposure. Near
+// the pixel (within 1.6 tiles), from the folds' height, slope and curvature
+// where the pixel meets them, to second order, rather than the field
+// itself: within about a twentieth of a tile width at the folds' depth 0.5
+// for the tile under the pixel.
 fn grid_wave(g:vec2f)->vec3f {
-    let w=wave_field(wave_point(g),wave_lag);
-    return vec3f(w.h,w.slope.x,-1.2*w.slope.y);
+    if !folded() {return vec3f(0);}
+    let d=vec2f(g.x-20.5,1.2*(13.25-g.y))-wave_at;
+    let b=wave_bend;
+    let slope=wave_here.slope+vec2f(b.x*d.x+b.y*d.y,b.y*d.x+b.z*d.y);
+    let h=wave_here.h+dot(wave_here.slope,d)+.5*(b.x*d.x*d.x+2.0*b.y*d.x*d.y+b.z*d.y*d.y);
+    return vec3f(h,slope.x,-1.2*slope.y);
 }
 // The pixel's tangent plane to the waves, carried to this sample's time to
 // first order: its height at grid point g. It bounds the bumps near the
@@ -113,7 +163,7 @@ fn wave_plane(g:vec2f)->f32 {
 // How far the centre of a tile near the pixel (within 1.6 tiles) can lie
 // above or below the pixel's plane, and the most its slope can differ.
 fn wave_reach()->vec2f {
-    let bend=BEND*u.waves.x;
+    let bend=BEND*u.waves.x*u.waves.w;
     return vec2f(.5*bend*1.6*1.6,bend*1.6);
 }
 // The bumps' height above the plane near the pixel, with a margin: a tilted
@@ -248,7 +298,7 @@ fn wall_trace(origin:vec3f,ray:vec3f,from_wall:bool)->WallHit {
     // from it, its height under the ray's origin, and how far a tilted bump
     // can reach past its own tile.
     var lift=vec2f(0);var reach=0.0;var base=0.0;var lean=0.0;
-    if waving() {
+    if folded() {
         lift=vec2f(wave_here.slope.x,-1.2*wave_here.slope.y);
         top=wave_top(shape);
         reach=wave_reach().x;
@@ -277,7 +327,7 @@ fn wall_trace(origin:vec3f,ray:vec3f,from_wall:bool)->WallHit {
             if from_wall && x==home.x && y==home.y {continue;}
             let start=vec3f(a.xy-vec2f(x,y)-.5,a.z)*stretch;
             var hit=vec4f(-1);
-            if waving() {
+            if folded() {
                 let on=rest(vec2f(x,y),start,stretch);
                 let dir=tilt_to(on.n,ld);
                 hit=bump_hit(on.start,dir,shape);
@@ -299,7 +349,7 @@ fn wall_trace(origin:vec3f,ray:vec3f,from_wall:bool)->WallHit {
         return WallHit(true,true,t,world_normal(normal),g+dg*t);
     }
     if from_wall {return WallHit(false,false,0.0,vec3f(0,0,1),g);}
-    if waving() {
+    if folded() {
         let t=(base-g.z)/fall;
         return WallHit(true,false,t,wave_up,g+dg*t);
     }

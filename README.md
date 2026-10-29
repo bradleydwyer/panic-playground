@@ -159,16 +159,16 @@ text begins. The chrome bumps, their lighting and their reflections of
 the letters are authored. They are drawn as a dim, slightly out-of-focus
 background, blurred along the wall's motion, so the fast sway doesn't strobe.
 
-The wall's waves are a further experiment, on by default; **W** or
-`--wall-waves 0` turns them off. The original's wall is flat, so its waves
-are authored, not recovered. A slow swell rolls across the bumps, lit by a
-grazing light from the left, so the crests cast shadows across the troughs
-and the bumps on the lit slopes catch it. Every 7.36 seconds its height
-swings from the set depth through flat to the opposite, the crests sinking
-into troughs, and back. The light is the
-wall's own: the letters are lit as before. The waves ease in as the laser cut
-reveals the wall and settle before part 2 fades. They depend only on the
-time, so seeking and captures show the same waves.
+The wall's folds are a further experiment, on by default; **W** or
+`--wall-waves 0` turns them off. The original's wall is flat, so its folds
+are authored, not recovered. The wall behaves like cloth on its moving
+support: while the sway moves, the cloth is drawn taut and flat; where it
+nearly stops at a turn, the cloth relaxes into soft folds across the way it
+was moving, which ride with the bumps and are drawn out again over a second
+as it moves off. A grazing light of the wall's own, from the upper left,
+casts the creases' shadows; the letters are lit as before. The folds ease
+in as the laser cut reveals the wall and settle before part 2 fades. They
+depend only on the time, so seeking and captures show the same folds.
 
 ### Part 6: Rings
 

@@ -260,53 +260,54 @@ normals, never its tiles, so the letters don't look textured. `--wall-strength` 
 default 0.6; **-** and **=** in steps of 0.1) sets how present the wall is.
 All of this is authored, not recovered from the original.
 
-The `chrome` and `wall` backdrops have waves. They are on by default; **W**
+The `chrome` and `wall` backdrops have folds. They are on by default; **W**
 turns them on and off while playing, and `--wall-waves 0` starts without
 them. The original's wall is flat, an image moved by palette changes, so the
-waves and their light are authored, not recovered. A swell about 15 tiles
-from crest to crest rolls across the wall every 5.5 seconds, varied along its
-crests by a slower, longer one. Their height swings too, from the set depth
-through flat to its opposite, the crests sinking into troughs, and back again
-every 7.36 seconds: about two of the tune's patterns at their pace in part 6,
-but not timed to them. The waves are anchored to the screen, and the wall's
-sway carries the bumps through them. They ease in from the laser cut's first
-opening to the start of the text, and settle over the 1.5 seconds before part
-2's fade. They depend only on the time, so seeking, pausing and captures
-agree.
+folds and their light are authored, not recovered. The wall is cloth on its
+moving support (`ScrollerPreview::folds_at`): the sway (0.4 to 3.6 source
+pixels a frame) draws it taut and flat above 1.4; where it slows below 0.8 at
+a turn, the cloth gathers over a third of a second into folds across the way
+it was moving, which ride with the bumps and are drawn out over a second as
+it speeds away. Their lie and place hold while they stand. There are three,
+about 17, 12 and 26 tiles apart, with soft crests and sharp creases, wandering
+and swelling along their crests. They ease in from the laser cut's first
+opening to the start of the text, and settle over the 1.5 seconds before
+part 2's fade. They depend only on the time, so seeking and captures agree.
 
-With the waves on, a grazing light of the wall's own lights it from the left,
-the scene's cool side, a little above the horizontal and 18 degrees over the
-wall. The crests throw shadows across the troughs, the bumps on the slopes
-facing the light catch it, and each bump shades its neighbour. As the light
+With the folds on, a grazing light of the wall's own lights it from the
+upper left, the scene's cool side, 35 degrees above the horizontal and 18
+over the wall, so folds lying either way throw shadows across their creases;
+each bump tilts with them and shades its neighbour. As the light
 strengthens it takes over from the studio light, so the wall's overall level
 stays about the same and the shadows read. It lights only the wall: the
-letters' lamps and the studio are unchanged, and without the waves nothing
+letters' lamps and the studio are unchanged, and without the folds nothing
 changes at all.
 
 Two controls adjust them while playing, each in steps of 0.1, and both
 appear in the window title:
 
-- Depth, how far the swell's height swings each way: `--wall-waves 0.5` sets
-  it, from 0.1 (barely there) to 1 (far too deep), 0.5 by default; **,** and
-  **.** step it. At 0.5, at the ends of its swing, the swell rises and falls
-  1.3 tile widths, about six times the bumps' own height.
+- Depth, how deep the folds stand: `--wall-waves 0.5` sets it, from 0.1
+  (barely there) to 1 (far too deep), 0.5 by default; **,** and **.** step
+  it. At 0.5 the largest fold stands 1.2 tile widths, about five times the
+  bumps' own height.
 - Light, the side light's strength and so its shadows': `--wave-light 0.5`
   sets it, from 0 (the studio alone) to 1 (stark), 0.5 by default; **;**
   and **'** step it.
 
-Each bump rests rigidly on the waves at its own tile's centre, tilted with
-their slope there, and stays on its tile; every pixel and sample sees the same
-bump at that moment, so the intersection stays analytic. Each sample finds
-the waves at its own time in the 1/100 s exposure. The backing between the
-bumps is the waves' tangent plane at the pixel, and that plane, widened by how
-far the waves curve away from it, bounds the few tiles a ray must test. The
-crests' shadows come from a short march along the light across the waves'
-own surface, once per pixel and softened over the light's breadth. The bumps'
-shadows come from a ray towards the light through the bumps within a tile or
-so, on every other sample, each aimed at a different part of the light, so
-their edges are soft too. The side light follows the waves' slope more than
-each bump's, so the bumps don't sparkle. With the waves on, the wall costs
-about 1.5 to 2.5 ms more per frame at 2560 × 1440 on an Apple M5 Max.
+Each bump rests rigidly on the folds at its own tile's centre, tilted with
+their slope there, and rides with them over the exposure, so the
+intersection stays analytic. A pixel finds the folds once, with their slope
+and curvature, and gives the tiles near it their tilt to second order. The
+backing between the bumps is the folds' tangent plane at the pixel, and that
+plane, widened by how far the folds curve away from it, bounds the few tiles
+a ray must test. The crests' shadows come from a short march along the light
+across the folds, once per pixel and softened over the light's breadth. The
+bumps' shadows come from a ray towards the light through the bumps within a
+tile or so, on two of the eight samples, aimed at different parts of the
+light. The side light follows the folds' slope more than each bump's, so the
+bumps don't sparkle. Where the folds lie flat they are skipped. At 2560 ×
+1440 on an Apple M5 Max the wall costs about 0.5 ms more a frame with them
+flat and 2 to 3 ms as they stand.
 
 `--scroller-lighting musical` uses relative loudness and bass/treble
 onsets from the original PCM. Bass pulses the blue/orange lights, their metal

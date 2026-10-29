@@ -261,10 +261,10 @@ pub struct ScrollerPreview {
     pub wall_strength: f32,
     /// Authored waves across the bump wall, lit by a grazing side light; on
     /// by default. The original's wall is flat; see
-    /// [`ScrollerPreview::waves_at`] and [`ScrollerPreview::wave_swing`].
+    /// [`ScrollerPreview::waves_at`] and [`ScrollerPreview::folds_at`].
     pub waves: bool,
-    /// The swell's depth, 0.1 (barely visible) to 1 (far too deep): how far
-    /// its height swings each way.
+    /// The folds' depth, 0.1 (barely visible) to 1 (far too deep): how high
+    /// they stand where the sway stops.
     pub wave_depth: f32,
     /// The side light's strength, and so its shadows', 0 (none) to 1.
     pub wave_light: f32,
@@ -782,11 +782,26 @@ pub fn oscillator_lead_in(start: [[i16; 2]; 2], frames: usize) -> Vec<[[i16; 2];
 
 /// Seconds over which the waves settle before part 2's fade.
 const WAVE_SETTLE: f64 = 1.5;
-/// Authored: seconds for the swell's height to swing from its set depth to
-/// the opposite (crests turning into troughs) and back. About two of the
-/// tune's patterns at their pace in part 6 (06:00 at 43.41 s, 08:00 at
-/// 50.77 s), but not timed to them.
-pub const WAVE_TURN: f64 = 7.36;
+/// Authored: the wall as cloth on its moving support. Moving, the support
+/// draws the cloth taut along its motion; as it slows to a turn the tension
+/// goes and the cloth relaxes into folds across the way it was moving, which
+/// are drawn out again as it speeds away. The folds stand fully at and below
+/// the first sway speed (source pixels a frame) and lie flat at and above
+/// the second; the sway (the palette's oscillator) runs from about 0.4 at
+/// its turns to 3.6 between them, and falls below 0.8 at only a few of its
+/// turns.
+const FOLD_SPEED: [f64; 2] = [0.8, 1.4];
+/// Authored: seconds the folds take to gather as the sway slows, and to be
+/// drawn out once it moves off again (time constants).
+const FOLD_GATHER: f64 = 0.35;
+const FOLD_RELAX: f64 = 0.9;
+/// Authored: seconds the folds' axis takes to follow the sway's direction
+/// while it moves; it holds as the sway slows, so the folds lie across the
+/// way the cloth was last drawn.
+const FOLD_TURN: f64 = 0.25;
+/// Frames either side over which the sway's speed and direction are
+/// averaged.
+const FOLD_FRAMES: usize = 8;
 
 /// Authored ease for the wall waves, 0 to 1: in from `reveal`, when the
 /// laser cut starts to open, until `start`, when the text begins; then out
@@ -818,13 +833,70 @@ impl ScrollerPreview {
         [self.wave_depth * ease, self.wave_light * ease]
     }
 
-    /// The swell's swing at a clip time, as `u.waves.w` takes it: 1 at the
-    /// set depth, through 0 (flat) to -1 (crests and troughs swapped) and
-    /// back, every [`WAVE_TURN`] seconds from the laser cut's first tick,
-    /// `reveal`. A pure function of the time, like the waves themselves.
-    pub fn wave_swing(&self, time: f64, reveal: usize) -> f32 {
-        let since = time - reveal as f64 / FRAME_RATE as f64;
-        (since * std::f64::consts::TAU / WAVE_TURN).cos() as f32
+    /// The wall's folds at a clip time: how much they stand, 0 to 1 times
+    /// the set depth; their axis's angle in radians, across the screen to
+    /// the right and up: the way the sway was moving, the folds' crests
+    /// lying across it; and their phase, where along the axis the cloth
+    /// gathered them (tile widths, in the cloth: the screen centre's place
+    /// in it as they gathered). Followed frame by frame from the first
+    /// ([`FOLD_SPEED`], [`FOLD_GATHER`], [`FOLD_RELAX`], [`FOLD_TURN`]),
+    /// linear between frames: a pure function of the time, like the waves
+    /// themselves. The axis and the place hold while the folds stand, so
+    /// folds that show keep their lie and ride with the cloth.
+    pub fn folds_at(&self, time: f64) -> [f32; 3] {
+        let n = self.oscillator.len();
+        if n < 2 {
+            return [0.0; 3];
+        }
+        // The sway's mean motion a frame round frame j, in source pixels,
+        // right and up, a tile 1.2 times taller than wide as the waves
+        // measure it.
+        let motion = |j: usize| {
+            let lo = j.saturating_sub(FOLD_FRAMES).min(n - 2);
+            let hi = (j + FOLD_FRAMES + 1).min(n - 1);
+            let [a, b] = [self.oscillator[lo], self.oscillator[hi]];
+            let frames = (hi - lo).max(1) as f64;
+            [(b[0] - a[0]) as f64 / frames, -1.2 * (b[1] - a[1]) as f64 / frames]
+        };
+        let rate = FRAME_RATE as f64;
+        let ease = |seconds: f64| 1.0 - (-1.0 / (seconds * rate)).exp();
+        let frame = (time * rate).max(0.0);
+        let j = frame.floor() as usize;
+        // The screen centre's place in the cloth, tile widths right and up.
+        let centre = |j: usize| {
+            let p = self.oscillator[j.min(n - 1)];
+            [p[0] as f64 / 8.0, -1.2 * p[1] as f64 / 8.0]
+        };
+        let [mut stand, mut axis] = [0.0_f64, 0.0];
+        let mut pivot = centre(0);
+        let phase = |axis: f64, pivot: [f64; 2]| pivot[0] * axis.cos() + pivot[1] * axis.sin();
+        let mut before = [stand, axis, phase(axis, pivot)];
+        for k in 0..=j + 1 {
+            before = [stand, axis, phase(axis, pivot)];
+            let m = motion(k);
+            let speed = m[0].hypot(m[1] / 1.2);
+            let x = ((speed - FOLD_SPEED[0]) / (FOLD_SPEED[1] - FOLD_SPEED[0])).clamp(0.0, 1.0);
+            let goal = 1.0 - x * x * (3.0 - 2.0 * x);
+            stand += (goal - stand) * ease(if goal > stand { FOLD_GATHER } else { FOLD_RELAX });
+            // The axis follows the motion's line (either way along it)
+            // while it moves and the folds lie flat.
+            if speed > 1e-6 {
+                let mut d = (m[1].atan2(m[0]) - axis).rem_euclid(std::f64::consts::PI);
+                if d > std::f64::consts::FRAC_PI_2 {
+                    d -= std::f64::consts::PI;
+                }
+                let drawn = (speed / FOLD_SPEED[1]).min(1.0);
+                let free = (1.0 - stand).powi(4);
+                axis += d * ease(FOLD_TURN) * drawn * free;
+                let c = centre(k);
+                for (p, c) in pivot.iter_mut().zip(c) {
+                    *p += (c - *p) * ease(FOLD_TURN) * free;
+                }
+            }
+        }
+        let now = [stand, axis, phase(axis, pivot)];
+        let f = frame - j as f64;
+        [0, 1, 2].map(|i| (before[i] + (now[i] - before[i]) * f) as f32)
     }
 }
 
@@ -1606,10 +1678,20 @@ mod tests {
     }
 
     #[test]
-    fn wall_waves_swing_from_their_depth_to_the_opposite_and_back() {
+    fn wall_folds_gather_across_the_sway_where_it_turns() {
+        // An invented sway along x only: it sweeps at a steady 3 source
+        // pixels a frame, slows to a stop at frame 300 and sweeps back.
+        let speed = |j: f64| 3.0 * ((300.0 - j) / 60.0).clamp(-1.0, 1.0);
+        let mut x = 0.0_f32;
+        let oscillator: Vec<[f32; 2]> = (0..800)
+            .map(|j| {
+                x += speed(j as f64) as f32;
+                [x, 0.0]
+            })
+            .collect();
         let scroll = ScrollerPreview {
-            start_tick: 280,
-            end_tick: 840,
+            start_tick: 0,
+            end_tick: 800,
             lighting: ScrollerLighting::Studio,
             scroll: Vec::new(),
             glyphs: ScrollerGlyphs::new(&synthetic_font(), &vec![0; 768]).unwrap(),
@@ -1620,22 +1702,27 @@ mod tests {
             wave_depth: 0.7,
             wave_light: 0.3,
             backdrop: Vec::new(),
-            oscillator: Vec::new(),
+            oscillator,
         };
-        // From the reveal at tick 70 (1 s): full, flat, turned over, flat,
-        // full again.
-        let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
-        assert!(close(scroll.wave_swing(1.0, 70), 1.0));
-        assert!(close(scroll.wave_swing(1.0 + WAVE_TURN / 4.0, 70), 0.0));
-        assert!(close(scroll.wave_swing(1.0 + WAVE_TURN / 2.0, 70), -1.0));
-        assert!(close(scroll.wave_swing(1.0 + WAVE_TURN * 0.75, 70), 0.0));
-        assert!(close(scroll.wave_swing(1.0 + WAVE_TURN, 70), 1.0));
-        // Smooth: no step between nearby moments.
-        for step in 0..2000 {
-            let time = step as f64 * 0.01;
-            let d = scroll.wave_swing(time + 0.01, 70) - scroll.wave_swing(time, 70);
-            assert!(d.abs() < 0.01);
+        let at = |frame: f64| scroll.folds_at(frame / FRAME_RATE as f64);
+        // Flat while it sweeps; standing as it stops, their axis along the
+        // sway, so the crests lie across it; flat again once it sweeps back.
+        assert_eq!(at(150.0)[0], 0.0);
+        let most = (280..360).map(|j| at(j as f64)[0]).fold(0.0, f32::max);
+        assert!(most > 0.8, "{most}");
+        assert!(at(300.0)[1].sin().abs() < 0.05, "{:?}", at(300.0));
+        assert!(at(750.0)[0] < 1e-3, "{:?}", at(750.0));
+        // Smooth from frame to frame.
+        let mut last = at(150.0);
+        for step in 0..4000 {
+            let now = at(150.0 + step as f64 * 0.1);
+            assert!((now[0] - last[0]).abs() < 0.02 && (now[1] - last[1]).abs() < 0.05, "{step}");
+            last = now;
         }
+        // While they stand, their place in the cloth holds: the screen
+        // centre's place (x / 8 tile widths) when they gathered.
+        let gathered = at(330.0)[2];
+        assert!((at(340.0)[2] - gathered).abs() < 0.2, "{:?}", at(340.0));
     }
 
     #[test]

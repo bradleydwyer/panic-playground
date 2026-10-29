@@ -43,19 +43,18 @@ struct Uniforms {
     hud: [f32; 4],
     /// Scroller text positions read from the original's scroll counters and
     /// interpolated between its frames: upper and lower row text pixel at
-    /// screen x = 0, overlay step, and an unused slot (formerly the archived
-    /// ring layout).
+    /// screen x = 0, overlay step, and the wall folds' phase.
     glyphs: [f32; 4],
     /// Scroller background: oscillator `xx / 128` and `yy / 128` interpolated
     /// between ticks, backdrop style (0 chamber, 1 wall, 2 chrome) and the
     /// authored bump shape.
     backdrop: [f32; 4],
     /// Bump wall: oscillator movement over its exposure (source pixels, from
-    /// shutter open to now) and the authored wall strength.
+    /// shutter open to now), the authored wall strength, the folds' axis.
     backdrop_motion: [f32; 4],
     /// Authored wall waves (`ScrollerPreview::waves_at`): depth (0 when off),
-    /// the exposure in seconds, the side light's strength, and the swing
-    /// (`ScrollerPreview::wave_swing`).
+    /// the exposure in seconds, the side light's strength, and how much the
+    /// folds stand (`ScrollerPreview::folds_at`).
     waves: [f32; 4],
     // Part 6 (`rings::RingsPreview::controls`); all zero before it. The WGSL
     // declaration below documents each field.
@@ -292,17 +291,17 @@ struct Controls {
     plate_open_center: vec4f, plate_open_rotation: vec4f,
     hud: vec4f,    // on-screen counter: shown, frames per second, milliseconds per frame
     // Scroller text positions from the original's scroll counters: upper and
-    // lower row text pixel at screen x = 0, overlay step, unused.
+    // lower row text pixel at screen x = 0, overlay step, wall folds' phase.
     glyphs: vec4f,
     // Scroller background: oscillator xx/128 and yy/128 (source pixels,
     // interpolated between ticks), backdrop (0 chamber, 1 tinted wall, 2 chrome
     // wall) and the authored bump shape (0 rounded square .. 1 hemisphere).
     backdrop: vec4f,
     // Bump wall: oscillator movement over its exposure (source pixels), the
-    // authored wall strength, unused.
+    // authored wall strength, the folds' axis (radians).
     backdrop_motion: vec4f,
     // Authored wall waves: depth (0 when off), exposure in seconds, side
-    // light strength, swing (1 at the depth, -1 turned over; see clip.rs).
+    // light strength, how much the folds stand (0 to 1; see clip.rs).
     waves: vec4f,
     // Part 6 (Rings), all zero before it; rings_common.wgsl reads them.
     // During part 6 the scroller's fields are reused for the bump wall:
@@ -1007,16 +1006,12 @@ impl Renderer {
                 scroll.backdrop_style as u32 as f32,
                 scroll.wall_shape,
             ];
-            u.backdrop_motion = [
-                now[0] - open[0],
-                now[1] - open[1],
-                scroll.wall_strength,
-                0.0,
-            ];
             let reveal = clip.transition.as_ref().map_or(0, |cut| cut.start_tick);
             let [depth, light] = scroll.waves_at(time, reveal);
-            let swing = scroll.wave_swing(time, reveal);
-            u.waves = [depth, (WALL_SHUTTER_TICKS / 70.0) as f32, light, swing];
+            let [folds, axis, phase] = scroll.folds_at(time);
+            u.glyphs[3] = phase;
+            u.backdrop_motion = [now[0] - open[0], now[1] - open[1], scroll.wall_strength, axis];
+            u.waves = [depth, (WALL_SHUTTER_TICKS / 70.0) as f32, light, folds];
         }
         u
     }

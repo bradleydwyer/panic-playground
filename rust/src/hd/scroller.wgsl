@@ -411,11 +411,11 @@ fn wall_presence(p:vec3f,darken:f32)->f32 {
     // .58: the calm level the row bands used to give, now applied evenly.
     return u.backdrop_motion.z*.9*.58*vignette*mix(.55,1.0,entrance)*(1.0-letter_shadow(p)*darken);
 }
-// The wall's own grazing side light, for the waves only (authored): from the
-// left, the scene's cool side, a little above the horizontal and 18 degrees
-// over the wall, so the crests throw shadows across the troughs. The letters'
-// lamps and the studio are unchanged.
-const SIDE=vec3f(-.919,.246,.309);
+// The wall's own grazing side light, for the folds only (authored): from the
+// upper left, the scene's cool side, 35 degrees above the horizontal and 18
+// over the wall, so that folds lying either way throw shadows across their
+// creases. The letters' lamps and the studio are unchanged.
+const SIDE=vec3f(-.779,.546,.309);
 const SIDE_COLOR=vec3f(.72,.86,1.0);
 // The waves at the pixel at screen point xy (a screen unit is 15 tile widths
 // both ways), once, at the middle of its exposure, where its ray meets them.
@@ -424,6 +424,15 @@ const SIDE_COLOR=vec3f(.72,.86,1.0);
 // elevation, softened over the light's breadth.
 fn find_waves(xy:vec2f) {
     let lag=u.waves.y*.5;
+    if !folded() {
+        wave_m=xy*15.0;
+        wave_here=Wave(0.0,vec2f(0),0.0);
+        wave_up=vec3f(0,0,1);
+        wave_lit=1.0;
+        wave_bend=vec3f(0);
+        wave_at=vec2f(0);
+        return;
+    }
     // A raised point lies nearer the centre along the pixel's ray: by its
     // height over 82.5 tile widths, 15 to a screen unit times the 5.5 focal
     // length.
@@ -431,6 +440,13 @@ fn find_waves(xy:vec2f) {
     wave_m*=1.0-wave_field(wave_m,lag).h/82.5;
     wave_here=wave_field(wave_m,lag);
     wave_up=normalize(vec3f(-wave_here.slope,1));
+    // The curvature, from the slope a quarter tile on each way, for the
+    // tiles near the pixel (grid_wave).
+    let e=.25;
+    let ax=(wave_field(wave_m+vec2f(e,0.0),lag).slope-wave_here.slope)/e;
+    let ay=(wave_field(wave_m+vec2f(0.0,e),lag).slope-wave_here.slope)/e;
+    wave_bend=vec3f(ax.x,.5*(ax.y+ay.x),ay.y);
+    wave_at=fold_point(wave_m,lag);
     let toward=normalize(SIDE.xy);let rise=SIDE.z/length(SIDE.xy);
     var horizon=-9.0;
     for(var i=1;i<=6;i++) {
@@ -473,17 +489,17 @@ fn wall_pixel(xy:vec2f)->vec3f {
         let ray=normalize(vec3f(xy+disc,-5.5));
         let hit=wall_trace(eye,ray,false);
         c+=wall_surface(hit,eye+ray*hit.t,ray);
-        // Every other sample takes the side light, each from another part of
-        // it, about 9 degrees across; none reaches a pixel deep in a crest's
-        // shadow.
-        if waving() && i%2==0 && wave_lit*u.waves.z>0.0 {
+        // Every fourth sample takes the side light, each from another part
+        // of it, about 9 degrees across; none reaches a pixel deep in a
+        // crest's shadow.
+        if waving() && i%4==0 && wave_lit*u.waves.z>0.0 {
             side+=side_light(hit,eye+ray*hit.t,ray,disc*(.08/defocus));
         }
     }
     c*=.125;
     // The side light takes over from the studio as it strengthens, so the
     // wall's level stays calm and the shadows read.
-    if waving() {c=c*mix(1.0,.1,u.waves.z)+side*(.25*wave_lit*u.waves.z);}
+    if waving() {c=c*mix(1.0,.1,u.waves.z)+side*(.5*wave_lit*u.waves.z);}
     let ray=normalize(vec3f(xy,-5.5));
     wall_shift=-u.backdrop_motion.xy*.5;
     wave_lag=u.waves.y*.5;
