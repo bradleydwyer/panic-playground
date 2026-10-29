@@ -160,8 +160,9 @@ fn field_frame()->f32 {return fc.part.w;}
 // when it passes 1 the buffers swap to the next level, twice as fine. The
 // scale is in the shown buffer's pixels, interpolated between frames: below
 // 1 when the next frame swaps (field_zoom_ahead), where the next level shows at
-// twice it. The level is log2 of the magnification since the first zoom
-// frame, continuous; field_zoom_phase its fraction, 0 as a level begins.
+// twice it. The level is the modern view's depth, log2 of the magnification
+// since the first zoom frame at a steady pace (field.rs's zoom_pace),
+// continuous; field_zoom_phase its fraction, 0 as a level begins.
 fn field_zoom_scale()->f32 {return fc.zoom.x;}
 fn field_zoom_ahead()->bool {return fc.zoom.y>.5;}
 fn field_zoom_level()->f32 {return fc.zoom.z;}

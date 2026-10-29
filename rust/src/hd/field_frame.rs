@@ -25,7 +25,8 @@ pub use smoke::FrameFluid;
 pub static FRAME: AuthorInfo = AuthorInfo {
     name: "frame",
     source: include_str!("field_frame.wgsl"),
-    prepass: true,
+    prepass: false,
+    full_prepass: false,
     controls: frame_controls,
 };
 

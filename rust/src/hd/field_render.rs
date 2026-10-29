@@ -16,8 +16,9 @@
 //! shown and binds the shown level for the fragments as group 2.
 use super::field::{
     BUFFER_SIZE, COARSE_CELLS, FRAME_TAKES_PART6_FADE, FieldBlock, FieldPreview, FrameFluid,
-    MAP_SIZE, ZoomLevels, authors, frame_shape,
+    MAP_SIZE, Relief, ZoomLevels, authors, frame_shape,
 };
+use half::f16;
 use super::renderer::wgsl_parts;
 use wgpu::*;
 
@@ -123,6 +124,54 @@ fn texture(
     })
 }
 
+/// The volcano's relief with its maximum mipmaps: level 0 its texels, each
+/// further level the highest height of its blocks in red.
+fn relief_texture(device: &Device, queue: &Queue, relief: &Relief) -> Texture {
+    let size = relief.size as u32;
+    let texture = device.create_texture(&TextureDescriptor {
+        label: Some("Part 5 volcano relief"),
+        size: Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1 + relief.mips.len() as u32,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: TextureFormat::Rgba16Float,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    write(queue, &texture, bytemuck::cast_slice(&relief.texels), (size, size));
+    for (k, level) in relief.mips.iter().enumerate() {
+        let n = size >> (k + 1);
+        let texels: Vec<[f16; 4]> = level
+            .iter()
+            .map(|&h| [f16::from_f32(h), f16::ZERO, f16::ZERO, f16::ZERO])
+            .collect();
+        queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: k as u32 + 1,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            bytemuck::cast_slice(&texels),
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(8 * n),
+                rows_per_image: Some(n),
+            },
+            Extent3d {
+                width: n,
+                height: n,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    texture
+}
+
 fn write(queue: &Queue, texture: &Texture, data: &[u8], (width, height): (u32, u32)) {
     queue.write_texture(
         texture.as_image_copy(),
@@ -202,13 +251,7 @@ impl FieldRenderer {
             TextureFormat::Rg8Unorm,
             &coarse,
         );
-        let size = preview.relief.size;
-        let relief = made(
-            "Part 5 Mandelbrot relief",
-            (size, size),
-            TextureFormat::Rgba16Float,
-            bytemuck::cast_slice(&preview.relief.texels),
-        );
+        let relief = relief_texture(device, queue, &preview.relief);
         // The frame author's shape, baked from the picture (field_frame.rs).
         let frame = frame_shape(preview);
         let shape = made(
@@ -367,22 +410,24 @@ impl FieldRenderer {
         }
     }
 
-    /// Make the authors' half-resolution prepass targets for this drawable
-    /// size, when any author has a prepass.
+    /// Make the authors' prepass targets for this drawable size, when any
+    /// author has a prepass: at half the resolution each way, or the full
+    /// resolution for an author with `full_prepass`.
     pub fn resize(&mut self, device: &Device, size: (u32, u32)) {
         if self.prepasses.iter().all(Option::is_none) {
             return;
         }
-        let half = (size.0.div_ceil(2).max(1), size.1.div_ceil(2).max(1));
-        if self.prepassed.as_ref().is_some_and(|p| p.2 == half) {
+        if self.prepassed.as_ref().is_some_and(|p| p.2 == size) {
             return;
         }
-        let targets = self.prepasses.each_ref().map(|p| {
-            p.as_ref().map(|_| {
+        let half = (size.0.div_ceil(2).max(1), size.1.div_ceil(2).max(1));
+        let authors = authors();
+        let targets = [0, 1, 2].map(|k| {
+            self.prepasses[k].as_ref().map(|_| {
                 texture(
                     device,
                     "Part 5 prepass",
-                    half,
+                    if authors[k].full_prepass { size } else { half },
                     TextureFormat::Rgba16Float,
                     TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
                 )
@@ -390,7 +435,7 @@ impl FieldRenderer {
             })
         });
         let views = [0, 1, 2].map(|k| targets[k].as_ref().unwrap_or(&self.inputs.blank));
-        self.prepassed = Some((self.inputs.bind(device, views), targets, half));
+        self.prepassed = Some((self.inputs.bind(device, views), targets, size));
     }
 
     /// Upload frame `j`'s palette and zoom buffers, when they change.

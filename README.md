@@ -10,8 +10,9 @@ So far this covers the opening through the PANIC logo, the square transition,
 experiments with the following double scroller, part 6's interference
 rings in the original's black and white under neon, rising into a pool of
 liquid chrome as the tune says "panic", part 5's deep Mandelbrot
-zoom and molten Mandelbrot mountain, part 3's shade bobs and morphing
-dots as light painting through rising water, part 4's plasma as the light
+zoom and the Mandelbrot volcano that rises out of it, part 3's shade bobs
+and morphing dots as light painting through rising water, part 4's plasma
+as the light
 on a carved stone slab standing in that water, which then breaks up into
 the dust of part 7's lighthouse, part 7's greetings as crystal letters in
 the lighthouse's beam, and part 8's ending as an endless wall of green
@@ -265,17 +266,22 @@ The modern look keeps that timing and changes the rest:
 - The window's zoom becomes a dive into the Mandelbrot set from a view
   3.3e-50 high, past rings of lace and spiral stars, onto a minibrot (a
   small copy of the set) that lands upright, filling the window, as the zoom
-  stops. It is computed by perturbation from a high-precision reference
+  stops. It dives at a steady pace where the original speeds up and slows
+  within each doubling, and is lit as a relief, its filaments standing as
+  ridges. It is computed by perturbation from a high-precision reference
   orbit, in f32 on the GPU, a level per doubling as the original builds its
   own buffers.
-- The mountain becomes the Mandelbrot set itself as molten rock: a
-  convecting lava lake on the plateau spilling over its rim, and lava that
-  runs down the set's field lines, crusting as it cools. The mountain
-  computes the set where it is near, so its edge stays sharp however close
+- The mountain becomes a volcano rising out of the zoom: the minibrot in
+  the window becomes its lava lake, the set itself, as the camera swings
+  down from overhead into the original's orbit. Its dark rocky flanks fall
+  away along the set's field lines, with gullies down them, some carrying
+  lava from the rim; on the tune's beats and accents lava fountains leap
+  from the lake, and a plume of smoke boils up off it, lit from below. The
+  lake is the set computed per pixel, so its edge stays sharp however close
   the camera passes.
 
-The target, the lava, the metal, the smoke and all the lighting are
-authored. Faithful HD (**M**) shows the original's look at display
+The target, the volcano, the lava, the metal, the smoke and all the
+lighting are authored. Faithful HD (**M**) shows the original's look at display
 resolution: the zoom from the port's own buffers, smoothly, and the
 mountain marched pixel by pixel through the original height map with the
 port's camera. The [renderer notes](rust/README.md#part-5-field) say what is

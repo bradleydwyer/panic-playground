@@ -306,19 +306,20 @@ fn frame_lights()->FrameLights {
 }
 
 // ---- The mountain's shadow ------------------------------------------------------------
-// The mountain's silhouette over source column x, as frame_prepass leaves
-// it in its first row: the top source row it covers (400 if none).
-fn frame_silhouette_at(x:f32)->f32 {
-    let rows=ceil(u.screen.y*.5);
-    let uvx=(x-160.0)*COLUMN/(200.0*screen_aspect())+.5;
-    return frame_prepass_at(vec2f(uvx,.5/rows)).x;
+// How much the mountain covers scene point q, softened over `soft` rows: its
+// coverage in the mountain author's prepass, drawn before this layer.
+fn frame_mountain_cover(q:vec2f,soft:f32)->f32 {
+    var a=0.0;
+    for(var i=0;i<5;i++) {
+        let o=array<vec2f,5>(vec2f(0),vec2f(1,0),vec2f(-1,0),vec2f(0,1),vec2f(0,-1))[i]*.7*soft;
+        let s=q+o;
+        a+=mountain_prepass_at(vec2f(s.x/(200.0*screen_aspect())+.5,.5-s.y/200.0)).a;
+    }
+    return a/5.0;
 }
 // How much the mountain hides a light from scene point p: the light's ray
-// crosses the silhouette's depth at q (scene), softened over `soft` rows.
-fn frame_shadow(q:vec2f,soft:f32)->f32 {
-    let s=source_of_scene(q);
-    return smoothstep(-soft,soft,s.y-frame_silhouette_at(s.x));
-}
+// crosses the mountain's depth at q (scene), softened over `soft` rows.
+fn frame_shadow(q:vec2f,soft:f32)->f32 {return frame_mountain_cover(q,soft);}
 
 // ---- The frame --------------------------------------------------------------------
 fn frame_shade(sf:FrameSurface,lights:FrameLights)->vec3f {
@@ -344,10 +345,9 @@ fn frame_shade(sf:FrameSurface,lights:FrameLights)->vec3f {
         let to=lights.lava_at-p;
         let f=clamp(depth/max(to.z,1.0),0.0,1.0);
         hidden_lava=frame_shadow(p.xy+to.xy*f,4.0+.2*lights.lava_size*f);
-        let s=source_of_scene(p.xy);
         for(var i=0;i<4;i++) {
-            let dx=array<f32,4>(-14.0,-5.0,5.0,14.0)[i];
-            near+=.25*smoothstep(-8.0,8.0,s.y-frame_silhouette_at(s.x+dx));
+            let dx=array<f32,4>(-14.0,-5.0,5.0,14.0)[i]*COLUMN;
+            near+=.25*frame_mountain_cover(p.xy+vec2f(dx,0.0),8.0);
         }
         hidden_key*=lights.mountain;hidden_lava*=lights.mountain;near*=lights.mountain;
     }
@@ -486,32 +486,8 @@ fn frame_layers(px:FieldPixel)->FrameLayers {
     return FrameLayers(behind,frame,front);
 }
 
-// The prepass's first row holds, for each column, the top of the mountain's
-// silhouette (source rows), as the relief marched with the code's camera
-// and projection shows it (the stand-in's mountain), for the frame's
-// shadows; the rest is empty.
-fn frame_prepass(px:FieldPixel)->vec4f {
-    let rows=ceil(u.screen.y*.5);
-    if px.uv.y*rows>1.0 || field_phase()<.5 {return vec4f(400,0,0,0);}
-    let dir=terrain_dir(px.source.x);
-    let origin=camera_map();
-    var z0=NEAR;var z1=FAR;
-    for(var a=0;a<2;a++) {
-        if abs(dir[a])>1e-6 {
-            let p=-origin[a]/dir[a];let q=(MAP_SIZE-origin[a])/dir[a];
-            z0=max(z0,min(p,q));z1=min(z1,max(p,q));
-        } else if origin[a]<0.0 || origin[a]>MAP_SIZE {return vec4f(400,0,0,0);}
-    }
-    var top=400.0;
-    var z=z0;
-    loop {
-        if z>=z1 {break;}
-        let h=relief_height(origin+dir*z);
-        if h>=.5 {top=min(top,terrain_row(z,h));}
-        z+=1.0;
-    }
-    return vec4f(top,0,0,0);
-}
+// No prepass: the mountain's shadow reads the mountain's own prepass.
+fn frame_prepass(px:FieldPixel)->vec4f {return vec4f(0);}
 
 // The groundwork's single-texture fluid step, which field_style.wgsl's
 // field_fluid still calls: unused, as the smoke runs in its own modules

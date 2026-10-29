@@ -92,9 +92,8 @@ struct FieldBlock {
     // Shown (1), seconds since part 5 began (negative before), phase (0
     // zoom, 1 terrain), part-5 frame (continuous).
     part: vec4f,
-    // Zoom scale in the shown buffer's pixels per window pixel (below 1 while
-    // the next level is due), 1 when the next frame swaps, level (log2 of
-    // the magnification since the first zoom frame), the shown buffer's swaps.
+    // Zoom scale (buffer pixels a window pixel), swapping next, modern
+    // depth (log2), the shown buffer's swaps.
     zoom: vec4f,
     // Speed / 1024, rows of the next level built, running, shown.
     zoom_state: vec4f,
@@ -128,6 +127,8 @@ struct FieldBlock {
     // Part 3's view of part 5's last frame: the magnification about the
     // screen's centre (0 or 1 for none, as in part 5), unused.
     part3_view: vec4f,
+    // The mountain's camera at the exposure's opening and close.
+    mountain_view: array<vec4f,8>,
 }
 // Part 3's controls (hd/dots.rs, DotsBlock), in u.dots.
 struct DotsBlock {
@@ -2276,9 +2277,10 @@ mod tests {
             zoom_style,
             mountain_style,
             part3_view,
+            mountain_view,
         ];
         assert_eq!(
-            expected.last().unwrap().1 + size_of::<[f32; 4]>(),
+            expected.last().unwrap().1 + size_of::<[[f32; 4]; 8]>(),
             size_of::<FieldBlock>()
         );
         let (module, _) = validated("part 5 modern", &super::super::field_render::style_source());

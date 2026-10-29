@@ -41,6 +41,7 @@ struct Step {
     heat_z: vec4f,
     camera: vec4f,
     view: vec4f,
+    mview: array<vec4f, 4>,
     // per emitter: (x, y, radius, density rate) in screen units, then
     // (temperature rate, target vx, target vy [velocity cells/s], pull 1/s)
     emit: array<vec4f, 32>,

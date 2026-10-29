@@ -823,11 +823,11 @@ Some of this is interpretation:
   least-squares line through the slopes. On the imported data the plateau
   matches the set at an IoU of 0.987, with an aspect close to the VGA's 1.2,
   and the slopes have an rms error of 4 of 250. A default test recovers an
-  invented mountain's parameters the same way. The fit is baked into a
-  relief, a texture of the height `prepare` would make of the fitted DEP
-  value with its gradient and the distance outside the set, for the modern
-  view. Nothing fitted is stored. How DEP.U was made isn't known, and
-  MAP.U's speckle, on a rounded plate, is of unknown origin.
+  invented mountain's parameters the same way. The modern view's volcano
+  is built on the fit and baked into a relief, a texture of its height,
+  gradient and distance outside the set (below). Nothing fitted is
+  stored. How DEP.U was made isn't known, and MAP.U's speckle, on a
+  rounded plate, is of unknown origin.
 
 Faithful HD shows the original's look at display resolution: the picture
 smoothly upscaled through the current palette, with the window's edge kept
@@ -870,9 +870,8 @@ it is stored:
   the lower right and a dim ambient. Then come the window's light, which
   the inner bevel reflects through the opening, and the lava's, each from
   the other author's values or a stand-in until they give them (below).
-  The mountain's silhouette over each column, as the relief marched with
-  the code's camera shows it (the frame's prepass), shadows the frame from
-  the lava and the key and darkens it near the mountain's base.
+  The mountain's coverage in its own prepass shadows the frame from the
+  lava and the key and darkens it near the mountain's base.
 
 Part 6's PSTART fade brings the lit frame in (`FRAME_TAKES_PART6_FADE`),
 its lights rising as the picture's level did, so the hand-over into part 5
@@ -904,9 +903,11 @@ and drawn in two layers, behind the frame and in front of it.
   solid ribbons, as the cells are coarser than the filigree, and their
   softened coverage shadows the smoke.
 - Interpretation: the lava's heat rises in a band below the mountain's
-  outline over each column. The outline is the fitted relief marched with
-  the code's camera and projection, as the mountain's stand-in is drawn.
-- Authored: the emitters, the heat, the air's movement, the lights' placing
+  outline over each column: the volcano's relief marched with the
+  mountain's camera (`fc.mountain_view`).
+- Authored: the emitters, among them the volcano's plume, puffs of hot
+  smoke boiling up off the lake from the mountain's light over it while
+  the lake shows; the heat, the air's movement, the lights' placing
   and strength, and the solver's parameters. The smoke is kept mostly
   behind and beside the frame, secondary to it and the mountain. Its heat
   lies behind the picture plane, or near it beside the frame, and a draft
@@ -956,15 +957,19 @@ stays deep the whole way, so the window never shows the whole set: rings
 of lace round the copy close in on it, doubling by doubling, until it
 fills the window.
 
-- Read from the port: the timing. The depth is the port's own
-  magnification, `field_zoom_level()`: log2 of 2^swaps over the scale,
-  interpolated between the original's frames as faithful HD has it. So the
-  16.3 doublings, the 63-frame rhythm, the dip at 95.13, the brake and the
-  stop at 96.96 fall on the original's frames; the zoom counts no frames
-  or seconds of its own. The window then holds the landed view behind the
-  rising mountain until the port clears it at 98.11, and is dark from then
-  on. Through part 6's fade and part 5's first frame, where the original
-  still shows PSTART's window, it shows the zoom's first view.
+- Read from the port: the speed and the stop. The depth,
+  `field_zoom_level()`, moves in proportion to the port's own speed, its
+  rise to full speed, the dip at 95.13 and the brake (`zoom_pace` in
+  `field.rs`), scaled to reach the port's magnification, 16.3 doublings,
+  at the stop at 96.96. The original lowers its scale linearly within each
+  doubling, so its log2 magnification moves twice as fast at a doubling's
+  end as at its start; the modern depth is steady at full speed instead
+  (authored, at the owner's request), a doubling every 63 frames as the
+  original's, within a frame or so of its swaps. The window then holds
+  the landed view as the volcano rises out of it, darkening from 0.3 to
+  0.7 seconds into the join (below), and is dark from the port's clear at
+  98.11 on. Through part 6's fade and part 5's first frame, where the
+  original still shows PSTART's window, it shows the zoom's first view.
 - Authored: the target, its framing, the method and the look. The target is
   the end of a chain of nested minibrots out of the seahorse valley
   (periods 32, 250, 1030 and 3341), found by a local search; nothing about
@@ -1021,13 +1026,16 @@ more). The GPU works in f32 only:
 A local prototype, outside the repository, checked the kernel's method
 against a direct 376-bit render and mpmath at the deepest view.
 
-The look is cool blues in linear HDR, into the shared bloom and tonemap.
-The outside is shaded by the distance estimate on a log scale, so that
-dense lace doesn't saturate: navy far from the set, through the original
-window's deep blue and azure to cyan. A white-cyan boundary line blooms.
-It is divided by its own density nearby, so lone filaments glow and dense
-lace stays textured. Faint smooth iteration bands lie far out, and the
-inside is near black. Distances are in pixels of a 4K window, so the look
+The look is cool blues in linear HDR, into the shared bloom and tonemap. The
+outside is shaded by the distance estimate on a log scale, so that dense
+lace doesn't saturate: navy far from the set, through the original window's
+deep blue and azure to cyan. A white-cyan boundary line blooms. It is
+divided by its own density nearby, so lone filaments glow and dense lace
+stays textured. Faint smooth iteration bands lie far out, and the inside is
+near black. The view is lit as a relief: high on the set and falling away
+with the log of the distance from it, so that filaments stand as ridges and
+the copies as plateaus, lit from the upper left as the frame's key is, with
+soft shadows and glints. Distances are in pixels of a 4K window, so the look
 is the same at every size, and the whole is held at 0.45 (`ZOOM_GAIN`) so
 that the window doesn't overpower the dark frame. The look's constants are
 together at the top of `field_zoom.wgsl`, and the method's at the top of
@@ -1058,132 +1066,108 @@ the stand-in. The levels take 8 bytes a texel: three of 1583 x 1484 at 2560
 x 1440 are 56 MB, three of 2374 x 2225 at 3840 x 2160 127 MB; the tables
 are a few MB.
 
-The modern mountain is a molten Mandelbrot: a convecting lava lake on the
-plateau, the set itself, spilling over its rim in bright falls that run down
-the slopes in channels and crust over as they go, on a mountain of dark
-cooled crust.
+The modern mountain is a volcano made from the fit: its lava lake is the
+set itself, where DEP.U has its plateau, under a rim, on flanks of dark rock
+that fall away along the set's field lines, with gullies down them, some
+carrying lava from the rim. It rises out of the zoom: the minibrot in the
+window becomes the lake.
 
-- Derived: the motion and the shape. The level, the camera, the flat to
-  perspective morph of the projection, the orbit and the sink come through
-  the shared helpers, as faithful HD has them; within each exposure the
-  camera moves on by the code's formulas (`field_mountain.rs` passes the
-  rates: a terrain step and a level a frame while it rises, q eight times
-  the level). The surface is the fitted one: the baked relief, and near the
-  set the fitted formula, base + slope sqrt(G(c)), evaluated per pixel.
-  The lava's paths are the fitted slopes' fall lines.
-- Interpretation: lighting the projection as 3D, a height unit as 0.29 map
-  units (at full perspective a height unit shows 62 / z rows and a map unit
-  across 213 / z), and reading MAP.U's speckle back out of `prepare`'s
-  colours as (4 colour - height) / 3. The level's rate while it sinks is
-  estimated, as its mean fall since the sink began.
-- Authored: the lava, its flow and the lake's convection, the crust, the
-  lighting, the detail method, the exposure and the light handed to the
-  frame. The original colours its terrain from MAP.U through MAP.PAL's fire
-  ramp and moves none of it; nothing of the lava's look or motion is from
-  it. The lava is the main light, with a dim cool key from behind the
-  camera, shadowed and occluded by the relief. The rays start at depth 4
-  rather than the original's 64 (read from `ray`; 4 is where the code's
-  projection table starts), so that close passes show the nearer slopes
-  where the original smears the terrain at depth 64 down the columns below
-  it.
+- Derived: the camera through the orbit and the sink, the code's own: its
+  place, heading and height at each moment, through the shared helpers as
+  faithful HD has them, and its projection. The code's rows are
+  perspective plus an orthographic share, (height - h) (q / (4 z) + (512 -
+  2 q) / 1024). A pinhole can't have both, so it matches them at the depth
+  of the map's centre, in value and in how fast they fall with depth, by
+  standing back along its view and narrowing (interpretation;
+  `MountainView::port` in `field_mountain.rs`). At q = 248 that is 8 map
+  units back and 5% narrower vertically; as q falls in the sink it stands
+  far back with a long lens, flattening the mountain as the code's
+  projection does. A height unit is 0.29 map units (interpretation: at
+  full perspective a height unit shows 62 / z rows and a map unit across
+  213 / z).
+- Authored, at the owner's request: the join. Where the code's camera
+  falls from high above with its projection flat, the modern view begins
+  by looking straight down on the lake from 246 map units above it, framed
+  and turned as the zoom's minibrot lands in the window, and over 1.5
+  seconds swings down and round into the orbit, its heading taking up the
+  orbit's turn and landing on it. The volcano comes in over the minibrot,
+  the lake at once and the rock round it more slowly, and where it lies
+  beyond the frame's plane it is behind the frame, seen through the
+  window; nearer, it stands in front.
+- Authored: the volcano's shape (`volcano` in `field_mountain.rs`, baked
+  into the relief), the lava, the rock, the light, the fountains, the
+  method and the exposure. The original's terrain is a steep-sided mesa;
+  the volcano keeps its plateau and its place. Nothing of the lava's look
+  or motion is from the original, which doesn't move its terrain's colours.
+
+The rim stands 10 height units above the lake, on a crater wall 1.6 map
+units wide by the distance estimate. The flanks fall as (1 - G / 0.3)^2 of
+the potential G, about 44 degrees under the rim, flattening to the foot
+about 60 map units out where the set's edge is smooth. Down them run 160
+gullies a turn of the set's external angle, arg Phi(c) / 2 pi (from the
+product formula for Böttcher's coordinate, its first 16 terms, with
+principal arguments), which is constant along the fall lines: meandering,
+some deep, many shallow, with lobes of old flows between them and rock
+noise over all. The ground falls away to nothing from 72 to 97 map units
+from the map's centre, so that the spurs along the set's filaments end on
+it.
 
 The lava is drawn as temperatures. Its light, `mountain_glow`, follows a
 blackbody-like ramp: deep red about 700 °C, orange about 950 and
-yellow-white about 1150, where it is 12 in linear HDR, far brighter than the
-frame or the smoke, into the shared bloom and tonemap. Its brightness
-follows Wien's approximation, exp(-B / T), with B about 0.6 of the physical
-value at 600 nm so that dull red to white fits the tonemap, and its green
-over its red rises faster than Planck's law gives, standing for a camera's
-saturation. The lava leaves the lake at about 1170 °C and cools as it
-travels; its skin cools within a few seconds to dark glassy crust, through
-which cracks show the hot lava below.
+yellow-white about 1150, where it is 12 in linear HDR, into the shared
+bloom and tonemap, its brightness by Wien's approximation, exp(-B / T),
+with B about 0.6 of the physical value at 600 nm so that dull red to white
+fits the tonemap. The lake convects: hot lava wells up along a wavering
+seam down the set's real axis and spreads away on either side at 4 map
+units a second, so its plates of crust are as old as their distance from
+the seam: thin and glowing, with wide cracks, by the seam, dark and thick
+towards the rim, where they founder in a bright margin. Cracks pulse open
+and shut. The lake is molten as the volcano rises out of the zoom and
+crusts over in the second after.
 
-The slopes' lava runs in channels drawn in the set's external angle, arg
-Phi(c) / 2 pi from the product formula for Böttcher's coordinate (its first
-16 terms, with principal arguments), which is constant along the fall lines
-(the field lines of G): 48 cells a turn, each with a channel of its own
-width and speed or none, meandering a little, and between them 192 thinner
-rivulets a turn, quicker to crust over. The lava falls at a rate that
-depends on the height alone, 9 height units a second at the foot rising
-exponentially to 42 at the rim, as the fitted slopes steepen towards the set
-(their median steepness about triples from the foot to the rim, sampled on
-the imported data's fit). So the time it has taken from the rim is in
-closed form, and anything drawn in that time less the clock moves exactly
-with the flow, down the fall lines, without stretching or repeating. On the
-steep walls under the rim it runs young, fast and open, in bright streaks;
-on the gentler ground below it slows and crusts over. Rapids speed it up and
-slow it by 45% every few seconds of travel: the plates of crust it carries
-as rafts down a channel's middle tear apart, opening glowing cracks, where
-it speeds up, and buckle into ropes bowed downstream where it slows. A
-channel's middle is its hottest and fastest; towards its stiff, cooled
-levees the crust closes up and the open lava is sheared into streaks.
-Surges come and go along each channel, lower down stretches roof over into
-tubes, and between the channels the old flows' crust keeps a few glowing
-cracks near the active channels and where the original's colour is hot.
-The lake spills a quarter of a second before the mountain has risen, and
-its lava front runs down each channel at that channel's own speed, so the
-slopes light up from the rim down; below the front the channels hold older,
-crusted lava.
+The flanks are dark basalt, varying in tone and roughness, with paler ash
+in patches, lit dimly by a cool key from above and behind the camera's
+left and by the plume's glow over the crater, an orange sky strongest
+overhead, and darkened in hollows by the relief's horizon. The lake lights
+the crater's inner wall. A tenth of the gullies carry lava: it spills over
+the rim 0.9 seconds after the terrain begins, as the join brings the camera
+round, and runs down each to its own reach at its own speed, open and
+bright near the rim, cooling and crusting into rafts lower down that part
+over its hot core, its light on the rock beside it.
 
-The lake convects: hot lava wells up along a wavering seam down the set's
-real axis, through the main cardioid and the period-2 bulb, and spreads away
-on either side at 4 map units a second, so its plates of crust are as old as
-their distance from the seam: thin and glowing, with wide cracks, by the
-seam, dark and thick towards the rim, where they founder in a bright margin.
-Cracks pulse open and shut, and now and then gas bursts through, throwing
-open a disc of bright lava that crusts over within a second. The lake is
-molten as the mountain rises out of the zoom's set, so that the set reads
-against a dark rim, and crusts over in the second after it has risen.
+The fountains keep to the tune, read from its position as part 5 plays it:
+a beat every 8 rows (0.46 seconds at speed 3 and tempo 130), and the
+loudest every 32, on row 8 of each 32, as the PCM's onsets show (observed;
+they come 0.06 to 0.1 seconds after the rows start). On each accent three
+fountains leap from vents along the lake's seam, 26 blobs each, up to 34
+map units high, and on each beat a spatter of 10 (`hits` in
+`field_mountain.rs`, `fc.mountain_style[2]` and `[3]`). Each blob flies a
+ballistic arc, cooling, drawn as its streak over the exposure and hidden by
+the mountain where it is behind it. The frame's smoke adds the plume.
 
-Everything the lava does is a function of the clip's time alone
-(`field_seconds()`), so seeking, captures and video agree. Seen at the
-orbit's distance, features on the falls under the rim travel up to about a
-tenth of the screen's height a second, half that halfway down and a fifth of
-it at the foot, and the lake's plates about their own width a second. Each pattern fades to its mean where it would be
-finer than a pixel, measured along its own axes across the pixel's
-footprint on the surface, which is longer where the view grazes it; under
-the exposure's motion the footprint is widened along the motion only, so
-that the exposure's samples blend into a streak across the screen while
-detail along the flow, such as the crust's edges and the surges, stays
-sharp.
+Rays march the relief, 2048 texels a side (about 10 a map unit), through
+its maximum mipmaps, each level the highest height of its blocks: a ray
+skips any block it passes over, going up a level as it leaves one and down
+where it dips below a block's top, to blocks two texels a side, where it
+marches the bilinear surface and bisects the crossing. The set and the
+gullies' angle are evaluated per pixel, so the lake's edge stays sharp
+however close the camera passes. A full-resolution prepass shades each
+pixel once, at the middle of the exposure, 0.7 of a 70 Hz frame as part
+6's rings use. The layer marches each pixel's ray again for its depth,
+follows that point through the exposure with the camera at its opening and
+close, and averages the prepass along its motion, taps no more than two
+pixels apart, up to 32, at offsets jittered per pixel and per sixtieth of a
+second, so that a long streak breaks into fine grain rather than copies.
+Everything is a function of the clip's time alone (`field_seconds()`), so
+seeking, captures and video agree.
 
-Near the set the detail is computed on demand rather than taken from the
-bake. Rays march the relief, skipping space by its coarse cells, and in a
-band round the set, where its texels can't hold the boundary, the fitted
-formula itself: the potential and its gradient by direct iteration in f32,
-stepped by a bound from the potential (the distance estimate d = G / (2
-|grad G|) is about a lower bound on the distance to the set for small G, by
-Koebe's quarter theorem, and within it the positive harmonic G is at least G
-(d - r) / (d + r) at distance r, by Harnack's inequality) or by a Newton
-step towards the potential the ray's height needs, kept between that bound
-and four times it, no finer than half a pixel. A comparison only needs to
-know whether G is below that potential, and an orbit still short of the
-bailout after n iterations has G below about 11 / 2^n, so the march stops
-iterating early; shading decides the plateau with the full 100 iterations.
-So the plateau's edge, the filaments' ridges and the cusp stay sharp to the
-pixel, up close as far off, with normals from the potential's gradient; a
-ray that grazes the crests for more than 20 steps goes on through the
-relief. A half-resolution prepass marches every ray at the middle of the
-exposure and keeps where it first came within a pixel and a half of the
-surface or entered the band, and its hit and coverage; each full-resolution
-pixel marches on from there. The exposure is 0.7 of a 70 Hz frame, as part
-6's rings use: where the surface moves across the screen in it, up to four
-samples are taken along the motion, each what the prepass saw where its ray
-points at the middle of the exposure (its depth interpolated where the
-texels round it see one surface), shaded with the middle's surface carried
-over to first order (G, and the angle by Cauchy-Riemann) and its detail
-smoothed along the motion over the samples' spacing.
-
-At 2560 × 1440 on an Apple M5 Max the whole part-5 frame, with the frame, its
-smoke and the window's stand-in, takes about 10.4 to 11.8 ms during the
-terrain (at 98.2, 105, 115 and 122.5 seconds, medians of `--bench 150`, the
-best of three interleaved runs on a machine in use), within noise of the
-mountain's first version, and about 8 ms with no mountain. Before the
-frame's smoke was in, the mountain's first version took 5.1 to 6.0 ms a
-frame with the frame's and window's stand-ins; at 105 seconds its prepass
-took about 1.0 ms, the middle of the exposure 2.3 ms and the rest of the
-exposure 1.4 ms. The lava's shading costs more than that version's, and
-taking four samples across the exposure rather than six pays for it.
+At 2560 × 1440 on an Apple M5 Max, timed against the molten mountain it
+replaced, the two builds interleaved (medians of `--bench 150`), the whole
+part-5 frame with the frame and its smoke takes 15.6 to 16.6 ms during the
+terrain against 15.1 to 16.5 (at 98.2, 105, 115 and 122.5 seconds), at most
+0.6 ms more, and the zoom, lit as a relief, is within the noise of before
+(at 85, 88 and 94 seconds). The machine was busy with other work, so both
+run higher than the figures above.
 
 ### Adding to part 5
 
@@ -1224,16 +1208,21 @@ bindings its pipeline has; the zoom's levels are group 2 of the drawn
 pipelines. Edit only your two files.
 
 Each Rust file holds its author's `AuthorInfo`: set `prepass: true` to have
-`<name>_prepass` drawn first, at half the resolution each way, into a
-texture `<name>_prepass_at(uv)` reads. Its controls function returns four
+`<name>_prepass` drawn first, at half the resolution each way (or full,
+with `full_prepass: true`, as the mountain's is), into a texture
+`<name>_prepass_at(uv)` reads. Its controls function returns four
 spare vec4s at each moment, read as `fc.frame_style`, `fc.zoom_style` or
 `fc.mountain_style`. `field_frame.rs` also holds the fluid's settings
 (`FLUID`), `FRAME_TAKES_PART6_FADE` (set) and `frame_shape`. That is the
 frame's shape, baked from the picture when the renderer loads, which
 `field_render.rs` binds at group 0, binding 13, for `field_frame.wgsl`;
 its layout is documented on `FrameShape`. `field_mountain.rs` holds the
-relief's resolution (`RELIEF_SIZE`, 1024 by default, about 5 texels a map
-unit).
+relief's resolution (`RELIEF_SIZE`, 2048, about 10 texels a map unit, with
+its maximum mipmaps in the texture's mip levels) and the mountain's camera,
+`MountainView`, which `fc.mountain_view` carries at the exposure's opening
+and close for the mountain and the smoke: the eye, the view and up, the
+focal lengths, the scene point the view passes through, the frame plane's
+depth along the view and how far the join has come.
 
 The frame reflects light from the other two authors. Each value counts as
 given once any of its four components is non-zero, so w can mark a dark
@@ -1255,20 +1244,21 @@ sees it, a little above the lake, its source x and y (320 by 200 pixels), a
 scene z in front of the frame (100, `LAYER_MOUNTAIN_Z`, with the lake 180
 map units from the camera, nearer the viewer as it comes closer) and a
 spread (the glow's radius in source rows, 36 map units across: the lake and
-the falls below its rim). `fc.mountain_style[1]` is its colour times its
-strength in linear HDR, with the luminance in w: an orange like the lava's
-about 1050 °C, as bright as the frame's stand-in for it (luminance 2.4),
-which the frame's reflections and the smoke's light and heat were tuned to.
-Of that, 40% is the slopes' and 60% the lake's, which follows how much of
-the lake the camera sees: its area on the screen, as the code projects it,
-against its area at the orbit's mean, within 0.3 to 1.25 of it. So the light
-is brighter as the camera looks down on the lake or passes close by and
-dimmer as it sees the lake nearly edge on, between about 0.6 and 1.15 of the
-stand-in's, and fades to 0 as the lake leaves the bottom of the screen; it
-is 0 with no mountain. Both follow the camera smoothly. The frame reads them
-unchanged: with them its ornaments and bevels nearest the mountain catch
-copper highlights and the smoke behind glows orange from below.
-`fc.mountain_style[2]` is for the mountain's own exposure.
+the rim round it). `fc.mountain_style[1]` is its colour times its strength
+in linear HDR, with the luminance in w: an orange like the lava's about 1050
+°C, as bright as the frame's stand-in for it (luminance 2.4), which the
+frame's reflections and the smoke's light and heat were tuned to. Of that,
+40% is the plume's and the flanks' and 60% the lake's, which follows how
+much of the lake the camera sees: its area on the screen, through the
+mountain's camera, against its area at the orbit's mean, within 0.3 to 1.25
+of it. So the light is brighter as the camera looks down on the lake or
+passes close by and dimmer as it sees the lake nearly edge on, between about
+0.6 and 1.15 of the stand-in's, and fades to 0 as the lake leaves the bottom
+of the screen; it is 0 with no mountain. Both follow the camera smoothly.
+The frame reads them unchanged: with them its ornaments and bevels nearest
+the mountain catch copper highlights and the smoke behind glows orange from
+below. `fc.mountain_style[2]` and `[3]` are the tune's accents and beats for
+the fountains.
 
 `px` gives the pixel in the same spaces as part 6's: `uv`, `xy` (the
 screen), `source` (the original's 320 by 200 pixels, continuing beyond the
@@ -1288,8 +1278,9 @@ controls, so they work in both. They include:
   `time_last_terrain()` and `time_end()`.
 - The zoom: `field_zoom_scale()` (buffer pixels per window pixel, below 1
   while the next level is due), `field_zoom_ahead()`,
-  `field_zoom_level()` (log2 of the magnification since the first zoom
-  frame, continuous), `field_zoom_phase()` (its fraction),
+  `field_zoom_level()` (the modern view's depth: log2 of the magnification
+  since the first zoom frame, at a steady pace), `field_zoom_phase()`
+  (its fraction),
   `field_zoom_swaps()`, `field_zoom_speed()`, `field_zoom_rows()`,
   `field_zoom_running()` and `field_zoom_shown()`; the field itself,
   smoothly resampled, with `field_zoom_value(s)`, `field_zoom_color(s)`,

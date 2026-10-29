@@ -52,6 +52,7 @@ struct Step {
     heat_z: vec4f,
     camera: vec4f,
     view: vec4f,
+    mview: array<vec4f, 4>,
     emit: array<vec4f, 48>,
 }
 

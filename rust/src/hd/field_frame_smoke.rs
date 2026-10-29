@@ -264,6 +264,9 @@ struct Step {
     heat_z: [f32; 4],
     camera: [f32; 4],
     view: [f32; 4],
+    /// The mountain's camera at the step (`FieldBlock::mountain_view`'s
+    /// close).
+    mview: [[f32; 4]; 4],
     emit: [[f32; 4]; 3 * MAX_EMIT],
 }
 
@@ -509,8 +512,34 @@ fn emitters(m: &Moment) -> Vec<Emitter> {
             v: [0.07 * s, 0.01, 0.0],
         });
     }
+    // The volcano's plume: hot smoke boiling up off the lava lake, from
+    // the mountain author's light over it (fc.mountain_style[0], source
+    // pixels), in puffs, while the lake shows.
+    let at = m.b.mountain_style[0];
+    let lit = luminance(m.lava().2) / luminance(LAVA_STANDIN);
+    if at[3] > 0.0 && lit > 0.0 {
+        let [x, y] = screen_of_source([at[0] as f64, at[1] as f64]);
+        let spread = (at[3] as f64 / 200.0).clamp(0.03, 0.2);
+        for k in 0..3u64 {
+            let kf = k as f64;
+            let puff = 0.5 + 0.5 * smoothstep(0.3, 0.7, fbm(40 + k, t * 0.6 + 2.3 * kf));
+            let across = (kf - 1.0) * 0.45 * spread + 0.15 * spread * (2.0 * PI * (0.11 * t + 0.3 * kf)).sin();
+            e.push(Emitter {
+                p: [x + across, y - 0.25 * spread, 0.02],
+                r: 0.35 * spread,
+                rho: PLUME[0] * lit.min(1.5) * puff,
+                temp: PLUME[1] * lit.min(1.5) * puff,
+                pull: 2.0,
+                v: [0.01 * (2.0 * PI * (0.07 * t + kf)).sin(), PLUME[2], 0.0],
+            });
+        }
+    }
     e
 }
+
+/// The volcano's plume (authored): density and temperature a second at the
+/// lava's full light, and its rise (screen heights a second).
+const PLUME: [f64; 3] = [0.7, 2.2, 0.22];
 
 /// The lava's heat along the mountain's outline (authored): temperature
 /// and density a second, at full heat, in a band this deep below it (screen
@@ -576,6 +605,12 @@ fn step_params(m: &Moment, grids: &Grids, dt: f64) -> Step {
         b.view[1] / 256.0,
         b.view[1] / 256.0,
         -b.view[0] / 256.0,
+    ];
+    s.mview = [
+        b.mountain_view[4],
+        b.mountain_view[5],
+        b.mountain_view[6],
+        b.mountain_view[7],
     ];
     let em = emitters(m);
     s.n_emit = em.len() as u32;
@@ -2055,7 +2090,7 @@ mod tests {
     fn uniforms_match_the_kernels() {
         assert_eq!(std::mem::size_of::<Grid3>(), 96);
         assert_eq!(std::mem::size_of::<Grid2>(), 32);
-        assert_eq!(std::mem::size_of::<Step>(), 32 + 5 * 16 + 48 * 16);
+        assert_eq!(std::mem::size_of::<Step>(), 32 + 5 * 16 + 4 * 16 + 48 * 16);
         assert!(std::mem::size_of::<Step>() as u64 <= STEP_STRIDE);
         assert_eq!(std::mem::size_of::<Lighting>(), 16 * 4 + 16 * 16 + 32);
     }

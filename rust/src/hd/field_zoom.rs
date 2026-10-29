@@ -8,12 +8,13 @@
 //! plateau lifts out.
 //!
 //! What comes from where:
-//! - Read from the port: the timing. The depth is the port's own
-//!   magnification, `FieldBlock::zoom[2]` (`field_zoom_level()`), log2 of
-//!   2^swaps / scale with the scale interpolated between the original's
-//!   frames, so the doublings (63 frames each at full speed, as the port's
-//!   swap frames lower the scale twice), the brake and the stop fall on the
-//!   original's frames. The window and the clear are the port's too.
+//! - Read from the port: the speed and the stop. The depth,
+//!   `FieldBlock::zoom[2]` (`field_zoom_level()`), moves in proportion to
+//!   the port's speed (`field::zoom_pace`), steady at full speed where the
+//!   port's log2 magnification speeds up through each doubling (authored, at
+//!   the owner's request), and lands on the port's magnification at the
+//!   stop: 63 frames a doubling at full speed, as the port's swap frames
+//!   lower the scale twice. The window and the clear are the port's too.
 //! - Authored: the target (a chain of nested minibrots out of the seahorse
 //!   valley, found in a local prototype), its framing, the method and the
 //!   look.
@@ -431,6 +432,7 @@ pub static ZOOM: AuthorInfo = AuthorInfo {
     name: "zoom",
     source: include_str!("field_zoom.wgsl"),
     prepass: false,
+    full_prepass: false,
     controls: zoom_controls,
 };
 

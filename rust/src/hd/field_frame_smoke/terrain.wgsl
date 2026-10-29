@@ -3,19 +3,27 @@
 // declare `st` (the step, with its camera and view), `relief_tex` (the
 // fitted relief) and `vsamp` (a linear sampler).
 
-// The mountain's outline over screen x: the highest screen y the fitted
-// relief reaches there, with the code's camera and projection at the step
-// (field_common.wgsl's terrain_dir, terrain_row and the depths
-// terrain_march takes, from NEAR to FAR over the map), or -1 where it
-// reaches nothing. A whole map unit a sample: the heat it places is soft.
+// The mountain's outline over screen x: the highest screen y the volcano's
+// relief reaches there, with the mountain's camera at the step (a pinhole,
+// field_mountain.rs's MountainView, in st.mview: its eye, view and focal
+// length across, up and focal length up, and the scene point the view
+// passes through), sampled along the column's ray across the ground, or -1
+// where it reaches nothing. A whole map unit a sample: the heat it places
+// is soft.
 fn smoke_outline(x: f32) -> f32 {
-    // Screen x to the original's source column: scene x is (x - 8/9) 200,
-    // and a source column is 5/6 of a scene unit.
-    let column = 160.0 + (x - 0.8888889) * 240.0;
-    let dir = st.view.xy + (column - 161.0) / 256.0 * st.view.zw;
-    let origin = st.camera.xy;
-    var z0 = 64.0;
-    var z1 = 512.0;
+    // Screen x to scene x: (x - 8/9) 200 rows.
+    let sx = (x - 0.8888889) * 200.0;
+    let eye = st.mview[0].xyz;
+    let fwd = normalize(st.mview[1].xyz);
+    let up = normalize(st.mview[2].xyz - fwd * dot(st.mview[2].xyz, fwd));
+    let right = cross(fwd, up);
+    let focal = vec2f(st.mview[1].w, st.mview[2].w);
+    let centre = st.mview[3].xy;
+    let along = fwd + right * (sx - centre.x) / focal.x;
+    let dir = along.xy;
+    let origin = eye.xy;
+    var z0 = 1.0;
+    var z1 = 1e5;
     for (var a = 0; a < 2; a++) {
         if (abs(dir[a]) > 1e-6) {
             let p = -origin[a] / dir[a];
@@ -26,22 +34,25 @@ fn smoke_outline(x: f32) -> f32 {
             return -1.0;
         }
     }
-    let q = st.camera.w;
-    var top = 1e9;
+    var top = -1e9;
     var z = z0;
-    loop {
+    let step = 1.0 / max(length(dir), 1e-3);
+    for (var i = 0; i < 600; i++) {
         if (z >= z1) { break; }
         let m = origin + dir * z;
         let h = textureSampleLevel(relief_tex, vsamp, m.yx / 200.0, 0.0).r;
         if (h >= 0.5) {
-            let projection = q * 256.0 / max(z, 1.0) + 512.0 - 2.0 * q;
-            top = min(top, (st.camera.z - h) * projection / 1024.0);
+            let d = vec3f(m, h * 0.29) - eye;
+            let depth = dot(d, fwd);
+            if (depth > 1.0) {
+                top = max(top, centre.y + focal.y * dot(d, up) / depth);
+            }
         }
-        z += 1.0;
+        z += step;
     }
-    if (top > 1e8) { return -1.0; }
-    // Source row (y down) to screen y.
-    return 1.0 - top / 200.0;
+    if (top < -1e8) { return -1.0; }
+    // Scene y to screen y.
+    return (100.0 + top) / 200.0;
 }
 
 fn smoke_hash(a: i32, b: i32) -> f32 {

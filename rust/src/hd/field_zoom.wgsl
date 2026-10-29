@@ -6,10 +6,11 @@
 //
 // A deep zoom into the Mandelbrot set, onto a minibrot of period 3341 and
 // size 1.8e-55 (the target is authored; field_zoom.rs holds it). It moves
-// with the port's own zoom: the depth is field_zoom_level(), the original's
-// log2 magnification read from its scale and swaps, so each doubling, the
+// with the port's own zoom: the depth is field_zoom_level(), moving with the
+// original's speed at a steady pace (field.rs's zoom_pace), so its ramp, the
 // brake and the stop fall on the original's frames. The window holds the
-// landed view behind the rising mountain until it is cleared, then is dark.
+// landed view as the volcano rises out of it, darkening, and is dark once
+// it is cleared.
 //
 // The method follows the original's own: Field resamples a level buffer at 1
 // to 2 buffer pixels per window pixel and builds the next level, twice as
@@ -73,6 +74,21 @@ const ZOOM_BAND_GAIN=0.5;
 const ZOOM_INSIDE=vec3f(.0015,.0025,.0100);
 // Samples per window pixel, each way.
 const ZOOM_SAMPLES=2;
+// The relief (authored): the view read as the terrain the volcano is made
+// of, high on the set and falling away with the log of the distance from
+// it, ZOOM_RELIEF 4K pixels a halving of the distance, so that filaments
+// stand as ridges and the copies as plateaus; lit from the upper left, as
+// the frame's key is, over an ambient, with soft shadows and glints. A flat
+// face takes about the plain shade, faces turned to the light up to half
+// as much again, faces turned away and shadows down to a fifth.
+const ZOOM_RELIEF=4.0;
+const ZOOM_SPAN=4.0;
+const ZOOM_LIGHT=vec3f(-.55,.55,.62);
+const ZOOM_AMBIENT=.22;
+const ZOOM_DIFFUSE=1.25;
+// Glints on faces turned to the light, a cool white, and their sharpness.
+const ZOOM_GLINT=vec3f(.25,.45,.9);
+const ZOOM_GLINT_POWER=24.0;
 
 fn zoom_palette(x:f32)->vec3f {
     if x<ZOOM_STOPS.x {return mix(ZOOM_NAVY,ZOOM_BLUE,x/ZOOM_STOPS.x);}
@@ -110,6 +126,36 @@ fn zoom_core_at(t:vec4f,lt:f32)->f32 {
     return exp(-x*x);
 }
 
+// The relief's height at a texel, in 4K pixels.
+fn zoom_height(t:vec4f,lt:f32)->f32 {
+    if t.z>.5 {return ZOOM_RELIEF*9.0;}
+    return ZOOM_RELIEF*clamp(-(t.y+lt),-6.0,9.0);
+}
+// How the relief is lit at window point w: its normal from the heights
+// ZOOM_SPAN texels either side, smoothing the lace's finest grain, and its
+// shadow from the heights towards the light.
+fn zoom_lit(w:vec2f,z:f32,lt:f32)->vec4f {
+    let step=ZOOM_SPAN*z/zoom_view.level.y;
+    let h=zoom_height(zoom_texel(w,z),lt);
+    let hx=zoom_height(zoom_texel(w+vec2f(step,0.0),z),lt)-zoom_height(zoom_texel(w-vec2f(step,0.0),z),lt);
+    let hy=zoom_height(zoom_texel(w+vec2f(0.0,step),z),lt)-zoom_height(zoom_texel(w-vec2f(0.0,step),z),lt);
+    let span=2.0*ZOOM_SPAN*exp2(lt);
+    let n=normalize(vec3f(-hx/span,-hy/span,1.0));
+    let l=normalize(ZOOM_LIGHT);
+    // Heights towards the light against the light's rise.
+    let toward=normalize(l.xy);
+    let rise=l.z/length(l.xy);
+    var lit=1.0;
+    for(var k=1;k<=4;k++) {
+        let r=f32(1<<u32(k))*ZOOM_SPAN;
+        let hs=zoom_height(zoom_texel(w+toward*r*z/zoom_view.level.y,z),lt);
+        lit=min(lit,clamp(1.0-(hs-h-rise*r*exp2(lt))/(4.0*ZOOM_RELIEF),0.0,1.0));
+    }
+    let shade=ZOOM_AMBIENT+ZOOM_DIFFUSE*max(dot(n,l),0.0)*(.15+.85*lit);
+    let glint=pow(max(dot(n,normalize(l+vec3f(0,0,1))),0.0),ZOOM_GLINT_POWER)*lit;
+    return vec4f(vec3f(shade),glint);
+}
+
 // The deep view at window point w (window heights, y up), over one window
 // pixel of `pixel` window heights: linear HDR.
 fn zoom_view_at(w:vec2f,pixel:f32)->vec3f {
@@ -128,6 +174,8 @@ fn zoom_view_at(w:vec2f,pixel:f32)->vec3f {
     }
     let n=f32(ZOOM_SAMPLES*ZOOM_SAMPLES);
     c/=n;core/=n;
+    let lit=zoom_lit(w,z,lt);
+    c=c*lit.rgb+ZOOM_GLINT*lit.a*min(dot(c,vec3f(.3,.6,.1))*4.0,1.0);
     // The core's local density, from a 3 x 3 spread round the pixel.
     let spread=ZOOM_CORE_SPREAD/1080.0;
     var dens=0.0;
@@ -153,8 +201,10 @@ fn zoom_layer(px:FieldPixel)->FieldLayer {
     // is px.pixel source rows, a hundredth of the window's height each.
     let w=(scene_of_source(s)-vec2f(0,4))/100.0;
     var c=zoom_view_at(w,px.pixel/100.0);
-    // Part 6's fade brings the window in with the frame.
+    // Part 6's fade brings the window in with the frame, and the window
+    // darkens as the volcano rises out of it (fc.mountain_view's join).
     c*=pow(clamp(picture_level(),0.0,1.0),2.2);
+    c*=1.0-smoothstep(.05,.45,fc.mountain_view[7].w);
     return field_layer(c,cover,LAYER_WINDOW_Z);
 }
 fn zoom_prepass(px:FieldPixel)->vec4f {return vec4f(0);}

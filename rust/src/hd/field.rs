@@ -39,7 +39,7 @@ mod mountain;
 #[path = "field_zoom.rs"]
 mod zoom;
 pub use frame::{FLUID, FRAME, FRAME_TAKES_PART6_FADE, FrameFluid, FrameShape, frame_shape};
-pub use mountain::{MOUNTAIN, RELIEF_SIZE};
+pub use mountain::{MOUNTAIN, MountainView, RELIEF_SIZE, volcano};
 pub use zoom::{ZOOM, ZoomLevels};
 
 /// `u.state.x` during part 5. The intro uses 0..=5, part 2 6..=9 and part 6
@@ -117,8 +117,9 @@ pub struct FieldBlock {
     pub part: [f32; 4],
     /// The zoom: its scale in the shown buffer's pixels per window pixel
     /// (1 to 2; below 1 while the next level is due), 1 when the next frame
-    /// swaps to the next level, the level (log2 of the magnification since
-    /// the first zoom frame, continuous), and the shown buffer's swaps.
+    /// swaps to the next level, the modern view's depth (log2 of the
+    /// magnification since the first zoom frame, at a steady pace: see
+    /// [`FieldPreview::pace`]), and the shown buffer's swaps.
     pub zoom: [f32; 4],
     /// Zoom speed / 1024, rows of the next level built (0 to 100), running
     /// (1 while it zooms, 0 before its first frame and once it has stopped),
@@ -171,6 +172,10 @@ pub struct FieldBlock {
     /// renderer during part 3, never by [`FieldPreview::controls`], so the
     /// fluid's steps don't see it.
     pub part3_view: [f32; 4],
+    /// The mountain's camera at the exposure's opening, then at its close
+    /// (the moment shown), four each: see field_mountain.rs's
+    /// `MountainView::block`.
+    pub mountain_view: [[f32; 4]; 8],
 }
 
 /// One author's share of the modern view; see rust/README.md, "Adding to
@@ -182,9 +187,11 @@ pub struct AuthorInfo {
     /// shared controls, field_common.wgsl, the three authors' files and
     /// field_style.wgsl.
     pub source: &'static str,
-    /// Run `<name>_prepass` first, at half the resolution each way, into a
-    /// texture `<name>_prepass_at(uv)` reads.
+    /// Run `<name>_prepass` first, at half the resolution each way (or the
+    /// full resolution with `full_prepass`), into a texture
+    /// `<name>_prepass_at(uv)` reads.
     pub prepass: bool,
+    pub full_prepass: bool,
     /// Values for the author's four spare vec4s at a clip time (zero by
     /// default), given the rest of the block.
     pub controls: fn(&FieldBlock, f64) -> [[f32; 4]; 4],
@@ -317,6 +324,8 @@ pub struct FieldPreview {
     /// The last zoom frame: its scale and buffer stay in the window, still,
     /// until the window is cleared.
     pub last_zoom: usize,
+    /// The modern view's zoom depth at each frame ([`zoom_pace`]).
+    pub pace: Vec<f64>,
     /// Clip time of part 6's first PSTART fade frame (level 0), if known, for
     /// the picture level before part 5.
     pub picture_fade: Option<f64>,
@@ -415,8 +424,10 @@ impl FieldPreview {
             .rposition(|f| !f.state.terrain)
             .ok_or("Part 5 never zoomed")?;
         let events = FieldEvents::observe(&frames);
+        let pace = zoom_pace(&frames, last_zoom);
         Ok(Self {
             start,
+            pace,
             frames,
             palettes,
             picture,
@@ -450,6 +461,12 @@ impl FieldPreview {
         } else {
             position
         }
+    }
+
+    /// The music's order and row (order << 8 | row) as frame `j` began, the
+    /// position the generator was at as it rendered that frame's PCM.
+    pub fn music_position(&self, j: usize) -> Option<u16> {
+        self.replay.music.get(j).copied()
     }
 
     /// Part-5 frame at a clip time, or `None` before part 5. Times past the
@@ -570,6 +587,13 @@ impl FieldPreview {
         (scale(j) + (end - scale(j)) * f, next.swapped)
     }
 
+    /// The modern view's zoom depth `f` of the way from frame `j` to the
+    /// next, linear between frames.
+    fn depth(&self, j: usize, f: f64) -> f64 {
+        let next = (j + 1).min(self.pace.len() - 1);
+        self.pace[j] + (self.pace[next] - self.pace[j]) * f
+    }
+
     /// The picture level at a clip time: 1 in part 5, and before it the
     /// level of part 6's PSTART fade (64 frames from `picture_fade`).
     fn picture_level(&self, time: f64) -> f64 {
@@ -579,6 +603,30 @@ impl FieldPreview {
         self.picture_fade.map_or(0.0, |from| {
             ((time - from) * FRAME_RATE as f64 / 64.0).clamp(0.0, 63.0 / 64.0)
         })
+    }
+
+    /// The terrain's step (continuous), level and projection q at a clip
+    /// time: the camera of the terrain step the frame shows, moving on to
+    /// the next frame's, and the level and q interpolated between frames.
+    pub fn terrain_at(&self, time: f64) -> (f64, f64, f64) {
+        let last = self.frames.len() - 1;
+        let position = self.position(time).clamp(0.0, last as f64);
+        let j = position.floor() as usize;
+        let f = position - j as f64;
+        let (a, b) = (&self.frames[j].state, &self.frames[(j + 1).min(last)].state);
+        let lerp = |x: f64, y: f64| x + (y - x) * f;
+        let tf = if a.terrain {
+            let moves = b.terrain_frame > a.terrain_frame;
+            a.terrain_frame as f64 - 1.0 + if moves { f } else { 0.0 }
+        } else {
+            0.0
+        };
+        let level = lerp(a.level as f64, b.level as f64);
+        let q = lerp(
+            a.projection.unwrap_or(0) as f64,
+            b.projection.unwrap_or(0) as f64,
+        );
+        (tf, level, q)
     }
 
     /// Everything part 5 puts in the shared uniforms at a clip time but the
@@ -601,19 +649,7 @@ impl FieldPreview {
         };
         let swaps = self.frames[shown].swaps as f64;
         let state = a.state;
-        // The camera of the terrain step this frame shows, moving on to the
-        // next frame's.
-        let tf = if state.terrain {
-            let moves = b.state.terrain_frame > state.terrain_frame;
-            state.terrain_frame as f64 - 1.0 + if moves { f } else { 0.0 }
-        } else {
-            0.0
-        };
-        let level = lerp(a.state.level as f64, b.state.level as f64);
-        let q = lerp(
-            a.state.projection.unwrap_or(0) as f64,
-            b.state.projection.unwrap_or(0) as f64,
-        );
+        let (tf, level, q) = self.terrain_at(time);
         let (camera, view) = self.camera_at(tf, level);
         let e = &self.events;
         let cleared = state.cleared;
@@ -627,7 +663,7 @@ impl FieldPreview {
             zoom: [
                 scale as f32,
                 if ahead { 1.0 } else { 0.0 },
-                (swaps - scale.log2()) as f32,
+                self.depth(j, f) as f32,
                 swaps as f32,
             ],
             zoom_state: [
@@ -681,9 +717,11 @@ impl FieldPreview {
             fluid_region: FLUID.region,
             ..FieldBlock::zeroed()
         };
+        block.mountain_view = mountain::view_block(self, time);
         block.frame_style = (FRAME.controls)(&block, time);
         block.zoom_style = (ZOOM.controls)(&block, time);
         block.mountain_style = (MOUNTAIN.controls)(&block, time);
+        [block.mountain_style[2], block.mountain_style[3]] = mountain::hits(self, time);
         block
     }
 }
@@ -701,6 +739,37 @@ pub fn rgba(indices: &[u8], palette: &[u8]) -> Vec<u8> {
             [c(p[0]), c(p[1]), c(p[2]), 255]
         })
         .collect()
+}
+
+/// The modern view's zoom depth at each frame, from 0 at the first: the
+/// original lowers its scale linearly within each doubling, so its log2
+/// magnification speeds up through each one and slows at the next, twice
+/// as fast at a doubling's end as at its start. The modern view's depth
+/// moves instead in proportion to the original's own speed (read from the
+/// scene: its rise to full speed, the dip and the brake), so it is steady
+/// at full speed, scaled so that it reaches the original's magnification at
+/// the zoom's last frame (authored, at the owner's request). At full speed that
+/// is a doubling every 63 frames, as the original's; its doublings fall
+/// within a frame or so of the original's swaps, and the landed view is
+/// the same.
+pub fn zoom_pace(frames: &[FieldFrame], last_zoom: usize) -> Vec<f64> {
+    let last = last_zoom.min(frames.len().saturating_sub(1));
+    let speed = |k: usize| frames[k].state.speed.max(0) as f64;
+    let mut pace = vec![0.0];
+    for k in 0..last {
+        pace.push(pace[k] + (speed(k) + speed(k + 1)) / 2.0);
+    }
+    let state = &frames[last].state;
+    let scale = state.scale as f64 / 65536.0;
+    let end = if last == 0 {
+        0.0
+    } else {
+        (frames[last].swaps as f64 - scale.log2()).max(0.0)
+    };
+    let total = pace[last].max(1.0);
+    let mut pace: Vec<f64> = pace.iter().map(|p| p * end / total).collect();
+    pace.resize(frames.len().max(1), end);
+    pace
 }
 
 impl FieldEvents {
@@ -1081,16 +1150,19 @@ impl SetMoments {
     }
 }
 
-/// The fitted mountain baked for the shaders (an interpretation of DEP.U,
-/// see [`MandelFit`]): a square texture over the 200 x 200 map, row x then
-/// column y as DEP.U, each texel at its centre holding the height `prepare`
-/// would make of the fitted DEP value (2 (DEP - 128), from 0 to 244 on the
-/// plateau; without its three-pixel average), its gradient in height units
-/// per map unit, and the distance outside the set in map units (a potential
-/// estimate, G / (2 |grad G|); 0 inside, at most 64).
+/// The modern view's volcano baked for the shaders, made from the fit (see
+/// [`MandelFit`] and field_mountain.rs's `volcano`): a square texture over
+/// the 200 x 200 map, row x then column y as DEP.U, each texel at its
+/// centre holding the height in `prepare`'s units (the lake 140 where DEP.U
+/// has its plateau, the rim 150), its gradient in height units per map unit
+/// (central differences between texels), and the distance outside the set
+/// in map units (a potential estimate, G / (2 |grad G|); 0 inside, at most
+/// 64).
 pub struct Relief {
     pub size: usize,
     pub texels: Vec<[f16; 4]>,
+    /// Maximum mipmaps of the heights ([`maximum_mips`]), from level 1.
+    pub mips: Vec<Vec<f32>>,
     /// The highest of each coarse cell's heights, with a texel of margin,
     /// as [`FieldPreview::coarse`].
     pub coarse: Vec<u8>,
@@ -1099,60 +1171,97 @@ pub struct Relief {
 
 impl Relief {
     pub fn bake(fit: &MandelFit, size: usize) -> Self {
-        let mut texels = vec![[f16::ZERO; 4]; size * size];
+        let unit = MAP_SIZE as f64 / size as f64;
+        let mut points = vec![(0.0_f64, 0.0_f64); size * size];
         let rows = size.div_ceil(
             std::thread::available_parallelism()
                 .map_or(4, |n| n.get())
                 .max(1),
         );
         std::thread::scope(|scope| {
-            for (chunk, block) in texels.chunks_mut(rows * size).enumerate() {
+            for (chunk, block) in points.chunks_mut(rows * size).enumerate() {
                 scope.spawn(move || {
-                    for (k, texel) in block.iter_mut().enumerate() {
+                    for (k, point) in block.iter_mut().enumerate() {
                         let at = chunk * rows * size + k;
-                        let unit = MAP_SIZE as f64 / size as f64;
                         let m = [
                             ((at / size) as f64 + 0.5) * unit,
                             ((at % size) as f64 + 0.5) * unit,
                         ];
-                        *texel = Self::texel(fit, m).map(f16::from_f64);
+                        let v = volcano(fit, m, unit);
+                        *point = (v.height, v.distance);
                     }
                 });
             }
         });
-        let height: Vec<f32> = texels.iter().map(|t| t[0].to_f32()).collect();
-        let highest = height.iter().copied().fold(0.0, f32::max);
+        let height = |x: usize, y: usize| points[x.min(size - 1) * size + y.min(size - 1)].0;
+        let texels: Vec<[f16; 4]> = (0..size * size)
+            .map(|at| {
+                let (x, y) = (at / size, at % size);
+                let gradient = |a: f64, b: f64| (b - a) / (2.0 * unit);
+                [
+                    points[at].0,
+                    gradient(height(x.saturating_sub(1), y), height(x + 1, y)),
+                    gradient(height(x, y.saturating_sub(1)), height(x, y + 1)),
+                    points[at].1,
+                ]
+                .map(f16::from_f64)
+            })
+            .collect();
+        let heights: Vec<f32> = texels.iter().map(|t| t[0].to_f32()).collect();
+        let highest = heights.iter().copied().fold(0.0, f32::max);
+        let mips = maximum_mips(&heights, size);
         Self {
             size,
-            coarse: coarse_cells(size, 1, |x, y| height[x * size + y]),
+            coarse: coarse_cells(size, 1, |x, y| heights[x * size + y]),
             texels,
+            mips,
             highest,
         }
     }
+}
 
-    /// One texel's values at map point m.
-    pub fn texel(fit: &MandelFit, m: [f64; 2]) -> [f64; 4] {
-        let c = fit.c(m);
-        let top = 2.0 * (fit.plateau as f64 - 128.0).max(0.0);
-        let found = (!in_set(c, SET_ITERATIONS))
-            .then(|| potential(c, POTENTIAL_ITERATIONS))
-            .flatten();
-        let Some((g, grad)) = found else {
-            return [top, 0.0, 0.0, 0.0];
+/// Maximum mipmaps of a `size` x `size` height grid (a power of two): level
+/// L (from 1) holds, for each block of 2^L texels a side, the highest of
+/// the (2^L + 1)^2 texels from its first to the first of the next, so it
+/// bounds the bilinear surface between their centres (row-major in x, as
+/// the grid).
+fn maximum_mips(heights: &[f32], size: usize) -> Vec<Vec<f32>> {
+    let mut mips: Vec<Vec<f32>> = Vec::new();
+    let mut n = size / 2;
+    while n >= 1 {
+        let level = match mips.last() {
+            // Level 1 from the texels: each block's 3 x 3.
+            None => (0..n * n)
+                .map(|at| {
+                    let (x, y) = (2 * (at / n), 2 * (at % n));
+                    let mut top = 0.0_f32;
+                    for i in x..(x + 3).min(size) {
+                        for j in y..(y + 3).min(size) {
+                            top = top.max(heights[i * size + j]);
+                        }
+                    }
+                    top
+                })
+                .collect(),
+            // Each further level from the one below's 2 x 2, which share
+            // their edges.
+            Some(below) => {
+                let b = 2 * n;
+                (0..n * n)
+                    .map(|at| {
+                        let (x, y) = (2 * (at / n), 2 * (at % n));
+                        below[x * b + y]
+                            .max(below[x * b + y + 1])
+                            .max(below[(x + 1) * b + y])
+                            .max(below[(x + 1) * b + y + 1])
+                    })
+                    .collect()
+            }
         };
-        let (dep, slope) = fit.slope_at(g, grad);
-        let per_map = (grad[1] / fit.scale).hypot(grad[0] / (fit.scale * fit.aspect));
-        let distance = (0.5 * g / per_map.max(1e-300)).min(64.0);
-        if dep <= 128.0 {
-            return [0.0, 0.0, 0.0, distance];
-        }
-        [
-            2.0 * (dep - 128.0),
-            2.0 * slope[0],
-            2.0 * slope[1],
-            distance,
-        ]
+        mips.push(level);
+        n /= 2;
     }
+    mips
 }
 
 /// The highest value in each coarse cell of a `size` x `size` grid over the
@@ -1234,45 +1343,45 @@ mod tests {
     }
 
     #[test]
-    fn relief_texels_follow_the_fit() {
+    fn relief_texels_follow_the_volcano() {
         let fit = invented_fit();
-        let relief = Relief::bake(&fit, 50);
-        assert_eq!(relief.texels.len(), 2500);
+        let relief = Relief::bake(&fit, 64);
+        let unit = MAP_SIZE as f64 / 64.0;
+        assert_eq!(relief.texels.len(), 64 * 64);
         assert_eq!(relief.coarse.len(), COARSE_CELLS * COARSE_CELLS);
-        assert_eq!(relief.highest, 244.0);
-        // Inside the set: the plateau, flat, no distance.
-        let inside = Relief::texel(&fit, [100.0, 100.0 + 0.3 * fit.scale * fit.aspect]);
-        assert_eq!(inside, [244.0, 0.0, 0.0, 0.0]);
-        // On a slope: the gradient matches the height's differences, and the
-        // distance grows away from the set.
-        let mut slopes = 0;
-        for k in 0..40 {
-            let m = [60.0 + k as f64 * 2.1, 30.0 + k as f64 * 0.7];
-            let t = Relief::texel(&fit, m);
-            let e = 1e-4;
-            let h = |dx: f64, dy: f64| Relief::texel(&fit, [m[0] + dx, m[1] + dy])[0];
-            if t[0] <= 1.0 || t[0] >= 243.0 || h(e, 0.0) == 0.0 || h(0.0, e) == 0.0 {
-                continue;
+        // Inside the set: the lake, flat, no distance.
+        let inside = volcano(&fit, [100.0, 100.0 + 0.3 * fit.scale * fit.aspect], unit);
+        assert!(inside.lake && inside.height == mountain::VOLCANO_LAKE && inside.distance == 0.0);
+        let height = |x: usize, y: usize| relief.texels[x * 64 + y][0].to_f32();
+        let mut flanks = 0;
+        for x in 1..63 {
+            for y in 1..63 {
+                let t = relief.texels[x * 64 + y];
+                // The gradient is the central difference of the heights.
+                let gx = (height(x + 1, y) - height(x - 1, y)) / (2.0 * unit as f32);
+                let gy = (height(x, y + 1) - height(x, y - 1)) / (2.0 * unit as f32);
+                // Within the heights' f16 rounding.
+                assert!((t[1].to_f32() - gx).abs() < 0.05 + 0.01 * gx.abs());
+                assert!((t[2].to_f32() - gy).abs() < 0.05 + 0.01 * gy.abs());
+                if t[0].to_f32() > 1.0 && t[3].to_f32() > 0.0 {
+                    flanks += 1;
+                }
             }
-            let numeric = [
-                (h(e, 0.0) - h(-e, 0.0)) / (2.0 * e),
-                (h(0.0, e) - h(0.0, -e)) / (2.0 * e),
-            ];
-            for (a, b) in t[1..3].iter().zip(numeric) {
-                assert!(
-                    (a - b).abs() < 1e-3 * (1.0 + b.abs()),
-                    "{t:?} {numeric:?} at {m:?}"
-                );
-            }
-            assert!(t[3] > 0.0);
-            slopes += 1;
         }
-        assert!(slopes > 10, "{slopes} slope samples");
-        // The coarse cells bound every texel in them.
+        assert!(flanks > 100, "{flanks} flank texels");
+        assert!(relief.highest <= mountain::VOLCANO_RIM as f32 + 8.0);
+        // The coarse cells and every mipmap bound the texels under them.
         for (at, t) in relief.texels.iter().enumerate() {
-            let cell = (at / 50) * COARSE_CELLS / 50 * COARSE_CELLS + (at % 50) * COARSE_CELLS / 50;
+            let cell = (at / 64) * COARSE_CELLS / 64 * COARSE_CELLS + (at % 64) * COARSE_CELLS / 64;
             assert!(t[0].to_f32() <= relief.coarse[cell] as f32);
+            for (k, level) in relief.mips.iter().enumerate() {
+                let n = 64 >> (k + 1);
+                let block = |i: usize| (i >> (k + 1)).min(n - 1);
+                assert!(t[0].to_f32() <= level[block(at / 64) * n + block(at % 64)]);
+            }
         }
+        assert_eq!(relief.mips.len(), 6);
+        assert_eq!(relief.mips[5].len(), 1);
     }
 
     /// Invented part-5 frames: `zooms` zoom frames (scale falling by
@@ -1357,6 +1466,7 @@ mod tests {
             start: 0,
             events: FieldEvents::observe(&frames),
             last_zoom: zooms,
+            pace: zoom_pace(&frames, zooms),
             frames,
             palettes: vec![vec![0; 768]],
             picture: vec![0; 64000],
@@ -1364,7 +1474,7 @@ mod tests {
             heights: vec![0; MAP_SIZE * MAP_SIZE],
             coarse: vec![0; COARSE_CELLS * COARSE_CELLS],
             sine,
-            relief: Relief::bake(&fit, 25),
+            relief: Relief::bake(&fit, 32),
             fit,
             picture_fade: Some(-1.0),
             replay: Replay {
@@ -1374,6 +1484,7 @@ mod tests {
             },
         }
     }
+
 
     #[test]
     fn zoom_scale_carries_on_into_the_next_level() {
@@ -1414,6 +1525,26 @@ mod tests {
         let before = preview.controls(-0.5);
         assert_eq!(before.part[1], -0.5);
         assert!(before.window[2] > 0.0 && before.window[2] < 1.0);
+    }
+
+    #[test]
+    fn the_modern_zoom_moves_at_a_steady_pace() {
+        let preview = invented_preview(200, 1024, 0);
+        let at = |position: f64| preview.controls(position / FRAME_RATE as f64).zoom;
+        // At a steady speed the depth moves as much each frame, across a
+        // swap too, where the original's log2 magnification moves twice as
+        // fast as at the doubling's start.
+        let swap = (2..200).find(|&j| preview.frames[j].state.swapped).unwrap();
+        let step = at(swap as f64 + 1.0)[2] - at(swap as f64)[2];
+        for position in [2.5, swap as f64 - 1.5, swap as f64 + 20.25, 190.0] {
+            let d = at(position + 1.0)[2] - at(position)[2];
+            assert!((d - step).abs() < 1e-5, "{position}: {d} {step}");
+        }
+        // It lands on the original's magnification at the last zoom frame.
+        let last = &preview.frames[200];
+        let original = last.swaps as f64 - (last.state.scale as f64 / 65536.0).log2();
+        assert!((at(200.0)[2] as f64 - original).abs() < 1e-5);
+        assert!((at(260.0)[2] as f64 - original).abs() < 1e-5);
     }
 
     #[test]
