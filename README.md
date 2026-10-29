@@ -8,7 +8,8 @@ Playing with a modern rendering of Future Crew's 1992 demo **Panic**.
 
 So far this covers the opening through the PANIC logo, the square transition,
 experiments with the following double scroller, part 6's interference
-rings as a pool of liquid chrome under neon, part 5's deep Mandelbrot
+rings in the original's black and white under neon, rising into a pool of
+liquid chrome as the tune says "panic", part 5's deep Mandelbrot
 zoom and molten Mandelbrot mountain, part 3's shade bobs and morphing
 dots as light painting through rising water, part 4's plasma as the light
 on a carved stone slab standing in that water, which then breaks up into
@@ -183,7 +184,7 @@ cargo run --release --locked --features hires --bin panic-hd -- --rings --seek 4
 
 | Option | Effect |
 | --- | --- |
-| `--rings` | Continue through part 6, as a liquid-chrome pool under neon |
+| `--rings` | Continue through part 6, in black and white under neon, then a liquid-chrome pool |
 | `--original-symbols` | Part 6 with the original symbols throughout |
 
 Part 6 starts at 42.23 seconds, black until its first symbol at 43.41. The
@@ -191,13 +192,14 @@ rings fade in from 50.33 seconds and out from 72.99, and the PSTART picture
 fades in from 80.36; part 5 begins at 81.27, where `--rings` ends and
 `--field` carries on.
 The symbols become neon: glowing gas in clear glass tubes, bent into
-separate runs with gaps where lines cross, as signs are made. The two ring
-layers become two sets of waves interfering on a pool of liquid chrome that
-fills the screen, under a cool and a warm lamp. Until the rings fade in
-there is only the neon on black. The pool comes up with them, its waves
-mirroring the neon far out across it, and when they fade out the lamps go,
-leaving the waves lit by the neon alone. In the app, **M** shows faithful
-HD, the original's look at display resolution. The
+separate runs with gaps where lines cross, as signs are made. Until the
+rings fade in there is only the neon on black. The two ring layers come up
+as the original's black and white, filling the screen under the neon, and
+as the tune first says "panic", at 58.16 seconds, they rise into two sets of
+waves interfering on a pool of liquid chrome, under a cool and a warm lamp.
+The waves mirror the neon far out across the pool, and when the rings fade
+out the lamps go, leaving the waves lit by the neon alone. In the app, **M**
+shows faithful HD, the original's look at display resolution. The
 [renderer notes](rust/README.md#part-6-rings) say what is read from the port,
 what is interpreted and what is authored, and how to add a style.
 

@@ -67,6 +67,15 @@ pub const RING_WINDOW: [f32; 4] = [32.0, 8.0, 288.0, 192.0];
 pub const RING_SHUTTER_TICKS: f64 = 0.7;
 /// Frames between replay checkpoints for the original comparison.
 const REPLAY_INTERVAL: usize = 64;
+/// The symbol window in which the tune first says "panic": read from P.P,
+/// order 0A, row 0 first plays its instrument 44, a voice sample we hear as
+/// the word, as window 128, set 3's first, begins (58.16 s). Until then the
+/// pool style shows the rings as the original's black and white; over the
+/// word they become the pool (authored).
+pub const PANIC_WINDOW: usize = NEW_SET_FIRST_WINDOW + 2 * PATTERN_WINDOWS;
+/// The word's length in seconds, over which the change runs: instrument
+/// 44's 5,137 samples, played at E-4 from its 12,000 Hz, take about 0.34 s.
+pub const PANIC_FADE: f64 = 0.34;
 #[path = "rings_authored.rs"]
 mod authored;
 pub use authored::{
@@ -1890,6 +1899,17 @@ impl RingsPreview {
 
     /// Everything part 6 puts in the shared uniforms at a clip time; see
     /// renderer.rs (`rings` to `rings_style`) for the layout.
+    /// How far the tune has said "panic" ([`PANIC_WINDOW`]) at a clip time:
+    /// 0 before the word, up to 1 over it, eased. Without that window, 1.
+    pub fn panic_said(&self, time: f64) -> f64 {
+        let Some(window) = self.windows.get(PANIC_WINDOW) else {
+            return 1.0;
+        };
+        let said = (self.start + window.start) as f64 / FRAME_RATE as f64;
+        let x = ((time - said) / PANIC_FADE).clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    }
+
     pub fn controls(&self, time: f64) -> RingsControls {
         let j = self.frame_at(time).unwrap_or(0);
         let seconds = |frame: usize| (self.start + frame) as f64 / FRAME_RATE as f64;
@@ -1956,7 +1976,12 @@ impl RingsPreview {
                 self.bands.matched as f32,
                 0.0,
             ],
-            ring_fades: [intensity as f32, picture as f32, peak as f32, 0.0],
+            ring_fades: [
+                intensity as f32,
+                picture as f32,
+                peak as f32,
+                self.panic_said(time) as f32,
+            ],
             symbol,
             symbol_layers,
             symbol_atlas: [
@@ -2399,6 +2424,43 @@ mod tests {
         let first = original.controls(at(NEW_SET_FIRST_WINDOW));
         assert_eq!(first.symbol_layers[..2], [0.0, 15.0]);
         assert_eq!(original.symbol_set_at(at(NEW_SET_FIRST_WINDOW)), None);
+    }
+
+    #[test]
+    fn the_pool_rises_as_the_tune_says_panic() {
+        // Invented windows, 8 frames each from part-6 frame 100: the word
+        // comes as PANIC_WINDOW begins, at frame 100 + 8 * 128.
+        let windows: Vec<SymbolWindow> = (0..PANIC_WINDOW + 4)
+            .map(|i| SymbolWindow {
+                mask: (i % 16) as u8,
+                start: 100 + 8 * i,
+                end: 108 + 8 * i,
+            })
+            .collect();
+        let said = (100 + 8 * PANIC_WINDOW) as f64 / FRAME_RATE as f64;
+        let preview = invented_preview(windows);
+        let at = |t: f64| preview.controls(t).ring_fades[3];
+        assert_eq!(at(said - 0.01), 0.0);
+        assert_eq!(at(said), 0.0);
+        let half = at(said + PANIC_FADE / 2.0);
+        assert!((half - 0.5).abs() < 1e-6, "{half}");
+        assert!(at(said + 0.25 * PANIC_FADE) < half);
+        assert_eq!(at(said + PANIC_FADE), 1.0);
+        assert_eq!(at(said + 1.0), 1.0);
+        // Without the word's window, the pool throughout.
+        let short: Vec<SymbolWindow> = (0..4)
+            .map(|i| SymbolWindow {
+                mask: 0,
+                start: 8 * i,
+                end: 8 + 8 * i,
+            })
+            .collect();
+        assert_eq!(invented_preview(short).controls(0.1).ring_fades[3], 1.0);
+        // The shader reads the word from that slot.
+        assert!(
+            include_str!("rings_common.wgsl")
+                .contains("fn panic_said()->f32 {return u.ring_fades.w;}")
+        );
     }
 
     /// A preview of invented frames: part 6 from clip frame 0, running, with

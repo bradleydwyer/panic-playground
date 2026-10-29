@@ -110,6 +110,9 @@ fn ring_intensity()->f32 {return u.ring_fades.x;}
 fn ring_peak()->f32 {return u.ring_fades.z;}
 // The PSTART palette level, 0..1 (63/64 at most), from 80.36 s.
 fn picture_level()->f32 {return u.ring_fades.y;}
+// How far the tune has said "panic" (rings::PANIC_WINDOW, 58.16 s): 0
+// before the word, up to 1 over its 0.34 s, eased.
+fn panic_said()->f32 {return u.ring_fades.w;}
 // Authored music cues measured from the clip's PCM, each 0..1, as the intro
 // and the scroller use them (clip::audio_cues): energy, onset, low band and
 // accent; the scroller's relative level, bass and treble onsets. They are not

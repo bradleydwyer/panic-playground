@@ -29,9 +29,13 @@
 //   that is seen.
 //
 // The timing follows the original exactly: black before the first symbol,
-// then the neon on black, with no pool, until the rings fade in. The pool
-// comes up with them, waves, lamps and reflections together, and the lamps'
-// power follows ring_intensity, so the fade-out is the lamps going out. By
+// then the neon on black, with no pool, until the rings fade in. They come
+// up as the original's black and white, a flat print of its two greys and
+// XOR filling the screen under the neon, lit by it, until the tune first
+// says "panic" (panic_said). Over the word the pool takes the print's place,
+// its waves rising out of the level surface, lamps and reflections with them
+// (authored); the lamps' power follows ring_intensity, so the fade-out is
+// the lamps going out. By
 // default the waves stay whole after it, seen only by the neon they reflect
 // (POOL_DARK_WAVES; at 0 their height follows ring_intensity down too, and
 // the pool settles into a still black mirror). From 80.36 s the PSTART
@@ -42,6 +46,9 @@
 // The waves' depth: each layer's crest height at full intensity, in rows
 // (source rows on the 4:3 display). About 1 keeps them liquid; 2 is choppy.
 const POOL_DEPTH=.8;
+// How strongly the print's grey bands show the neon's light on them (1: as
+// a matte surface of the bands' grey reflects it).
+const POOL_PRINT_GLOW=1.0;
 // How much of that height the waves keep once the rings have faded out: 0
 // lets them settle into a still black mirror, as the original is black; 1
 // keeps them whole with the lamps off, seen only by the neon they reflect.
@@ -134,7 +141,7 @@ fn pool_layer(layer:u32,s:vec2f,shutter:f32)->vec3f {
     let g=POOL_METRIC*d/(r*2.0*ring_width())*p.y;
     return vec3f(p.x,g.x/COLUMN,-g.y);
 }
-fn pool_amp()->f32 {return POOL_DEPTH*mix(ring_intensity(),ring_peak(),POOL_DARK_WAVES);}
+fn pool_amp()->f32 {return POOL_DEPTH*mix(ring_intensity(),ring_peak(),POOL_DARK_WAVES)*panic_said();}
 // Where the waves run at source point s: 1 in them, antialiased over `blur`
 // pixels at the ring window's edge, or everywhere when they fill the screen.
 fn pool_window(s:vec2f,blur:f32)->f32 {
@@ -288,16 +295,37 @@ fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
     return c/f32(POOL_SHUTTER);
 }
 
+// ---- The print -----------------------------------------------------------------
+// Before the tune says "panic": the original's two greys and XOR, as it
+// shows them through the palette's fades, filling the screen as a flat,
+// matte print, antialiased over the pixel, with the neon's light falling on
+// its grey bands (its black stays black).
+fn pool_print(px:RingsPixel,s:vec2f)->vec3f {
+    let a=ring_cover(0u,s,RING_FAITHFUL,0.0,px.pixel);
+    let b=ring_cover(1u,s,RING_FAITHFUL,0.0,px.pixel);
+    let grey=ring_xor(a,b);
+    let light=neon_irradiance(vec3f(scene_of_source(s),0.0),vec3f(0,0,1),pool_neon_height());
+    return tonemap_inverse(grey)+grey*light/PI*POOL_PRINT_GLOW;
+}
+// The rings at source point s: the print, then the pool over the word.
+fn pool_scene(px:RingsPixel,s:vec2f)->vec3f {
+    let said=panic_said();
+    if said>=1.0 {return pool_surface(px,s);}
+    let print=pool_print(px,s);
+    if said<=0.0 {return print;}
+    return mix(print,pool_surface(px,s),said);
+}
+
 fn style_color(px:RingsPixel)->vec3f {
     if rings_phase()<.5 {return vec3f(0);}
     if rings_phase()>1.5 {return tonemap_inverse(picture_color(px.source,picture_level()));}
     let tubes=neon_glass(px.source,px.pixel);
     // Until the rings first show, no pool: the neon on black.
     if ring_peak()<=0.0 {return neon_over(vec3f(0),vec3f(0),tubes)+neon_haze(px.source);}
-    let behind=pool_surface(px,px.source);
-    // Through the glass, the pool a little to the side.
+    let behind=pool_scene(px,px.source);
+    // Through the glass, the rings a little to the side.
     var seen=behind;
-    if tubes.glass>0.0 {seen=pool_surface(px,px.source+tubes.bend);}
+    if tubes.glass>0.0 {seen=pool_scene(px,px.source+tubes.bend);}
     return neon_over(behind,seen,tubes)+neon_haze(px.source);
 }
 fn style_prepass(px:RingsPixel)->vec4f {return vec4f(0);}

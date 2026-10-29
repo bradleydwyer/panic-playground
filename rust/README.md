@@ -636,8 +636,12 @@ Each wave mirrors the tubes themselves, traced to where its reflection meets
 them, in perspective, with a soft glow round them from the chrome's sheen;
 both are twice as strong as the chrome alone would give, an authored boost
 so the neon holds its own against the lamps. Until the rings first fade in
-there is no pool, only the neon on black; the pool comes up with the fade,
-waves, lamps and reflections together. When the rings fade out the lamps go
+there is only the neon on black. They come up as the original's black and
+white: its two greys and XOR, a flat print filling the screen under the
+neon, lit by it. As the tune first says "panic" (read from P.P: order 0A,
+row 0, at 58.16 s, first plays instrument 44, a voice sample, about 0.34 s
+long), the waves rise out of the print, lamps and reflections with them
+(authored; `PANIC_FADE`). When the rings fade out the lamps go
 out, but the waves stay, seen only by the neon they reflect.
 (`POOL_DARK_WAVES` at 0 lets them settle into a still black mirror instead.)
 It is exposed over a whole 60 Hz frame, its samples spread across each pixel
