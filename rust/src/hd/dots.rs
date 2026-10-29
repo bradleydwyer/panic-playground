@@ -985,7 +985,7 @@ mod tests {
 
     #[test]
     fn the_box_lands_on_the_slab() {
-        use super::super::plasma_stone::{Relief, Sheet};
+        use super::super::plasma_stone::{Pools, Relief, Sheet};
         // An invented slab and camera, near the fit to the logo.
         let relief = || Relief {
             size: (0, 0),
@@ -1001,6 +1001,11 @@ mod tests {
             sheets: [Sheet::default(); 2],
             top: relief(),
             front: relief(),
+            pools: Pools {
+                size: (0, 0),
+                texels: Vec::new(),
+                tilt: 0.0,
+            },
             residual: 0.0,
             ground_tilt: 0.0,
             ground_depth: 0.0,

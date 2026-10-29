@@ -6,7 +6,7 @@
 //! and tonemap. In its first moments it mixes in part 3's modern view,
 //! which renderer.rs draws into a target of this renderer's.
 use super::plasma::{LAYER_SAMPLES, PlasmaPreview, RASTERS};
-use super::plasma_stone::Relief;
+use super::plasma_stone::{Pools, Relief, Stone};
 use super::renderer::wgsl_parts;
 use wgpu::util::DeviceExt;
 use wgpu::*;
@@ -39,6 +39,9 @@ pub(super) fn light_source() -> String {
 pub(super) struct PlasmaRenderer {
     data: BindGroup,
     original: Texture,
+    /// The water the slab's top keeps, and the tilt it was filled for.
+    pools: Texture,
+    pools_tilt: f64,
     /// The original frame uploaded to `original`.
     original_frame: Option<usize>,
     sheet_targets: Vec<TextureView>,
@@ -129,6 +132,26 @@ fn relief(device: &Device, queue: &Queue, label: &str, r: &Relief) -> TextureVie
         bytemuck::cast_slice(&r.texels),
         8,
     )
+}
+
+/// The pools' texture, one thickness a texel (a texel where there are none).
+fn pools_texture(device: &Device, pools: &Pools) -> Texture {
+    texture(
+        device,
+        "Part 4 slab pools",
+        (pools.size.0.max(1), pools.size.1.max(1)),
+        TextureFormat::R16Float,
+        TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        1,
+    )
+}
+
+fn upload_pools(queue: &Queue, t: &Texture, pools: &Pools) {
+    if pools.texels.is_empty() {
+        upload(queue, t, &[0; 2], (1, 1), 2);
+    } else {
+        upload(queue, t, bytemuck::cast_slice(&pools.texels), pools.size, 2);
+    }
 }
 
 fn entry(binding: u32, visibility: ShaderStages, ty: BindingType) -> BindGroupLayoutEntry {
@@ -248,6 +271,9 @@ impl PlasmaRenderer {
         );
         let top = relief(device, queue, "Part 4 slab top", &preview.stone.top);
         let front = relief(device, queue, "Part 4 slab front", &preview.stone.front);
+        let pools = pools_texture(device, &preview.stone.pools);
+        upload_pools(queue, &pools, &preview.stone.pools);
+        let pools_view = pools.create_view(&Default::default());
         let sampler = device.create_sampler(&SamplerDescriptor {
             label: Some("Part 4"),
             mag_filter: FilterMode::Linear,
@@ -284,6 +310,7 @@ impl PlasmaRenderer {
                 entry(9, all, sampled(FLOAT)),
                 entry(10, all, sampled(FLOAT)),
                 entry(11, all, storage),
+                entry(12, all, sampled(FLOAT)),
             ],
         });
         let original_view = original.create_view(&Default::default());
@@ -324,6 +351,7 @@ impl PlasmaRenderer {
                     binding: 11,
                     resource: layers.as_entire_binding(),
                 },
+                view(12, &pools_view),
             ],
         });
         let hdr = TextureFormat::Rgba16Float;
@@ -461,6 +489,8 @@ impl PlasmaRenderer {
         Self {
             data,
             original,
+            pools_tilt: preview.stone.pools.tilt,
+            pools,
             original_frame: None,
             sheet_view: sheet.create_view(&Default::default()),
             sheet_targets,
@@ -472,6 +502,15 @@ impl PlasmaRenderer {
             downsample,
             style,
             breaking,
+        }
+    }
+
+    /// Upload the slab's pools again when they were filled for another
+    /// tilt of the water (Shift with the number keys tunes it).
+    pub fn set_pools(&mut self, queue: &Queue, stone: &Stone) {
+        if stone.pools.tilt != self.pools_tilt && stone.pools.size == (self.pools.width(), self.pools.height()) {
+            upload_pools(queue, &self.pools, &stone.pools);
+            self.pools_tilt = stone.pools.tilt;
         }
     }
 

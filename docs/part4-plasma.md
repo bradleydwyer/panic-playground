@@ -263,6 +263,35 @@ This changes the slab's right end in every part-4 frame that shows it,
 including the arrival and the slide. On 1440p stills, the changed pixels lie
 on the slab between columns 1868 and 2226 of 2560; nothing else changes.
 
+## The pools
+
+As the water drains past the slab, the carving of its top face keeps a little
+of it (authored, after how water lies). The water is level, its up 3 degrees
+off the camera's, and the slab's top face rises 31.3 degrees away from the
+camera, so the face slopes down toward the camera by about 28 degrees against
+the water: each carved pocket holds water up to the lowest point of its rim,
+at its near end. When the stone loads, `Stone::fill_pools` takes the top
+face's heights against the water's level, its carving's depth included
+(cracks too), and floods them from the face's edges, where water runs off,
+always taking the lowest cell reached so far (a priority flood); each texel's
+water settles at the lowest, over every way off the face, of the highest
+point on the way. What lies above the stone, along the face's normal, is kept
+in a texture beside the relief, none under 0.05 units. On this carving, a
+bevel 8 units wide into a floor 5 deep, the pools are thin strips at the
+letters' near ends, about 9 units up the slope and at most 1.1 deep; they
+cover 0.55% of the face.
+
+The camera's march takes the pools' water as part of the stone. Where it meets
+it, closer to the water's surface than to the stone under it, the water is
+shaded as the water around the slab is, but still: its mirror image (the
+stone, or the sheets and their glow) and, through it, the stone beneath. A
+pool shows only where its surface lies above the water around the slab, so the
+pools come out as the level passes them, eased over 0.3 units. From this
+camera each lies just behind its letter's near rim, which hides most of it,
+so at 1080 lines a strip 3 to 5 pixels deep shows, mirroring the stone above
+it. There are none while the slab breaks up, or over the polished floor
+(**D**); tuning the water's tilt fills them again.
+
 The look's constants are at the top of `plasma_light.wgsl` (`WATER_*` and
 `FLOOR_*`). The sheets' placement is in `plasma_stone.rs` (`place_sheets`), as
 is the right end (`carve`, `without_regions_reaching`).

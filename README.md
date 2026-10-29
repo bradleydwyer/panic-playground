@@ -386,7 +386,8 @@ stone is seen by:
   pages, the plasma running on down them to the water. It is part 3's
   water, as level as part 3 left it; it drains from 186 to 200 seconds,
   uncovering the slab, and drains away from under it as the plasma fades
-  out. The water mirrors the plasma, long, quick swells drawing the
+  out. As it drains, the carved letters keep a little of it in their lower
+  ends. The water mirrors the plasma, long, quick swells drawing the
   reflection out into wavering streaks of its colours, and every second or
   so a drop lands beside the slab and sends out a ring of ripples. The
   water is lit only by the sheets, so it comes up and fades with them.

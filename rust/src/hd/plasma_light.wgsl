@@ -187,6 +187,10 @@ const HAZE_LEVEL=7.0;
 // crack.
 @group(0) @binding(9) var relief_top:texture_2d<f32>;
 @group(0) @binding(10) var relief_front:texture_2d<f32>;
+// The water the top face's carving keeps once the water around the slab has
+// drained below it (plasma_stone.rs, Stone::fill_pools): its thickness over
+// the stone along the face's normal, across and from the near edge.
+@group(0) @binding(12) var pools:texture_2d<f32>;
 // Each layer's displacement, smoothed down the screen (plasma.rs,
 // PlasmaPreview::layers): frame j's layer L, sample k, at (2 j + L) *
 // LAYER_SAMPLES + k.
@@ -226,16 +230,32 @@ fn relief_at(l:vec3f,top:bool)->vec4f {
     return textureSampleLevel(relief_front,linear,vec2f(l.x/size.x+.5,l.z/size.z),0.0);
 }
 // The stone's distance field: the rounded block, less what is carved from
-// its top and front faces.
-fn slab_distance(p:vec3f)->f32 {
+// its top and front faces. With `pooled`, the water its top keeps is part
+// of it, for the camera's rays.
+fn slab_distance(p:vec3f)->f32 {return slab_distance_with(p,false);}
+fn slab_distance_with(p:vec3f,pooled:bool)->f32 {
     let l=slab_local(p);
     let size=slab_size();
     let r=pc.slab_origin.w;
     let q=abs(l-vec3f(0,size.y,size.z)*.5)-(size*.5-r);
     let block=length(max(q,vec3f(0)))+min(max(q.x,max(q.y,q.z)),0.0)-r;
-    let top=(relief_at(l,true).r-l.z)*LIPSCHITZ;
+    var depth=relief_at(l,true).r;
+    if pooled {depth-=pool_at(l,depth);}
+    let top=(depth-l.z)*LIPSCHITZ;
     let front=(relief_at(l,false).r-l.y)*LIPSCHITZ;
     return max(block,max(top,front));
+}
+// The pools' water at block point l, over stone carved `depth` deep there:
+// its thickness, where its surface lies above the water around the slab
+// (eased over a little, so a pool comes out of it as the level passes).
+// None while the slab breaks up, or over the polished floor (D).
+fn pool_at(l:vec3f,depth:f32)->f32 {
+    let size=slab_size();
+    if breakup_on() || pc.stone.y>.5 || l.y<0.0 || l.y>size.y || abs(l.x)>size.x*.5 {return 0.0;}
+    let thick=textureSampleLevel(pools,linear,vec2f(l.x/size.x+.5,l.y/size.y),0.0).r;
+    if thick<=0.0 {return 0.0;}
+    let surface=pc.slab_origin.xyz+l.x*vec3f(1,0,0)+l.y*slab_back()+(depth-thick)*slab_down();
+    return thick*smoothstep(0.0,.3,dot(surface-floor_origin(),floor_up()));
 }
 fn slab_normal(p:vec3f)->vec3f {
     let e=vec2f(.5,-.5);
@@ -261,12 +281,13 @@ fn slab_bounds_from(origin:vec3f,d:vec3f)->vec2f {
 // The march: the distance along the ray from the camera (or from o) to
 // the stone, or -1.
 fn march(d:vec3f)->f32 {return march_from(vec3f(0),d);}
-fn march_from(o:vec3f,d:vec3f)->f32 {
+fn march_from(o:vec3f,d:vec3f)->f32 {return march_with(o,d,false);}
+fn march_with(o:vec3f,d:vec3f,pooled:bool)->f32 {
     let bounds=slab_bounds_from(o,d);
     if bounds.x>=bounds.y {return -1.0;}
     var t=bounds.x;
     for(var i=0u;i<MARCH_STEPS;i++) {
-        let h=slab_distance(o+d*t);
+        let h=slab_distance_with(o+d*t,pooled);
         if h<.0006*(t+length(o)) {return t;}
         t+=h;
         if t>bounds.y {break;}
@@ -827,6 +848,41 @@ fn shade_water(p:vec3f,d:vec3f)->vec3f {
     }
     return mirrored+max(1.0-f,0.0)*(WATER_BODY*lit+beneath);
 }
+// ---- The pools (authored) ---------------------------------------------------------------
+// The still water the carving keeps, as the water around the slab is
+// shaded, level and unruffled: the sheets, their glow, or the stone
+// mirrored, and the stone beneath seen through it.
+fn shade_pool(p:vec3f,d:vec3f)->vec3f {
+    let up=floor_up();
+    let v=-d;
+    let f=water_share(water_fresnel(dot(up,v)),pc.water.x);
+    let o=p+up*.05;
+    let rd=reflect(d,up);
+    var mirrored=vec3f(0);
+    let t=march_from(o,rd);
+    if t>0.0 {
+        mirrored=shade_stone(o+rd*t,rd)*f;
+    } else if field_written() && pc.palette.y>0.0 {
+        mirrored=f*(sheets_toward(o,rd,WATER_FINE)+glow_from(o,rd));
+    }
+    var beneath=vec3f(0);
+    let into=refract(d,up,1.0/WATER_ETA);
+    let below=p-up*.05;
+    let ti=march_from(below,into);
+    if ti>0.0 {
+        beneath=shade_stone(below+into*ti,into)*exp(-ti/WATER_CLARITY)/(WATER_ETA*WATER_ETA);
+    }
+    return mirrored+max(1.0-f,0.0)*beneath;
+}
+// Whether the camera's ray meets the pools' water at p rather than the
+// stone: closer to the water's surface than to the stone under it.
+fn on_pool(p:vec3f)->bool {
+    let l=slab_local(p);
+    let depth=relief_at(l,true).r;
+    let thick=pool_at(l,depth);
+    return thick>0.0 && l.z<depth-.5*thick;
+}
+
 // The ground: the water, or the polished floor.
 fn shade_ground(p:vec3f,d:vec3f)->vec3f {
     if pc.stone.y>.5 {return shade_floor(p,d);}
@@ -875,7 +931,7 @@ fn picture(v:Vertex)->Picture {
     var surface=vec4f(0);
     if !part7_shown() {
         let d=ray_of_source(s);
-        let t=march(d);
+        let t=march_with(vec3f(0),d,true);
         var reach=pc.sheet.z+400.0;
         var on_sheets=false;
         // The ground, where it lies in front of the sheets, and of the stone
@@ -885,7 +941,7 @@ fn picture(v:Vertex)->Picture {
         let at=floor_hit(vec3f(0),d);
         let ground=at>0.0 && (hit.z<=0.0 || at<hit.z) && (t<=0.0 || at<t);
         if t>0.0 && !ground {
-            c=shade_stone(d*t,d);
+            if on_pool(d*t) {c=shade_pool(d*t,d);} else {c=shade_stone(d*t,d);}
             reach=t;
             if breakup_on() {
                 let l=slab_local(d*t);

@@ -1254,6 +1254,7 @@ impl Renderer {
         self.part4_handover = false;
         if modern {
             self.plasma.as_mut().unwrap().resize(&self.device, size);
+            self.plasma.as_mut().unwrap().set_pools(&self.queue, &plasma.stone);
             if let (true, Some(dots)) = (block.camera[2] > 0.0, &clip.dots) {
                 let aspect = size.0 as f64 / size.1.max(1) as f64;
                 dots_controls = dots_block(clip, dots, time, aspect);

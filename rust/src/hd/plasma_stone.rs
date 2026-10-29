@@ -49,6 +49,9 @@ const RIGHT_END_FADE: f64 = 4.0;
 /// Texels of the relief across the block's width (authored; the logo
 /// spans about 300 of its pixels).
 pub const RELIEF_TEXELS: usize = 1024;
+/// The thinnest water the pools keep, in units: less is a wet film, not a
+/// pool (authored).
+const POOL_MIN: f64 = 0.05;
 /// The plasma's two sheets of light (authored), close behind the slab,
 /// where they light it and its polished top mirrors them. Their top edges:
 /// each where a sheet leaning SHEET_LEAN toward the camera from upright,
@@ -91,6 +94,16 @@ pub struct Relief {
     pub texels: Vec<f16>,
 }
 
+/// The water the top face's carving keeps as the water drains past it
+/// (authored, after how water lies): per texel of the top face's relief,
+/// its thickness over the stone along the face's normal, 0 where none
+/// stays, as filled for the water lying at `tilt` (the ground's).
+pub struct Pools {
+    pub size: (u32, u32),
+    pub texels: Vec<f16>,
+    pub tilt: f64,
+}
+
 /// One of the plasma's sheets of light: its bottom edge's centre in camera
 /// space, its height (up the sheet), its half width and the direction up
 /// it (camera space).
@@ -125,6 +138,9 @@ pub struct Stone {
     /// the front face, across and from the top edge down.
     pub top: Relief,
     pub front: Relief,
+    /// What the top face's carving holds once the water has drained past
+    /// it ([`Stone::fill_pools`]).
+    pub pools: Pools,
     /// The rms difference, in source columns, between the measured
     /// silhouette and the fitted block's, over the rows fitted.
     pub residual: f64,
@@ -263,6 +279,44 @@ fn two_tones(values: &[f64]) -> f64 {
     best.1
 }
 
+/// The level water settles at over a grid of heights (`w` by `h`) that
+/// sheds it at its edges: for each cell, the lowest, over every way from it
+/// to an edge between neighbours across or down, of the highest height on
+/// the way (a priority flood: the edges first, then always the lowest
+/// cell reached so far, each new neighbour at its own height or the level
+/// it was reached at, whichever is higher). At least the cell's height.
+fn flood(height: &[f64], w: usize, h: usize) -> Vec<f64> {
+    use std::cmp::Reverse;
+    use std::collections::BinaryHeap;
+    // Ordered keys: the heights, in millionths of a unit.
+    let key = |v: f64| Reverse((v * 1e6).round() as i64);
+    let mut level = vec![f64::NAN; w * h];
+    let mut queue = BinaryHeap::new();
+    for i in 0..w * h {
+        let (x, y) = (i % w, i / w);
+        if x == 0 || y == 0 || x + 1 == w || y + 1 == h {
+            level[i] = height[i];
+            queue.push((key(height[i]), i));
+        }
+    }
+    while let Some((_, i)) = queue.pop() {
+        let (x, y) = (i % w, i / w);
+        let around = [
+            (x > 0).then(|| i - 1),
+            (x + 1 < w).then(|| i + 1),
+            (y > 0).then(|| i - w),
+            (y + 1 < h).then(|| i + w),
+        ];
+        for n in around.into_iter().flatten() {
+            if level[n].is_nan() {
+                level[n] = height[n].max(level[i]);
+                queue.push((key(level[n]), n));
+            }
+        }
+    }
+    level
+}
+
 impl Stone {
     /// Fit the block to the logo (320 x 180 indices, shown from raster
     /// `REST_LINE_COMPARE + 1`) and carve its faces. `size` is part 3's
@@ -272,6 +326,7 @@ impl Stone {
         let mut stone = Self::fit(logo, size)?;
         stone.place_sheets();
         stone.carve(logo, palette, |r: f64| (first_raster + r + 0.5) / 2.0);
+        stone.fill_pools();
         Ok(stone)
     }
 
@@ -375,6 +430,11 @@ impl Stone {
                 size: (0, 0),
                 texels: Vec::new(),
             },
+            pools: Pools {
+                size: (0, 0),
+                texels: Vec::new(),
+                tilt: f64::NAN,
+            },
             residual,
             ground_tilt: super::dots_water::LEVEL_TILT,
             ground_depth: super::dots_water::LEVEL_HEIGHT,
@@ -428,10 +488,46 @@ impl Stone {
     }
 
     /// Lay the ground as part 3's water lies (tilt and depth), and stand
-    /// the sheets in it again.
+    /// the sheets in it again, and fill the pools again for its tilt.
     pub fn set_ground(&mut self, tilt: f64, depth: f64) {
         (self.ground_tilt, self.ground_depth) = (tilt, depth);
         self.place_sheets();
+        if self.pools.tilt != tilt && !self.top.texels.is_empty() {
+            self.fill_pools();
+        }
+    }
+
+    /// Fill the pools: what water the top face's carving keeps once the
+    /// water around the slab has drained below it. The face slopes against
+    /// the water's level (the slab's tilt less the water's: about 28
+    /// degrees, down toward the camera), so each pocket of the carving
+    /// holds water up to the lowest point of its rim, which lies at its
+    /// near end. Over the face's heights against that level, its carving's
+    /// depth included, a priority flood from the face's edges, where water
+    /// runs off it, finds the level each texel's water settles at (the
+    /// lowest of the highest points along any way off the face); the
+    /// thickness is that level less the stone's, along the face's normal.
+    pub fn fill_pools(&mut self) {
+        let (w, h) = (self.top.size.0 as usize, self.top.size.1 as usize);
+        let texel = self.size[0] / w as f64;
+        let (s, c) = (self.tilt - self.ground_tilt).sin_cos();
+        let height: Vec<f64> = (0..w * h)
+            .map(|i| ((i / w) as f64 + 0.5) * texel * s - self.top.texels[i * 4].to_f64() * c)
+            .collect();
+        let level = flood(&height, w, h);
+        let texels = level
+            .iter()
+            .zip(&height)
+            .map(|(&l, &g)| {
+                let t = (l - g) / c;
+                f16::from_f64(if t >= POOL_MIN { t } else { 0.0 })
+            })
+            .collect();
+        self.pools = Pools {
+            size: (w as u32, h as u32),
+            texels,
+            tilt: self.ground_tilt,
+        };
     }
 
     /// How far below the camera the slab's lowest edge lies, as the
@@ -768,6 +864,38 @@ impl Stone {
 pub(super) mod tests {
     use super::*;
     use crate::hd::plasma::{LOGO_ROWS, LOGO_WIDTH};
+
+    #[test]
+    fn pools_fill_to_the_lowest_rim() {
+        // A face rising half a unit a row, with a pocket 3 deep in it.
+        let (w, h) = (20, 20);
+        let mut height: Vec<f64> = (0..w * h).map(|i| (i / w) as f64 * 0.5).collect();
+        let pocket = |x: usize, y: usize| (5..15).contains(&x) && (5..10).contains(&y);
+        for i in 0..w * h {
+            if pocket(i % w, i / w) {
+                height[i] -= 3.0;
+            }
+        }
+        // It fills to its near rim, row 4 (2.0); nothing else holds water.
+        let level = flood(&height, w, h);
+        for i in 0..w * h {
+            let want = if pocket(i % w, i / w) {
+                height[i].max(2.0)
+            } else {
+                height[i]
+            };
+            assert!((level[i] - want).abs() < 1e-9, "{i}: {} not {want}", level[i]);
+        }
+        // A notch 1 deep from the rim to the near edge lets it down to the
+        // notch's top at the rim (1.0).
+        for y in 0..5 {
+            height[y * w + 10] -= 1.0;
+        }
+        let level = flood(&height, w, h);
+        for i in (0..w * h).filter(|&i| pocket(i % w, i / w)) {
+            assert!((level[i] - height[i].max(1.0)).abs() < 1e-9);
+        }
+    }
 
     /// An invented block, drawn row by row as the logo would show it (from
     /// raster 237, index 5) through a camera of vertical focal length
