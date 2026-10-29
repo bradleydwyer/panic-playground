@@ -107,8 +107,22 @@ fn letter_outline(p:vec2f,id:u32)->f32 {
 fn rotate_x(p:vec3f,a:f32)->vec3f {return vec3f(p.x,cos(a)*p.y-sin(a)*p.z,sin(a)*p.y+cos(a)*p.z);}
 fn rotate_y(p:vec3f,a:f32)->vec3f {return vec3f(cos(a)*p.x+sin(a)*p.z,p.y,-sin(a)*p.x+cos(a)*p.z);}
 fn rotate_z(p:vec3f,a:f32)->vec3f {return vec3f(cos(a)*p.x-sin(a)*p.y,sin(a)*p.x+cos(a)*p.y,p.z);}
+// The PANIC letters (10) ride on the tumbling plate (11) and stay as the logo
+// when it lands: both share one frame, the logo's slight tilt, turned by the
+// plate's tumble while in space. The plate is centred behind the letters, its
+// face 0.15 behind theirs, and sized to what the screen shows of it once
+// landed: just past the screen's sides, whatever its shape, and just past the
+// doors' lips, which hide its edges. Authored, like the tumble; the original's
+// plate is a smaller, plain raster block.
+const PLATE=vec3f(0,0,-.12);
+fn plate_size()->vec2f {
+    let depth=CAMERA.z-PLATE.z;
+    return vec2f(u.screen.x/u.screen.y*1.03*(depth+.15)/FOCAL+.05,.52);
+}
+// The plate and its letters turn with the tumble.
+fn tumbling(id:u32)->bool {return id>=10u && in_space();}
 fn pose(id:u32)->vec4f {
-    if id==10u {return vec4f(.045,-.045,0,1);}
+    if id>=10u {return vec4f(.045,-.045,0,1);}
     return vec4f(0,0,0,1);
 }
 fn exposure_frame()->f32 {return u.state.y-u.plate_open_center.w*(1.0-shutter);}
@@ -118,8 +132,12 @@ fn plate_quaternion()->vec4f {
     return normalize(mix(open,u.plate_rotation,shutter));
 }
 fn center(id:u32)->vec3f {
-    if id==11u {return mix(u.plate_open_center.xyz,u.plate_center.xyz,shutter);}
-    if id==10u {return vec3f(0);}
+    if id>=10u {
+        var c=vec3f(0);
+        if tumbling(id) {c=mix(u.plate_open_center.xyz,u.plate_center.xyz,shutter);}
+        if id==11u {c+=world(PLATE,id);}
+        return c;
+    }
     let motion=u.flights[id];
     let frame=exposure_frame();
     // Begin farther into the starfield, meeting the fitted path before the
@@ -132,21 +150,23 @@ fn quaternion_rotate(p:vec3f,q:vec4f)->vec3f {
     return p+2.0*cross(q.xyz,cross(q.xyz,p)+q.w*p);
 }
 fn local_direction(p:vec3f,id:u32)->vec3f {
-    if id==11u {let q=plate_quaternion();return quaternion_rotate(p,vec4f(-q.xyz,q.w));}
+    var q=p;
+    if tumbling(id) {let r=plate_quaternion();q=quaternion_rotate(q,vec4f(-r.xyz,r.w));}
     let a=pose(id);
-    return rotate_z(rotate_y(rotate_x(p,-a.x),-a.y),-a.z)/a.w;
+    return rotate_z(rotate_y(rotate_x(q,-a.x),-a.y),-a.z)/a.w;
 }
 fn local(p:vec3f,id:u32)->vec3f {return local_direction(p-center(id),id);}
 fn world(p:vec3f,id:u32)->vec3f {
-    if id==11u {return quaternion_rotate(p,plate_quaternion());}
     let a=pose(id);
-    return rotate_x(rotate_y(rotate_z(p,a.z),a.y),a.x)*a.w;
+    let w=rotate_x(rotate_y(rotate_z(p,a.z),a.y),a.x)*a.w;
+    if tumbling(id) {return quaternion_rotate(w,plate_quaternion());}
+    return w;
 }
 // Every model is a straight extrusion: 2D outline distance, half depth and
 // bevel radius.
 fn profile(p:vec2f,id:u32)->vec3f {
     if id==10u {return vec3f(panic_outline(p),.11,.022);}
-    if id==11u {return vec3f(box2(p,vec2f(1.45,.47),.01),.08,.008);}
+    if id==11u {return vec3f(box2(p,plate_size(),.01),.08,.008);}
     return vec3f(letter_outline(p,min(id,9u)),LETTER_DEPTH,.024);
 }
 fn extrude(profile:vec3f,z:f32)->f32 {
@@ -158,11 +178,28 @@ fn normal(p:vec3f,id:u32)->vec3f {
     let e=vec2f(.00035,0);
     return normalize(vec3f(shape(p+e.xyy,id)-shape(p-e.xyy,id),shape(p+e.yxy,id)-shape(p-e.yxy,id),shape(p+e.yyx,id)-shape(p-e.yyx,id)));
 }
+// The plate and its letters are out in space from the start, too far away to
+// see until the doors' phase, and come up from black with the rest of space;
+// once landed, they stay as the logo screen.
+fn plate_opacity()->f32 {
+    if in_space() {return smoothstep(0.0,1.5,u.screen.z);}
+    return 1.0;
+}
+// The letters and their plate shade each other where they meet. `letters`
+// says whether the letters are within the samples' reach of the plate.
+fn occluder(p:vec3f,id:u32,letters:bool)->f32 {
+    let d=shape(p,id);
+    if id==11u && letters {return min(d,shape(p+PLATE,10u));}
+    if id==10u {return min(d,shape(p-PLATE,11u));}
+    return d;
+}
 fn ambient_occlusion(p:vec3f,n:vec3f,id:u32)->f32 {
     var occlusion=0.0;var weight=1.0;
+    var letters=false;
+    if id==11u && all(abs(p.xy+PLATE.xy)<object_extent(10u).xy+.15) {letters=shape(p+PLATE,10u)<.15;}
     for(var i=1;i<=5;i++) {
         let distance=f32(i)*.025;
-        occlusion+=(distance-shape(p+n*distance,id))*weight;
+        occlusion+=(distance-occluder(p+n*distance,id,letters))*weight;
         weight*=.6;
     }
     return clamp(1.0-occlusion*5.0,.25,1.0);
@@ -262,12 +299,17 @@ fn scene_light(r:vec3f,blur:f32)->vec3f {
 }
 // `mirror` is the reflection without the cast-metal ripple: stars and
 // streaks are so fine that the ripple would break them into glitter.
-fn environment(p:vec3f,r:vec3f,mirror:vec3f)->vec3f {
+// `dim` keeps the studio panels dimmed as they are in space; `open` adds
+// open space. The landed metal keeps the dimmed panels, so its light doesn't
+// jump, but space no longer shows in it.
+fn environment(p:vec3f,r:vec3f,mirror:vec3f,dim:bool,open:bool)->vec3f {
     let lights=studio(p,r);
-    if !in_space() {return lights;}
+    if !dim {return lights;}
     // The studio panels stay behind the camera, dimmed so the warp shows
     // in the plate; ahead lies open space.
-    return lights*mix(.2,.55,smoothstep(-.3,.3,r.z))+scene_light(mirror,.0012);
+    let dimmed=lights*mix(.2,.55,smoothstep(-.3,.3,r.z));
+    if !open {return dimmed;}
+    return dimmed+scene_light(mirror,.0012);
 }
 // Glass needs crisp lines of light rather than the broad panels that suit
 // the metal: a dim sheen and thin strips behind the camera, by direction, so
@@ -304,7 +346,8 @@ fn cast_surface(p:vec2f)->f32 {
 // A shallow, flowing height field changes the reflected light without moving
 // the letter outlines. This is an authored material animation, not source art.
 fn surface_height(p:vec2f,id:u32)->f32 {
-    if id!=10u {return cast_surface(p);}
+    // In space the letters are cast like their plate; they melt on landing.
+    if id!=10u || in_space() {return cast_surface(p);}
     let t=max(u.screen.z-u.misc.z,0.0);
     let warm=smoothstep(-.25,.75,p.x+p.y*.38);
     let drift=vec2f(
@@ -326,18 +369,25 @@ fn shade(p:vec3f,geometric_normal:vec3f,ray:vec3f,id:u32)->vec3f {
     if id==10u {weight*=smoothstep(0.0,.055,-panic_outline(p.xy));}
     let n=normalize(geometric_normal-vec3f(bump,0)*abs(geometric_normal.z)*weight);
     let grain=noise(p.xy*vec2f(22,95));
+    // The letters only heat up once they have landed.
     var heat=0.0;
-    if id==10u {
+    if id==10u && !in_space() {
         let temper=p.x+p.y*.38+(noise(p.xy*vec2f(5,8))-.5)*.10;
         heat=smoothstep(-.25,.75,temper);
     }
     let oxide=smoothstep(.03,.15,heat)*(1.0-smoothstep(.20,.4,heat));
     var f0=mix(vec3f(.73,.82,.91),vec3f(.48,.24,.10),smoothstep(.02,.5,heat));
     f0=mix(f0,vec3f(.16,.12,.24),oxide*.6);
-    let wp=world(p,id);let wn=normalize(world(n,id));let view=normalize(-world(ray,id));
+    // The plate and, until they land, the letters on it are one dark,
+    // polished gunmetal. The landing's flash then shows the letters
+    // cool to hot. Authored.
+    if id==11u || in_space() {f0=vec3f(.24,.26,.30);}
+    var wp=world(p,id);let wn=normalize(world(n,id));let view=normalize(-world(ray,id));
+    // The plate is lit where it lies about the letters.
+    if id==11u {wp+=world(PLATE,id);}
     let reflection=reflect(-view,wn);
     let fresnel=f0+(1.0-f0)*pow(1.0-max(dot(wn,view),0.0),5.0);
-    var c=environment(wp,reflection,reflect(-view,normalize(world(geometric_normal,id))))*fresnel;
+    var c=environment(wp,reflection,reflect(-view,normalize(world(geometric_normal,id))),in_space()||id==11u,in_space())*fresnel;
     // The key light breathes with the music's energy and lifts on hits; the
     // warm fill follows the bass. At typical playing levels they average close
     // to the former fixed strengths. An authored response, not original behaviour.
@@ -346,7 +396,7 @@ fn shade(p:vec3f,geometric_normal:vec3f,ray:vec3f,id:u32)->vec3f {
     c+=direct_light(wp,wn,view,vec3f(3.0,-1.0,1.5),vec3f(1.0,.65,.25)*(.72+.50*music.z+.15*music.y),f0);
     c*=ambient_occlusion(p,n,id);
     c*=.94+.06*grain;
-    if id==10u {
+    if id==10u && !in_space() {
         // Incandescence, not gold paint: warm emission also feeds the HDR bloom.
         let flow=.75+.25*noise(p.xy*vec2f(9,15)+vec2f(0,u.screen.z*.05));
         let edge=1.0-smoothstep(.0,.055,-panic_outline(p.xy));
@@ -382,8 +432,18 @@ fn door_edges()->vec2f {
     let amount=door_amount();
     return vec2f(amount/400.0,(amount*8.0/14.0+.5)/200.0);
 }
-// Authored: the stars and the open centre fade into the logo screen over a few
-// tenths of a second from the logo cue instead of cutting.
+// How far the doors' lips and front faces, from the lip's bead outwards, lie
+// in front of the metal at a point on the screen. The plate passes in front
+// of their inner faces and lands just behind the lips, which hide its edges.
+fn door_front(uv:vec2f)->f32 {
+    if u.state.x<3.0 {return 0.0;}
+    let aa=.75/u.screen.y;
+    let edge=door_edges().y-max(.006,3.0/u.screen.y);
+    return smoothstep(edge-aa,edge+aa,abs(uv.y-.5));
+}
+// Authored: from the logo cue, the stars behind the landed plate fade out and
+// the doors take the logo screen's light over a few tenths of a second,
+// instead of cutting.
 fn logo_fade()->f32 {
     if u.state.x<4.0 {return 0.0;}
     return smoothstep(0.0,.32,u.screen.z-u.misc.z);
@@ -434,7 +494,7 @@ fn door_panel(uv:vec2f,x:f32)->vec3f {
         var n=vec2f(-1,0);
         if s>-1.0 {n=vec2f(s,sqrt(max(1.0-s*s,0.0)));}
         let h=normalize(key+vec2f(0,1));let hs=normalize(light+vec2f(0,1));
-        // Ambient plus, on the logo screen, light bounced off the recess and
+        // Ambient plus, on the logo screen, light bounced off the plate and
         // the hot end of the title.
         let warm=exp(-pow((x-.62)*1.6,2.0));
         var lit=vec3f(.010,.011,.014)+fade*(vec3f(.020,.022,.026)+vec3f(.030,.009,.002)*warm);
@@ -464,21 +524,6 @@ fn door_panel(uv:vec2f,x:f32)->vec3f {
     c+=vec3f(.55,.85,1.5)*2.4*pulse*glow;
     return c;
 }
-// The logo screen's recessed centre, behind the doors' inner faces.
-fn recess_panel(uv:vec2f)->vec3f {
-    let band=abs(uv.y-.5);
-    var c=vec3f(.050,.055,.064)*(1.0-.45*smoothstep(.12,.5,band));
-    c+=vec3f(.016)*exp(-pow((uv.y-.36)*5.0,2.0));
-    c*=.99+.01*noise(vec2f(uv.x*70.0,uv.y*3000.0));
-    // Contact shadow where the doors' inner faces meet the recess.
-    c*=1.0-.55*exp(-max(door_edges().x-band,0.0)/.014);
-    // A soft mounting shadow below the 3D title on the recessed panel.
-    let p=(uv-.5)*vec2f(u.screen.x/u.screen.y,1.0)*2.0;
-    let q=vec2f(p.x,-p.y)*1.10-vec2f(.025,-.04);
-    c*=1.0-.65*exp(-max(panic_outline(q),0.0)*28.0);
-    c+=vec3f(.055,.012,.001)*exp(-dot((p-vec2f(.70,0))*vec2f(1.1,2.0),(p-vec2f(.70,0))*vec2f(1.1,2.0)));
-    return c;
-}
 @fragment fn background(v:Vertex)->@location(0) vec4f {
     let xy=(v.uv-.5)*vec2f(u.screen.x/u.screen.y,1);
     let haze=noise(xy*4.0+vec2f(u.screen.z*.008,0))*.7+noise(xy*9.0)*.3;
@@ -488,11 +533,9 @@ fn recess_panel(uv:vec2f)->vec3f {
     if u.state.x<3.0 {return vec4f(space,1);}
     let aa=.75/u.screen.y;
     let doors=smoothstep(door_edges().x-aa,door_edges().x+aa,abs(v.uv.y-.5));
-    var centre=space;
-    let fade=logo_fade();
-    if fade>0.0 {centre=mix(space,recess_panel(v.uv),fade);}
-    if doors<=0.0 {return vec4f(centre,1);}
-    return vec4f(mix(centre,door_panel(v.uv,xy.x),doors),1);
+    // Once landed, the plate fills the opening between the doors.
+    if doors<=0.0 {return vec4f(space,1);}
+    return vec4f(mix(space,door_panel(v.uv,xy.x),doors),1);
 }
 
 // Integrate the speed ramp instead of multiplying time by a changing speed:
@@ -562,7 +605,7 @@ struct StarVertex {
 
 fn object_extent(id:u32)->vec3f {
     if id==10u {return vec3f(1.49,.42,.15);}
-    if id==11u {return vec3f(1.48,.50,.11);}
+    if id==11u {return vec3f(plate_size()+.03,.11);}
     return vec3f(.81,.52,.27);
 }
 // `coarse` is for coverage only: it accepts a hit within about a pixel and
@@ -609,10 +652,8 @@ fn object_range()->vec2u {
     // After the last laser-cut tile has gone (the renderer's 78-tick window),
     // nothing shows the logo again: the next scene replaces it.
     if u.transition.y>.5 && u.transition.x>u.transition.z+78.0 {return vec2u(0,0);}
-    if u.state.x>=4.0 {return vec2u(10,11);}
-    if u.state.x==3.0 {return vec2u(11,12);}
-    if u.state.x<1.0 || u.state.x==2.0 {return vec2u(0,0);}
-    return vec2u(0,10);
+    if u.state.x==1.0 {return vec2u(0,12);}
+    return vec2u(10,12);
 }
 // Objects whose swept box reaches the current tile, as bits from the first
 // object of the phase; everything else is skipped.
@@ -723,9 +764,9 @@ fn render(screen:vec2f)->vec3f {
     let range=object_range();
     // Sort the actual ray hits, then composite from the back, so distant
     // letters and stars stay visible through the nearer glass.
-    var distances:array<f32,10>;
-    var hits:array<vec4f,10>;
-    var ids:array<u32,10>;
+    var distances:array<f32,12>;
+    var hits:array<vec4f,12>;
+    var ids:array<u32,12>;
     var count=0u;
     for(var id=range.x;id<range.y;id++) {
         if !is_relevant(id) || !letter_present(id) {continue;}
@@ -743,16 +784,27 @@ fn render(screen:vec2f)->vec3f {
         distances[slot]=hit.w;hits[slot]=hit;ids[slot]=id;
         count+=1u;
     }
+    // The letters and the metal are opaque: nothing behind the nearest of
+    // them shows once it is wholly there.
+    var last=i32(count)-1;
+    for(var i=0;i<i32(count);i++) {
+        if ids[i]>=10u && plate_opacity()>=1.0 {last=i;break;}
+    }
     var color=background;
-    for(var i=i32(count)-1;i>=0;i--) {
+    for(var i=last;i>=0;i--) {
         let id=ids[i];
         let ray=normalize(local_direction(direction,id));
         let p=hits[i].xyz;
-        if id==10u {return shade(p,normal(p,id),ray,id);}
-        if id==11u {return mix(background,shade(p,normal(p,id),ray,id),smoothstep(0.0,30.0,u.state.y));}
+        if id>=10u {
+            let lit=shade(p,normal(p,id),ray,id);
+            let opacity=plate_opacity();
+            color=select(mix(color,lit,opacity),lit,opacity>=1.0);
+            continue;
+        }
         let layer=glass(p,ray,id,color,u32(i)+1u<count);
         color=mix(color,layer,letter_fade());
     }
+    if count>0u {color=mix(color,background,door_front(screen));}
     return color;
 }
 

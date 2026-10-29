@@ -1397,20 +1397,28 @@ fn fit_flights(frames: &[Frame]) -> Result<[[f32; 4]; 10], String> {
     Ok(result)
 }
 
+/// How far the plate falls back per squared frame before phase 3: about a
+/// pixel wide at 1080 lines when the last letter has passed (frame -63).
+const PLATE_BRAKING: f32 = 2.0;
+
 /// Continuous authored reconstruction of the plate's tumble, not recovered
 /// 3D keyframes. The original Intro::decode plays a raster delta stream.
 /// A near-diagonal axis, roughly 70 frames per turn and constant forward speed
 /// follow that stream's two turns and accelerating perspective approach. Unlike
 /// per-frame silhouette PCA/acos, a quaternion preserves full turns and their
 /// direction through edge-on views. Frame 139 lands face-on for the logo cue.
+/// Before frame 0, phase 3's first, the renderer counts frames back from the
+/// landing; the plate then comes from much further away, braking into that
+/// approach, so it's too far off to see while the FUTURE CREW letters fly.
 pub fn plate_transform(frame: f32) -> ([f32; 4], [f32; 4]) {
     let remaining = 139.0 - frame;
     let angle = -remaining * std::f32::consts::TAU / 70.0;
     let axis = [0.57_f32, 0.57, 0.59];
     let length = axis.iter().map(|v| v * v).sum::<f32>().sqrt();
     let (s, c) = (angle * 0.5).sin_cos();
+    let early = (-frame).max(0.0);
     (
-        [0.0, 0.0, -remaining * 2.5, 0.0],
+        [0.0, 0.0, -remaining * 2.5 - PLATE_BRAKING * early * early, 0.0],
         [
             axis[0] / length * s,
             axis[1] / length * s,
@@ -2132,6 +2140,24 @@ mod tests {
         let q = plate_transform(104.0).1; // Half a full turn before arrival.
         assert!(q[3].abs() < 1e-6);
         assert!(q[..3].iter().all(|v| v.abs() > 0.5));
+    }
+
+    #[test]
+    fn plate_comes_from_far_away_before_phase_3() {
+        // It meets phase 3's approach without a jump in place or speed...
+        let at = |frame: f32| plate_transform(frame).0[2];
+        assert_eq!(at(0.0), -139.0 * 2.5);
+        assert!((at(-0.01) - at(0.0) + 0.025).abs() < 1e-3);
+        assert!((at(0.01) - at(0.0) - 0.025).abs() < 1e-3);
+        // ...always coming nearer, and is over 8,000 units away when the
+        // last letter has passed, 63 frames before.
+        let mut previous = at(-400.0);
+        for step in -399..=0 {
+            let z = at(step as f32);
+            assert!(z > previous);
+            previous = z;
+        }
+        assert!(at(-63.0) < -8000.0);
     }
 
     fn stereo(mono: impl IntoIterator<Item = f64>) -> Vec<i16> {

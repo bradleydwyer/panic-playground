@@ -925,9 +925,17 @@ impl Renderer {
         ];
         let mut u = base_uniforms(clip, view, self.srgb, state);
         u.flights = clip.flights;
-        (u.plate_center, u.plate_rotation) = plate_transform(sequence_frame);
+        // The plate is out in space from the start: before the doors' phase
+        // its frame is counted back from the landing at the sequence's 35
+        // frames a second, meeting phase 3's own count.
+        let plate_frame = if frame.state.phase < 3 {
+            139.0 - ((clip.logo_at - time) * 35.0) as f32
+        } else {
+            sequence_frame
+        };
+        (u.plate_center, u.plate_rotation) = plate_transform(plate_frame);
         (u.plate_open_center, u.plate_open_rotation) =
-            plate_transform(sequence_frame - SHUTTER_FRAMES);
+            plate_transform(plate_frame - SHUTTER_FRAMES);
         u.plate_open_center[3] = SHUTTER_FRAMES;
         if let Some(cut) = &clip.transition {
             u.transition = [

@@ -100,11 +100,20 @@ farther starting position, gradual fade-in and thicker block forms. The
 letters are tinted glass: light refracts through each block, with internal
 reflection and slight dispersion, and the rendered starfield shows through
 them. Light trapped inside leaks out along the edges, so they read against
-black space. The plate also fades in, then uses a continuous quaternion tumble
-and forward motion, following the recorded sequence's two turns and approach.
-This is an authored approximation: the original Rust decoder plays stored
-animation frames, not 3D rotation equations. These are reconstructed forms,
-not recovered original models.
+black space.
+
+The plate carries the PANIC title, its letters raised in the same polished
+gunmetal. It is out in space from the start, too far away to see while the
+letters fly, and brakes into the recorded sequence's approach as the doors'
+phase begins, then follows its two turns with a continuous quaternion tumble
+and forward motion. It is sized to the screen it lands in, past the sides and
+under the doors' lips, which are drawn in front of it, so it isn't the
+original plate's size. As it lands, space leaves its reflections and the
+arrival flash strikes the letters, which come up as the heated logo; the plate
+stays as the logo screen's polished backing, under dimmed studio lights. This
+is an authored approximation: the original Rust decoder plays stored animation
+frames of a plain block, not 3D rotation equations. These are reconstructed
+forms, not recovered original models.
 
 The models also reflect the scene. The space backdrop, stars and doors are
 rendered first, and on-screen reflections and refraction sample it. Elsewhere
@@ -124,10 +133,10 @@ and the rim as its front lip; this is an interpretation. The lip stops where
 the original's rim ends, about 0.22 of the height from the centre, and becomes
 the logo screen's blue rail. The bevelled lip, contact shadow, cool light
 spilling from the warp through the narrowing gap, the bloom pulse as the doors
-settle, and the quick fade of the stars into the recessed logo panel are all
+settle, and the quick fade of the stars behind the landed plate are all
 authored.
 The soundtrack, cues and scene boundaries use the existing port unchanged.
-The logo appears at about 14.57 seconds; the preview holds there and ends its
+The plate lands at about 14.57 seconds; the preview holds there and ends its
 audio after another 4.91 seconds. The logo material keeps animating after the
 audio ends; Space pauses it too. End then Space lets you watch the logo directly.
 Later demo scenes are outside this preview.

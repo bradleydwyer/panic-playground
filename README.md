@@ -16,10 +16,11 @@ the dust of part 7's lighthouse, part 7's greetings as crystal letters in
 the lighthouse's beam, and part 8's ending as an endless wall of green
 monitors switched off. The idea is to keep the
 sequence and music, and experiment with the rendering. There are chunky glass
-letters that refract the stars behind them, a mirrored plate that reflects the
-warp, motion blur, a starfield that ramps into warp, a heated metal logo with
-slowly moving surface reflections, and lighting that pulses and breathes with
-the music.
+letters that refract the stars behind them, a polished gunmetal plate carrying
+the PANIC title that tumbles in from deep space reflecting the warp and lands
+as the logo screen, motion blur, a starfield that ramps into warp, the title
+then heating into metal with slowly moving surface reflections, and lighting
+that pulses and breathes with the music.
 
 This builds on the [Rust port of Panic](https://github.com/bradleydwyer/panic).
 It's very much a work in progress. Every part from the intro to part 8 has
