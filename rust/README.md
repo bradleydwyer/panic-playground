@@ -1542,10 +1542,11 @@ port's timing, positions and motion.
 - The box is reshaped from its stage's start so that at rest it lies exactly
   on part 4's slab as part 4's camera shows it (`land_on_slab`): the
   original's box and logo differ a little, and part 3's projection is 1.2
-  times narrower. Once it lies still the exposure runs on, so its trails
-  catch up with its lights, which burn brighter, and in the second before
-  part 4 draws they flare and swell. Part 4's slab takes over at its own colours through the tonemap,
-  with a flash that fades, so the clip ends on the original's white slab.
+  times narrower. Once it lies still its trails catch up, the lens stops
+  down to points, and on the tune's rows lights come out along the slab's
+  carved letters, then over its faces (`letter_lights`); all flare, the
+  flash part 4's view takes over from (without part 4, the original's
+  white slab).
 
 Everything is a function of the clip's time, so seeking, captures and video
 agree; an ignored test checks frames drawn after others against a new

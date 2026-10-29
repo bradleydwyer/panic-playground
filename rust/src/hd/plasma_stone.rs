@@ -89,6 +89,7 @@ const FOCAL_RANGE: (f64, f64) = (150.0, 600.0);
 /// One face's relief: rgba16float texels, `size` across and down. Red:
 /// the carving's depth (units, 0 at the face); green: the albedo's
 /// multiplier; blue: how carved (0 to 1); alpha: how much crack.
+#[derive(Clone)]
 pub struct Relief {
     pub size: (u32, u32),
     pub texels: Vec<f16>,
@@ -98,6 +99,7 @@ pub struct Relief {
 /// (authored, after how water lies): per texel of the top face's relief,
 /// its thickness over the stone along the face's normal, 0 where none
 /// stays, as filled for the water lying at `tilt` (the ground's).
+#[derive(Clone)]
 pub struct Pools {
     pub size: (u32, u32),
     pub texels: Vec<f16>,
@@ -116,6 +118,7 @@ pub struct Sheet {
 }
 
 /// The modern view's slab and the camera it is seen through.
+#[derive(Clone)]
 pub struct Stone {
     /// The camera: vertical focal length in source rows, square display
     /// pixels (a source column is 5/6 of a row, so the horizontal focal is

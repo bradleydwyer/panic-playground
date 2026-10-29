@@ -37,8 +37,12 @@
 //   that dips under it fades, and lights it from below; the lights moving
 //   through it set off ripples along their paths and stir the plankton,
 //   which glows.
-// - At the end the box lands, its trails collapse into its lights, and as
-//   part 4 is about to draw it flares up; part 4's slab takes over in white.
+// - At the end the box lands and its trails collapse into its lights. As it
+//   lies still the lens stops down and the lights shrink to points; then
+//   new lights come out along the slab's carved letters, FUTURE on its top
+//   and CREW on its front, and over its faces (dots.rs, letter_lights),
+//   and as part 4 is about to draw it all flare up; their light is the
+//   flash part 4's slab takes over from, in white.
 // Module: the shared controls, dots_common.wgsl, this file and water.wgsl.
 
 // ---- The look (authored) -----------------------------------------------------------
@@ -79,6 +83,18 @@ const AGE_COOL=5.0;
 // trails older than SHAPED_AGE frames, too faint for the shape to show.
 const APERTURE=36.0;
 const COC_MAX=5.0;
+// Once the box lies still, over SETTLE seconds (dots.rs) the lens stops
+// down to APERTURE_STILL and the lights shrink to POINT_STILL rows.
+const SETTLE=.5;
+const APERTURE_STILL=6.0;
+const POINT_STILL=.2;
+// The letters' lights flash as they come on: LETTER_FLASH more, falling
+// over LETTER_FLASH_DECAY seconds. They are many, so at the end they flare
+// by LETTER_FLARE_GAIN, far less than the box's own lights: their number
+// is the flash.
+const LETTER_FLASH=2.0;
+const LETTER_FLASH_DECAY=.12;
+const LETTER_FLARE_GAIN=1.0;
 const BLADES=7u;
 const BLADE_TURN=.3;
 const APOTHEM=.97;
@@ -236,6 +252,10 @@ const MAX_RIPPLES=320u;
 // zeros.
 const MAX_UNDER=128u;
 @group(0) @binding(10) var<storage,read> under_lights:array<vec4f,MAX_UNDER>;
+// The letters' lights (dots.rs, LetterLight): place in the camera's space
+// and the part-3 second each comes on; its power.
+struct LetterLight { at:vec4f, light:vec4f }
+@group(0) @binding(11) var<storage,read> letter_lights:array<LetterLight>;
 
 const DOT_SAMPLES=POINTS*(SAMPLES+1u);
 const SHADE_BASE=DOT_SAMPLES;
@@ -399,8 +419,16 @@ fn flare(age:f32)->f32 {
 // A light at camera point c through the lens focused at depth `focus`, of
 // radius r0 in focus: where it shows (scene), its disc's radius (rows) and
 // its depth.
+// How far the box has settled since it came to rest (dc.letters.x, part-3
+// seconds, -1 never), 0 to 1: the lens stops down and the lights shrink.
+fn settled()->f32 {
+    if dc.letters.x<0.0 {return 0.0;}
+    return smoothstep(0.0,SETTLE,dots_seconds()-dc.letters.x);
+}
+fn aperture()->f32 {return mix(APERTURE,APERTURE_STILL,settled());}
+fn point_radius()->f32 {return mix(POINT_RADIUS,POINT_STILL,settled());}
 fn light_disc(c:vec3f,focus:f32,r0:f32)->vec4f {
-    let coc=min(APERTURE*FOCAL*abs(1.0/max(c.z,1.0)-1.0/max(focus,1.0))*.5,COC_MAX);
+    let coc=min(aperture()*FOCAL*abs(1.0/max(c.z,1.0)-1.0/max(focus,1.0))*.5,COC_MAX);
     return vec4f(scene_of_source(project(c)),max(sqrt(r0*r0+coc*coc),.7*pixel_rows()),c.z);
 }
 fn dot_sample(n:u32,i:u32,k:u32) {
@@ -414,7 +442,7 @@ fn dot_sample(n:u32,i:u32,k:u32) {
     let obj=object_point(s.stage,i,s.morph);
     let c=rotate(rotation(s.angles),obj)+s.translation;
     let fl=flare(age);
-    let r0=POINT_RADIUS*(1.0+FLARE_SWELL*fl);
+    let r0=point_radius()*(1.0+FLARE_SWELL*fl);
     let end=1.0-smoothstep(.7,1.0,age/sample_age(SAMPLES));
     // A light under the water is seen through it, bent at its surface,
     // fading and blurring over the water its light comes through; only one
@@ -433,7 +461,9 @@ fn dot_sample(n:u32,i:u32,k:u32) {
     samples_out[n]=Sample(light_disc(seen.c,focus,sqrt(r0*r0+blur*blur)),b);
     samples_out[MIRROR_BASE+n]=Sample(light_disc(mirrored(w,c),focus,r0),vec4f(power*smoothstep(-.5,.5,h),b.yzw));
     if k==0u {
-        samples_out[LIGHTS_BASE+i]=Sample(vec4f(c,select(0.0,steady*under,alive)),vec4f(0));
+        // The haze takes the letters' lights' light from the box's, which
+        // they lie on (dc.letters.y, 1 before they come).
+        samples_out[LIGHTS_BASE+i]=Sample(vec4f(c,select(0.0,steady*under*dc.letters.y,alive)),vec4f(0));
     }
 }
 fn shade_sample(n:u32,t:u32,k:u32) {
@@ -583,6 +613,40 @@ fn trail(vi:u32,ii:u32,base:u32)->Swept {
     let colour=mix(OLD,YOUNG,exp(-age/AGE_COOL));
     let lens=select(vec4f(0),lens_shape(a.a.xy,b.a.xy,r),a.b.z<SHAPED_AGE);
     return swept_quad(vi,a.a.xy,b.a.xy,r,vec4f(colour*energy/(PI*r*r),0),lens);
+}
+// Letter light ii: still, a disc exposed as a still light is (exposure_to)
+// since it came on, flashing as it does, with the box's lights' breath and
+// flare; seen through the water if under it, or its mirror image.
+fn letter(vi:u32,ii:u32,mirror:bool)->Swept {
+    let l=letter_lights[ii];
+    let age=dots_seconds()-l.at.w;
+    if !dots_shown() || age<0.0 {return no_sweep();}
+    let c=l.at.xyz;
+    let fl=flare(0.0);
+    let r0=point_radius()*(1.0+FLARE_SWELL*fl);
+    let energy=l.light.x*POWER*(BREATH.x+BREATH.y*low_at(0.0))*(1.0+LETTER_FLARE_GAIN*fl)
+        *(1.0+LETTER_FLASH*exp(-age/LETTER_FLASH_DECAY))*exposure_to(age*70.0);
+    let w=water_now();
+    let h=water_height(w,c);
+    let focus=dc.focus.x;
+    if mirror {
+        let m=light_disc(mirrored(w,c),focus,r0);
+        return swept_quad(vi,m.xy,m.xy,m.z,vec4f(YOUNG*energy*smoothstep(-.5,.5,h)/(PI*m.z*m.z),0),vec4f(0));
+    }
+    var seen=Seen(c,0.0,1.0);
+    if h<0.0 {seen=seen_through(w,c);}
+    let under=seen.light*exp(-seen.path/WATER_CLARITY);
+    let blur=FOCAL*UNDER_BLUR*seen.path/max(seen.c.z,1.0);
+    let d=light_disc(seen.c,focus,sqrt(r0*r0+blur*blur));
+    return swept_quad(vi,d.xy,d.xy,d.z,vec4f(YOUNG*energy*under/(PI*d.z*d.z),0),vec4f(0));
+}
+@vertex fn dots_letters(@builtin(vertex_index) vi:u32,@builtin(instance_index) ii:u32)->Swept {
+    dots_begin();
+    return letter(vi,ii,false);
+}
+@vertex fn dots_letters_mirrored(@builtin(vertex_index) vi:u32,@builtin(instance_index) ii:u32)->Swept {
+    dots_begin();
+    return letter(vi,ii,true);
 }
 @vertex fn dots_trail(@builtin(vertex_index) vi:u32,@builtin(instance_index) ii:u32)->Swept {
     dots_begin();
@@ -943,9 +1007,11 @@ fn water_light(uv:vec2f)->vec3f {
         let since=max(dc.end.w,0.0);
         light*=exp(-since/SLAB_HANDOVER);
         let s=source_of_scene(scene_of_uv(v.uv));
-        if in_frame(s) {
-            // The slab at its own colours through the tonemap, and a flash
-            // that fades.
+        // Where the clip ends here, the original's slab at its own colours
+        // through the tonemap, and a flash that fades; where part 4's view
+        // takes over (dc.letters.w), it shows its own slab, half in the
+        // water, and this view only hands over its light.
+        if in_frame(s) && dc.letters.w<.5 {
             let white=srgb_decode(textureSampleLevel(slab,linear,s/vec2f(320,200),0.0).rgb);
             light+=tonemap_inverse(min(white,vec3f(.97)))+white*SLAB_FLASH*exp(-since/SLAB_SETTLE);
         }

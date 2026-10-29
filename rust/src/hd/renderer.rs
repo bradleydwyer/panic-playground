@@ -169,6 +169,9 @@ struct DotsBlock {
     water_plane: vec4f,
     drops: array<vec4f,6>,
     water_lights: vec4f,
+    // Letters' lights: rest second (-1 never), haze gain, count; part 4
+    // follows (1).
+    letters: vec4f,
 }
 // Part 4's controls (hd/plasma.rs, PlasmaBlock), in u.plasma.
 struct PlasmaBlock {
@@ -1832,6 +1835,8 @@ const SOURCE_EXTENT: wgpu::Extent3d = wgpu::Extent3d {
 /// and each order's first row's strength.
 fn dots_block(clip: &Clip, dots: &DotsPreview, time: f64, aspect: f64) -> DotsBlock {
     let mut block = dots.controls(time, aspect);
+    // Part 4's view shows its own slab from its slab frame.
+    block.letters[3] = if clip.plasma.is_some() { 1.0 } else { 0.0 };
     // Part 4's water, as tuned, on part 4's clock (its slab frame is part
     // 3's last).
     let water = clip
@@ -2385,6 +2390,7 @@ mod tests {
             water_plane,
             drops,
             water_lights,
+            letters,
         ];
         assert_eq!(
             expected.last().unwrap().1 + size_of::<[f32; 4]>(),
@@ -2505,6 +2511,7 @@ mod tests {
                     | "dots_trail_mirrored"
                     | "shade_trail_mirrored"
                     | "swept" => &[(1, 2)],
+                    "dots_letters" | "dots_letters_mirrored" => &[],
                     "dots_haze" => &[(1, 2), (1, 3), (1, 4), (1, 5)],
                     "dots_water_field" => &[],
                     "dots_style" => &[(1, 2), (2, 1), (2, 2), (2, 3), (2, 4), (2, 5)],

@@ -7,7 +7,7 @@
 //! tonemap. During the hold and the zoom both draw part 5's own view first,
 //! into an underlay of their own (renderer.rs), at the zoom's
 //! magnification (`FieldBlock::part3_view`).
-use super::dots::{DotsPreview, POINTS, SHADE_DISCS};
+use super::dots::{DotsPreview, LetterLight, POINTS, SHADE_DISCS};
 use super::dots_water::{MAX_RIPPLES, MAX_UNDER};
 use super::renderer::wgsl_parts;
 use wgpu::util::DeviceExt;
@@ -98,6 +98,10 @@ pub(super) struct DotsRenderer {
     shades: RenderPipeline,
     mirror_trails: RenderPipeline,
     mirror_shades: RenderPipeline,
+    /// The letters' lights and their mirror image, and how many there are.
+    letters: RenderPipeline,
+    mirror_letters: RenderPipeline,
+    letter_count: u32,
     haze: RenderPipeline,
     water_field: RenderPipeline,
     style: RenderPipeline,
@@ -274,6 +278,13 @@ impl DotsRenderer {
             })
             .collect();
         let objects = buffer("Part 3 objects", bytemuck::cast_slice(&objects));
+        // The letters' lights, or one unused (a binding can't be empty).
+        let letter_lights = if preview.letters.is_empty() {
+            vec![LetterLight::default()]
+        } else {
+            preview.letters.clone()
+        };
+        let letter_lights = buffer("Part 3 letters' lights", bytemuck::cast_slice(&letter_lights));
         let points: Vec<[u32; 2]> = preview
             .points
             .iter()
@@ -336,6 +347,7 @@ impl DotsRenderer {
                 entry(8, all, BindingType::Sampler(SamplerBindingType::Filtering)),
                 entry(9, all, storage(true)),
                 entry(10, all, storage(true)),
+                entry(11, all, storage(true)),
             ],
         });
         let list = |label, bytes: usize| {
@@ -395,6 +407,10 @@ impl DotsRenderer {
                 BindGroupEntry {
                     binding: 10,
                     resource: under.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 11,
+                    resource: letter_lights.as_entire_binding(),
                 },
             ],
         });
@@ -597,6 +613,22 @@ impl DotsRenderer {
             "swept",
             &[target(hdr, Some(ADD))],
         );
+        let letters = pipeline(
+            "Part 3 letters' lights",
+            &painting,
+            &light_module,
+            "dots_letters",
+            "swept",
+            &[target(hdr, Some(ADD))],
+        );
+        let mirror_letters = pipeline(
+            "Part 3 letters' lights' mirror image",
+            &painting,
+            &light_module,
+            "dots_letters_mirrored",
+            "swept",
+            &[target(hdr, Some(ADD))],
+        );
         let haze = pipeline(
             "Part 3 haze",
             &painting,
@@ -698,6 +730,9 @@ impl DotsRenderer {
             shades,
             mirror_trails,
             mirror_shades,
+            letters,
+            mirror_letters,
+            letter_count: preview.letters.len() as u32,
             haze,
             water_field,
             style,
@@ -833,6 +868,10 @@ impl DotsRenderer {
             pass.draw(0..6, 0..POINTS as u32 * (TRAIL_SAMPLES + AFTER_SAMPLES));
             pass.set_pipeline(&self.shades);
             pass.draw(0..6, 0..2 * SHADE_DISCS as u32 * SHADE_SAMPLES);
+            if self.letter_count > 0 {
+                pass.set_pipeline(&self.letters);
+                pass.draw(0..6, 0..self.letter_count);
+            }
         }
         {
             let mut pass = Self::pass(encoder, "Part 3 mirror image", &[&targets.mirror]);
@@ -842,6 +881,10 @@ impl DotsRenderer {
             pass.draw(0..6, 0..POINTS as u32 * (TRAIL_SAMPLES + AFTER_SAMPLES));
             pass.set_pipeline(&self.mirror_shades);
             pass.draw(0..6, 0..2 * SHADE_DISCS as u32 * SHADE_SAMPLES);
+            if self.letter_count > 0 {
+                pass.set_pipeline(&self.mirror_letters);
+                pass.draw(0..6, 0..self.letter_count);
+            }
         }
         {
             let mut pass = Self::pass(encoder, "Part 3 water field", &[&targets.water]);

@@ -195,6 +195,22 @@ pub struct DotsBlock {
     /// their ripples' strength, their glow's and the plankton's, of the
     /// authored, and how long the plankton glows (seconds).
     pub water_lights: [f32; 4],
+    /// The letters' lights ([`letter_lights`]): the part-3 second the box
+    /// comes to rest (-1 if never), how much more the haze takes from the
+    /// box's lights for theirs, how many there are; and 1 when part 4's
+    /// view takes over at its slab frame (filled in by the renderer).
+    pub letters: [f32; 4],
+}
+
+/// One of the lights that come out on the box, once it lies still, along
+/// the slab's carved letters and over its faces ([`letter_lights`]): its
+/// place in part 3's camera space and the part-3 second it comes on; its
+/// power (of a dot's), and unused.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
+pub struct LetterLight {
+    pub at: [f32; 4],
+    pub light: [f32; 4],
 }
 
 /// The replay's position: a frame, the scene and video memory after it.
@@ -248,6 +264,11 @@ pub struct DotsPreview {
     /// The objects as the modern view shows them: the tables', in floating
     /// point, the box reshaped to land on part 4's slab ([`land_on_slab`]).
     pub objects: Vec<Vec<[f64; 3]>>,
+    /// Part 4's slab, fitted to its logo and carved, which the box lands
+    /// on; part 4's preview takes it from here.
+    pub stone: Stone,
+    /// The lights that come out on the box once it lies still.
+    pub letters: Vec<LetterLight>,
     /// Each dot frame's rotation, translation and morph (see [`DotFrame`]).
     pub dot_frames: Vec<DotFrame>,
     /// The camera-space points each dot frame drew, as the port computed
@@ -391,8 +412,16 @@ impl DotsPreview {
             .unwrap_or(0);
         let mut objects = objects_of(&tables);
         let size = box_size(&objects[tables.order[7]]);
-        let stone = Stone::fit(&plasma.hd_tables().logo, size)?;
+        let logo = plasma.hd_tables();
+        let stone = Stone::new(&logo.logo, &logo.palette, size)?;
         land_on_slab(&mut objects[tables.order[7]], dot_frames.last().unwrap(), &stone);
+        // The tune's rows from the box's rest to the slab, part-3 seconds.
+        let rows: Vec<f64> = (1..positions.len())
+            .filter(|&j| positions[j] != positions[j - 1])
+            .map(|j| j as f64 / FRAME_RATE as f64)
+            .filter(|&t| t >= events.dots_end && t <= events.slab)
+            .collect();
+        let letters = letter_lights(&stone, &events, &rows);
         let water = Water::new(events.slab);
         let ripples = water.ripples(&objects, &tables.order, &dot_frames, events.dots);
         let order_starts = (shades.max(1)..positions.len())
@@ -406,6 +435,8 @@ impl DotsPreview {
             palettes,
             tables,
             objects,
+            stone,
+            letters,
             dot_frames,
             points,
             music: positions.clone(),
@@ -856,8 +887,150 @@ impl DotsPreview {
             water_plane: self.water.controls(seconds),
             drops: [[0.0; 4]; MAX_DROPS],
             water_lights: self.lights.controls(),
+            letters: [
+                if e.dots_end >= 0.0 { e.dots_end as f32 } else { -1.0 },
+                self.letters_haze(seconds) as f32,
+                self.letters.len() as f32,
+                0.0,
+            ],
         }
     }
+
+    /// How much more light the haze takes from the box's lights, standing
+    /// in for the letters' lights on it, at part-3 second `seconds`: one,
+    /// and the letters' lights come on so far, each as it brightens,
+    /// against the box's own (an approximation: they lie on the same box).
+    fn letters_haze(&self, seconds: f64) -> f64 {
+        let on: f64 = self
+            .letters
+            .iter()
+            .map(|l| {
+                let age = seconds - l.at[3] as f64;
+                l.light[0] as f64 * (age / 0.3).clamp(0.0, 1.0)
+            })
+            .sum();
+        1.0 + LETTERS_HAZE * on / POINTS as f64
+    }
+}
+
+/// Once the box lies still (authored, at the owner's request), the lens
+/// stops down and its lights shrink to fine points over SETTLE seconds;
+/// then new lights come out along the outlines of the slab's carved
+/// letters, FUTURE on its top and CREW on its front, until OUTLINE_END
+/// seconds before part 4 draws the slab, and over its faces until
+/// FILL_END before it, a batch on each of the tune's rows; then they all
+/// flare with the box's, and their light is the flash part 4's slab comes
+/// out of. dots_light.wgsl repeats SETTLE.
+pub const SETTLE: f64 = 0.5;
+pub const OUTLINE_END: f64 = 0.96;
+pub const FILL_END: f64 = 0.36;
+/// The letters' lights' spacing along the outlines and over the faces
+/// (units, the box 490 wide), and their power (of a dot's).
+const OUTLINE_SPACING: f64 = 2.5;
+const FILL_SPACING: f64 = 7.0;
+const OUTLINE_POWER: f32 = 1.0;
+const FILL_POWER: f32 = 0.2;
+/// How much of the letters' lights' light the haze takes, as the box's.
+const LETTERS_HAZE: f64 = 0.2;
+
+/// The letters' lights, in part 3's camera space, which the box at rest
+/// shares with the slab ([`land_on_slab`]): along the rims of the carving
+/// on the slab's top and front faces (where carved stone meets uncarved,
+/// in its relief), one every OUTLINE_SPACING or so, and over both faces,
+/// the carving followed, on a grid FILL_SPACING apart, jittered. Each comes
+/// on at one of the tune's `rows` (part-3 seconds) in its window, picked by
+/// a hash of its index, so they come out scattered and fill in.
+pub fn letter_lights(stone: &Stone, events: &DotsEvents, rows: &[f64]) -> Vec<LetterLight> {
+    if events.dots_end < 0.0 || events.slab <= events.dots_end || stone.top.texels.is_empty() {
+        return Vec::new();
+    }
+    let (back, down) = stone.axes();
+    let across = [1.0, 0.0, 0.0];
+    // Part 3's camera-space point that its projection shows where the
+    // slab's camera shows stone camera-space point s, at its depth.
+    let seen = |s: [f64; 3]| {
+        [
+            ((1.2 * stone.focal * s[0] + (stone.axis - 160.0) * s[2]) / 256.0) as f32,
+            (stone.focal * s[1] / 256.0) as f32,
+            s[2] as f32,
+        ]
+    };
+    // Each face: its relief, the direction down it from the near top edge,
+    // and the direction into the stone.
+    let faces = [(&stone.top, back, down), (&stone.front, down, back)];
+    let mut outline = Vec::new();
+    let mut fill = Vec::new();
+    for (face, (relief, along, into)) in faces.into_iter().enumerate() {
+        let (w, h) = (relief.size.0 as usize, relief.size.1 as usize);
+        let texel = stone.size[0] / w as f64;
+        let carve = |x: usize, y: usize| relief.texels[(y * w + x) * 4 + 2].to_f64();
+        let depth = |x: usize, y: usize| relief.texels[(y * w + x) * 4].to_f64();
+        let place = |u: f64, v: f64, d: f64| -> [f32; 3] {
+            seen(std::array::from_fn(|k| {
+                stone.corner[k] + u * across[k] + v * along[k] + d * into[k]
+            }))
+        };
+        // The rims: carved texels beside uncarved ones, thinned to one in
+        // each OUTLINE_SPACING square.
+        let cell = (OUTLINE_SPACING / texel).max(1.0) as usize;
+        let mut taken = std::collections::HashSet::new();
+        for y in 1..h - 1 {
+            for x in 1..w - 1 {
+                let rim = carve(x, y) > 0.0
+                    && [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
+                        .iter()
+                        .any(|&(a, b)| carve(a, b) <= 0.0);
+                if rim && taken.insert((x / cell, y / cell)) {
+                    let (u, v) = ((x as f64 + 0.5) * texel - stone.size[0] / 2.0, (y as f64 + 0.5) * texel);
+                    outline.push(place(u, v, 0.0));
+                }
+            }
+        }
+        // The faces, on the stone (in the carving where it is cut).
+        let step = FILL_SPACING / texel;
+        let (nx, ny) = ((w as f64 / step) as usize, (h as f64 / step) as usize);
+        for gy in 0..ny {
+            for gx in 0..nx {
+                let k = ((face * ny + gy) * nx + gx) as u64;
+                let jitter = |s: u64| (hash(k * 2 + s) % 1000) as f64 / 1000.0;
+                let x = (((gx as f64 + jitter(0)) * step) as usize).min(w - 1);
+                let y = (((gy as f64 + jitter(1)) * step) as usize).min(h - 1);
+                let (u, v) = ((x as f64 + 0.5) * texel - stone.size[0] / 2.0, (y as f64 + 0.5) * texel);
+                fill.push(place(u, v, depth(x, y)));
+            }
+        }
+    }
+    let rest = events.dots_end;
+    let slab = events.slab;
+    let windows = [
+        (rest + SETTLE, slab - OUTLINE_END, outline, OUTLINE_POWER),
+        (slab - OUTLINE_END, slab - FILL_END, fill, FILL_POWER),
+    ];
+    let mut lights = Vec::new();
+    for (from, until, places, power) in windows {
+        let times: Vec<f64> = rows.iter().copied().filter(|&t| t >= from && t < until).collect();
+        for (i, at) in places.into_iter().enumerate() {
+            let rank = (hash(i as u64 + lights.len() as u64 * 7919) % 100_000) as f64 / 100_000.0;
+            let born = if times.is_empty() {
+                from + rank * (until - from)
+            } else {
+                times[((rank * times.len() as f64) as usize).min(times.len() - 1)]
+            };
+            lights.push(LetterLight {
+                at: [at[0], at[1], at[2], born as f32],
+                light: [power, 0.0, 0.0, 0.0],
+            });
+        }
+    }
+    lights
+}
+
+/// A deterministic integer hash (SplitMix64's finaliser).
+fn hash(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
 }
 
 /// The port's level for echo k (the frame 4k before), 6-bit blue, read from
@@ -981,6 +1154,90 @@ mod tests {
         ] {
             assert!(sections.iter().any(|&s| clip.label(s) == label), "{label}");
         }
+    }
+
+    #[test]
+    fn the_letters_lights_outline_the_carving_and_come_on_the_tunes_rows() {
+        use super::super::plasma_stone::{Pools, Relief, Sheet};
+        // An invented slab whose faces are 100 by 40 texels, 4.9 units
+        // each, with a square 20 texels across carved in the top one.
+        let face = |carved: bool| {
+            let (w, h) = (100, 40);
+            let mut texels = Vec::new();
+            for y in 0..h {
+                for x in 0..w {
+                    let cut = carved && (40..60).contains(&x) && (10..30).contains(&y);
+                    let c = if cut { 1.0 } else { 0.0 };
+                    texels.extend([5.0 * c, 1.0, c, 0.0].map(half::f16::from_f64));
+                }
+            }
+            Relief {
+                size: (w as u32, h as u32),
+                texels,
+            }
+        };
+        let stone = Stone {
+            focal: 256.0 / 1.2,
+            axis: 160.0,
+            tilt: 0.5,
+            corner: [0.0, 100.0, 500.0],
+            size: [490.0, 196.0, 196.0],
+            colour: [0.0; 3],
+            sheets: [Sheet::default(); 2],
+            top: face(true),
+            front: face(false),
+            pools: Pools {
+                size: (0, 0),
+                texels: Vec::new(),
+                tilt: 0.0,
+            },
+            residual: 0.0,
+            ground_tilt: 0.0,
+            ground_depth: 0.0,
+        };
+        let events = DotsEvents {
+            dots_end: 47.0,
+            slab: 50.0,
+            ..Default::default()
+        };
+        let rows: Vec<f64> = (0..60).map(|k| 47.0 + 0.05 * k as f64).collect();
+        let lights = letter_lights(&stone, &events, &rows);
+        let outline: Vec<_> = lights.iter().filter(|l| l.light[0] == OUTLINE_POWER).collect();
+        let fill: Vec<_> = lights.iter().filter(|l| l.light[0] == FILL_POWER).collect();
+        // The rim of the square, 76 texels round, at one a texel (2.5 units
+        // is about half a texel's 4.9).
+        assert_eq!(outline.len(), 76);
+        // On the rim: at the face (its depth 0), within the square.
+        let (back, _) = stone.axes();
+        let texel = 4.9;
+        for l in &outline {
+            // Back from part 3's camera space to the slab's (at this focal
+            // and axis, x and z the same, y 1.2 times), then to the face's
+            // texel centres: on a rim texel's of the square.
+            let s = [l.at[0] as f64, l.at[1] as f64 * 1.2, l.at[2] as f64];
+            let q: [f64; 3] = std::array::from_fn(|k| s[k] - stone.corner[k]);
+            let (u, v) = (q[0], q[1] * back[1] + q[2] * back[2]);
+            let (x, y) = ((u + 245.0) / texel, v / texel);
+            let near = |a: f64, b: f64| (a - b).abs() < 0.01;
+            assert!((40.0..60.0).contains(&x) && (10.0..30.0).contains(&y), "{x} {y}");
+            assert!(near(x, 40.5) || near(x, 59.5) || near(y, 10.5) || near(y, 29.5), "{x} {y}");
+        }
+        // The fill on both faces, about one each 7 units.
+        assert!(fill.len() > 2 * 70 * 28 / 2, "{}", fill.len());
+        // Each comes on a row within its window, scattered over them.
+        let on_row = |t: f32| rows.iter().any(|&r| (r - t as f64).abs() < 1e-4);
+        for l in &outline {
+            assert!(on_row(l.at[3]) && l.at[3] as f64 >= 47.0 + SETTLE && (l.at[3] as f64) < 50.0 - OUTLINE_END);
+        }
+        for l in &fill {
+            assert!(on_row(l.at[3]) && l.at[3] as f64 >= 50.0 - OUTLINE_END && (l.at[3] as f64) < 50.0 - FILL_END);
+        }
+        let first = outline.iter().map(|l| l.at[3]).fold(f32::MAX, f32::min);
+        let last = outline.iter().map(|l| l.at[3]).fold(f32::MIN, f32::max);
+        assert!(last - first > 1.0, "{first} {last}");
+        // None without a rest before the slab.
+        let never = DotsEvents { dots_end: -1.0, ..events };
+        assert!(letter_lights(&stone, &never, &rows).is_empty());
     }
 
     #[test]

@@ -540,8 +540,8 @@ impl PlasmaPreview {
             .filter(|&j| positions[j] >> 8 != positions[j - 1] >> 8)
             .map(|j| (start + j) as f64 / FRAME_RATE as f64)
             .collect();
-        let box_size = dots_box(dots);
-        let stone = Stone::new(&tables.logo, &tables.palette, box_size)?;
+        // Part 3 fitted and carved it, to land its box on it.
+        let stone = dots.stone.clone();
         Ok(Self {
             start,
             frames,
@@ -586,18 +586,6 @@ fn glide(frames: &[PlasmaFrame]) -> Vec<[f64; 2]> {
             })
         })
         .collect()
-}
-
-/// The size of part 3's box (its object P3D7), read from its points'
-/// extent: width, depth and height.
-fn dots_box(dots: &DotsPreview) -> [f64; 3] {
-    let points = &dots.tables.objects[6];
-    std::array::from_fn(|k| {
-        let (lo, hi) = points.iter().fold((i32::MAX, i32::MIN), |(lo, hi), p| {
-            (lo.min(p[k]), hi.max(p[k]))
-        });
-        (hi - lo) as f64
-    })
 }
 
 impl PlasmaEvents {
