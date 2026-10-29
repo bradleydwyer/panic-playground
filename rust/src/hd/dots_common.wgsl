@@ -96,7 +96,8 @@ fn dots_seconds()->f32 {return dc.part.y;}
 fn dots_phase()->f32 {return dc.part.z;}
 // The magnification the original shows during the zoom (1 before it).
 fn zoom_original()->f32 {return dc.zoom.x;}
-// The continuous dot frame (-1 before the dots; held at the last after).
+// The continuous dot frame (-1 before the dots; running on past the last,
+// where the points stay, so the exposure catches up).
 fn dot_position()->f32 {return dc.dots.x;}
 fn last_dot_frame()->f32 {return dc.dots.y;}
 fn dots_shown()->bool {return dc.dots.w>.5;}

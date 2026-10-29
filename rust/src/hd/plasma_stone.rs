@@ -268,6 +268,16 @@ impl Stone {
     /// `REST_LINE_COMPARE + 1`) and carve its faces. `size` is part 3's
     /// box: width, depth, height; the depth is refitted.
     pub fn new(logo: &[u8], palette: &[u8], size: [f64; 3]) -> Result<Self, String> {
+        let first_raster = (super::plasma::REST_LINE_COMPARE + 1) as f64;
+        let mut stone = Self::fit(logo, size)?;
+        stone.place_sheets();
+        stone.carve(logo, palette, |r: f64| (first_raster + r + 0.5) / 2.0);
+        Ok(stone)
+    }
+
+    /// The block and its camera alone, fitted as [`Stone::new`] fits them,
+    /// without the sheets or the carving: part 3 lands its box on it.
+    pub fn fit(logo: &[u8], size: [f64; 3]) -> Result<Self, String> {
         use super::plasma::{LOGO_ROWS, LOGO_WIDTH, REST_LINE_COMPARE};
         let first_raster = (REST_LINE_COMPARE + 1) as f64;
         // The source row of the centre of the logo's row r, and its top.
@@ -349,7 +359,7 @@ impl Stone {
                 .collect();
             (squares.iter().sum::<f64>() / squares.len() as f64).sqrt()
         };
-        let mut stone = Self {
+        Ok(Self {
             focal,
             axis,
             tilt,
@@ -368,10 +378,7 @@ impl Stone {
             residual,
             ground_tilt: super::dots_water::LEVEL_TILT,
             ground_depth: super::dots_water::LEVEL_HEIGHT,
-        };
-        stone.place_sheets();
-        stone.carve(logo, palette, row_y);
-        Ok(stone)
+        })
     }
 
     /// The directions across the top face from its near edge to its far

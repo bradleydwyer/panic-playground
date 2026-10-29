@@ -266,7 +266,6 @@ impl DotsRenderer {
             bytemuck::cast_slice(&preview.dot_frames),
         );
         let objects: Vec<[f32; 4]> = preview
-            .tables
             .objects
             .iter()
             .flat_map(|o| {

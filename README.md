@@ -323,12 +323,14 @@ The modern look is light painting, a long exposure in a dark, hazy space:
   along their paths and stir plankton, which glows white blue behind them.
   With Shift, the number keys tune its tilt and depth, the plankton, the
   glow under the water and the ripples.
-- The landed box's trails collapse into its lights, which flare up in the
+- The box is shaped to land exactly on part 4's stone slab, and once it
+  lies still its trails catch up with its lights, which flare up in the
   second before part 4's white slab takes over.
 
-The lights, the brush, the lens, the haze, the water and the music's
-effects are authored; the positions, motion and timing are the port's. Faithful HD
-(**M**) shows the original's discs and dots at display resolution. The
+The lights, the brush, the lens, the haze, the water, the box's shape and
+the music's effects are authored; the positions, motion and timing are the
+port's. Faithful HD (**M**) shows the original's discs and dots at display
+resolution. The
 [renderer notes](rust/README.md#part-3-dots) say what is read, what is
 interpreted and what is authored.
 

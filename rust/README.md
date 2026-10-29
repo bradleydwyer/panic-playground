@@ -1539,9 +1539,12 @@ port's timing, positions and motion.
   lifetime. Shift with the number keys tunes the water's tilt and depth,
   the plankton's lifetime and brightness, the glow under the water and the
   ripples (all authored, chosen by eye).
-- At the end the rotation stops, the box's trails collapse into its lights,
-  which burn brighter, and in the second before part 4 draws they flare and
-  swell. Part 4's slab takes over at its own colours through the tonemap,
+- The box is reshaped from its stage's start so that at rest it lies exactly
+  on part 4's slab as part 4's camera shows it (`land_on_slab`): the
+  original's box and logo differ a little, and part 3's projection is 1.2
+  times narrower. Once it lies still the exposure runs on, so its trails
+  catch up with its lights, which burn brighter, and in the second before
+  part 4 draws they flare and swell. Part 4's slab takes over at its own colours through the tonemap,
   with a flash that fades, so the clip ends on the original's white slab.
 
 Everything is a function of the clip's time, so seeking, captures and video

@@ -20,9 +20,12 @@
 //!   points are kept for faithful HD); the shade path evaluated at
 //!   continuous iterations with a floating-point sine.
 //! - Authored: everything the modern view adds (dots_light.wgsl and the
-//!   values marked authored here).
-use super::dots_water::{LightsInWater, Ripple, Water};
+//!   values marked authored here), the box reshaped to land on part 4's
+//!   slab ([`land_on_slab`]) and the exposure running on once the box lies
+//!   still.
+use super::dots_water::{LightsInWater, Ripple, Water, rotation};
 use super::plasma::MAX_DROPS;
+use super::plasma_stone::Stone;
 #[cfg(doc)]
 use super::plasma::WaterTuning;
 use crate::{
@@ -242,6 +245,9 @@ pub struct DotsPreview {
     pub palettes: Vec<Vec<u8>>,
     /// The scene's tables.
     pub tables: HdDotsTables,
+    /// The objects as the modern view shows them: the tables', in floating
+    /// point, the box reshaped to land on part 4's slab ([`land_on_slab`]).
+    pub objects: Vec<Vec<[f64; 3]>>,
     /// Each dot frame's rotation, translation and morph (see [`DotFrame`]).
     pub dot_frames: Vec<DotFrame>,
     /// The camera-space points each dot frame drew, as the port computed
@@ -383,8 +389,12 @@ impl DotsPreview {
             .iter()
             .position(|f| f.phase >= Phase::Shades)
             .unwrap_or(0);
+        let mut objects = objects_of(&tables);
+        let size = box_size(&objects[tables.order[7]]);
+        let stone = Stone::fit(&plasma.hd_tables().logo, size)?;
+        land_on_slab(&mut objects[tables.order[7]], dot_frames.last().unwrap(), &stone);
         let water = Water::new(events.slab);
-        let ripples = water.ripples(&tables, &dot_frames, events.dots);
+        let ripples = water.ripples(&objects, &tables.order, &dot_frames, events.dots);
         let order_starts = (shades.max(1)..positions.len())
             .filter(|&j| positions[j] >> 8 != positions[j - 1] >> 8)
             .map(|j| (start + j) as f64 / FRAME_RATE as f64)
@@ -395,6 +405,7 @@ impl DotsPreview {
             part4,
             palettes,
             tables,
+            objects,
             dot_frames,
             points,
             music: positions.clone(),
@@ -411,6 +422,76 @@ impl DotsPreview {
                 cursor: Mutex::new(None),
             },
         })
+    }
+}
+
+/// The tables' objects in floating point.
+pub fn objects_of(tables: &HdDotsTables) -> Vec<Vec<[f64; 3]>> {
+    let float = |p: &[i32; 3]| p.map(f64::from);
+    tables.objects.iter().map(|o| o.iter().map(float).collect()).collect()
+}
+
+/// An object's extent along each axis: the box's width, depth and height.
+fn box_size(points: &[[f64; 3]]) -> [f64; 3] {
+    std::array::from_fn(|k| {
+        let (lo, hi) = points
+            .iter()
+            .fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p[k]), hi.max(p[k])));
+        hi - lo
+    })
+}
+
+/// Reshape the box, the last stage's object, so that at rest (the last dot
+/// frame) it lies exactly on part 4's slab as part 4's camera shows it
+/// (authored, at the owner's request; the original's box and logo slab
+/// differ a little, and part 3's projection is 1.2 times narrower on the
+/// display than the slab's fitted camera). Each point keeps its place on
+/// the box: across it, from the top face's near edge to its far edge, and
+/// down. That place on the slab, in the slab's camera space, is carried to
+/// the point part 3's projection shows in the same place at the same
+/// depth, and back through the rest pose into object space, so the box is
+/// that shape from its stage's start and flies as before.
+pub fn land_on_slab(points: &mut [[f64; 3]], rest: &DotFrame, stone: &Stone) {
+    let r = rotation(std::array::from_fn(|k| rest.angles[k] as f64));
+    let t: [f64; 3] = std::array::from_fn(|k| rest.translation[k] as f64);
+    // Object axis k in camera space at rest: column k of r.
+    let along = |k: usize| [r[0][k], r[1][k], r[2][k]];
+    let mut axes = [0, 1, 2];
+    // Across: the axis nearest the camera's x; then the top face's depth,
+    // the nearer to the line of sight; the third is the height.
+    axes.sort_by(|&a, &b| along(b)[0].abs().total_cmp(&along(a)[0].abs()));
+    if along(axes[2])[2].abs() > along(axes[1])[2].abs() {
+        axes.swap(1, 2);
+    }
+    let [across, deep, down] = axes;
+    let (lo, hi): ([f64; 3], [f64; 3]) = (
+        std::array::from_fn(|k| points.iter().map(|p| p[k]).fold(f64::MAX, f64::min)),
+        std::array::from_fn(|k| points.iter().map(|p| p[k]).fold(f64::MIN, f64::max)),
+    );
+    // A coordinate's share of the way from the end whose camera
+    // coordinate `c` is lower (nearer, or higher on the screen).
+    let share = |p: &[f64; 3], k: usize, c: usize| {
+        let x = (p[k] - lo[k]) / (hi[k] - lo[k]);
+        if along(k)[c] >= 0.0 { x } else { 1.0 - x }
+    };
+    let (top, front) = stone.axes();
+    for p in points.iter_mut() {
+        let x = (share(p, across, 0) - 0.5) * stone.size[0];
+        let d = share(p, deep, 2) * stone.size[1];
+        let h = share(p, down, 1) * stone.size[2];
+        let s: [f64; 3] = std::array::from_fn(|k| {
+            stone.corner[k] + [x, 0.0, 0.0][k] + top[k] * d + front[k] * h
+        });
+        // Where part 3's projection (column 160 + 256 x / z, row 100 +
+        // 256 y / z) shows what the slab's shows at s.
+        let c = [
+            (1.2 * stone.focal * s[0] + (stone.axis - 160.0) * s[2]) / 256.0,
+            stone.focal * s[1] / 256.0,
+            s[2],
+        ];
+        // Back through the rest pose: r is a rotation.
+        let o: [f64; 3] = std::array::from_fn(|k| c[k] - t[k]);
+        *p = std::array::from_fn(|k| (0..3).map(|i| r[i][k] * o[i]).sum());
     }
 }
 
@@ -609,8 +690,11 @@ impl DotsPreview {
         (j, if j == last { 0.0 } else { position - j as f64 })
     }
 
-    /// The continuous dot frame at a clip time: -1 before the dots; held at
-    /// the last once they end.
+    /// The continuous dot frame at a clip time: -1 before the dots. From
+    /// the last, where the box lies still, it runs on at the same rate
+    /// (authored): the exposure goes on, so the trails catch up with the
+    /// lights, while the points stay where the last frame put them (the
+    /// shaders and [`Self::centre_at`] hold them there).
     pub fn dot_position(&self, time: f64) -> f64 {
         let (j, f) = self.moment(time);
         let frame = &self.frames[j];
@@ -621,7 +705,11 @@ impl DotsPreview {
         let next = self.frames.get(j + 1);
         let moves = frame.phase == Phase::Dots
             && next.is_some_and(|g| g.phase == Phase::Dots && g.state.frame > frame.state.frame);
-        n + if moves { f } else { 0.0 }
+        if moves {
+            return n + f;
+        }
+        let seconds = time - self.start as f64 / FRAME_RATE as f64;
+        n + (seconds - self.events.dots_end).max(0.0) * FRAME_RATE as f64
     }
 
     /// The object's centre in camera space at a continuous dot frame.
@@ -892,6 +980,73 @@ mod tests {
             "Box",
         ] {
             assert!(sections.iter().any(|&s| clip.label(s) == label), "{label}");
+        }
+    }
+
+    #[test]
+    fn the_box_lands_on_the_slab() {
+        use super::super::plasma_stone::{Relief, Sheet};
+        // An invented slab and camera, near the fit to the logo.
+        let relief = || Relief {
+            size: (0, 0),
+            texels: Vec::new(),
+        };
+        let stone = Stone {
+            focal: 262.8,
+            axis: 161.0,
+            tilt: 0.546,
+            corner: [0.0, 147.8, 503.6],
+            size: [490.0, 194.0, 100.0],
+            colour: [0.0; 3],
+            sheets: [Sheet::default(); 2],
+            top: relief(),
+            front: relief(),
+            residual: 0.0,
+            ground_tilt: 0.0,
+            ground_depth: 0.0,
+        };
+        // The port's box, its corners and a point midway along an edge, at
+        // the rest pose part 3 ends on: its x across, +y the near edge and
+        // +z down.
+        let mut points = Vec::new();
+        for k in 0..8 {
+            let sign = |bit: usize| if k & bit == 0 { -1.0 } else { 1.0 };
+            points.push([245.0 * sign(1), 100.0 * sign(2), 50.0 * sign(4)]);
+        }
+        points.push([0.0, 100.0, -50.0]);
+        let rest = DotFrame {
+            angles: [8392.0, 11264.0, 13312.0, 7.0],
+            translation: [0.0, 129.8, 549.8, 0.0],
+        };
+        let before = points.clone();
+        land_on_slab(&mut points, &rest, &stone);
+        let r = rotation([8392.0, 11264.0, 13312.0]);
+        let shown = |p: &[f64; 3]| {
+            let c: [f64; 3] = std::array::from_fn(|i| {
+                (0..3).map(|j| r[i][j] * p[j]).sum::<f64>() + rest.translation[i] as f64
+            });
+            (160.0 + 256.0 * c[0] / c[2], 100.0 + 256.0 * c[1] / c[2], c[2])
+        };
+        let (top, front) = stone.axes();
+        for (o, p) in before.iter().zip(&points) {
+            let x = o[0];
+            let d = (100.0 - o[1]) / 200.0 * stone.size[1];
+            let h = (o[2] + 50.0) / 100.0 * stone.size[2];
+            let s: [f64; 3] = std::array::from_fn(|k| {
+                stone.corner[k] + [x, 0.0, 0.0][k] + top[k] * d + front[k] * h
+            });
+            let want = stone.project(s);
+            let got = shown(p);
+            assert!(
+                (got.0 - want.0).abs() < 1e-6 && (got.1 - want.1).abs() < 1e-6,
+                "{o:?} shows at ({:.3}, {:.3}), the slab's at ({:.3}, {:.3})",
+                got.0,
+                got.1,
+                want.0,
+                want.1
+            );
+            // At the slab's own depth.
+            assert!((got.2 - s[2]).abs() < 1e-6);
         }
     }
 

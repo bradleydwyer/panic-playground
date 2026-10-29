@@ -16,7 +16,6 @@
 use super::dots::{DotFrame, DotsEvents, DotsPreview};
 use super::plasma::{DROP_LIFE, MAX_DROPS, WaterTuning, drop_hash};
 use crate::engine::FRAME_RATE;
-use crate::scenes::dots::HdDotsTables;
 use std::collections::HashMap;
 
 /// Where the water lies by default (authored, chosen by eye with the
@@ -233,7 +232,7 @@ pub enum LevelKnob {
 
 /// The rotation's rows at angles `a` (1024ths of a turn), as
 /// dots_common.wgsl's `rotation` has them: camera = R object + translation.
-fn rotation(a: [f64; 3]) -> [[f64; 3]; 3] {
+pub(super) fn rotation(a: [f64; 3]) -> [[f64; 3]; 3] {
     let r = a.map(|v| v * std::f64::consts::TAU / 1024.0);
     let (s, c) = (r.map(f64::sin), r.map(f64::cos));
     [
@@ -252,12 +251,14 @@ fn rotation(a: [f64; 3]) -> [[f64; 3]; 3] {
 }
 
 /// Each point of the object at dot frame `f`, in camera space: the shaders'
-/// object_point, rotation and translation, in f64.
-pub fn camera_points(tables: &HdDotsTables, f: &DotFrame) -> Vec<[f64; 3]> {
+/// object_point, rotation and translation, in f64, of the objects as the
+/// modern view shows them ([`super::dots::DotsPreview::objects`]) in the
+/// stages' `order`.
+pub fn camera_points(objects: &[Vec<[f64; 3]>], order: &[usize; 8], f: &DotFrame) -> Vec<[f64; 3]> {
     let r = rotation(std::array::from_fn(|k| f.angles[k] as f64));
     let stage = (f.angles[3] as usize).min(7);
-    let a = &tables.objects[tables.order[stage]];
-    let b = &tables.objects[tables.order[(stage + 1).min(7)]];
+    let a = &objects[order[stage]];
+    let b = &objects[order[(stage + 1).min(7)]];
     let morph = if stage == 7 {
         0.0
     } else {
@@ -266,7 +267,7 @@ pub fn camera_points(tables: &HdDotsTables, f: &DotFrame) -> Vec<[f64; 3]> {
     a.iter()
         .zip(b)
         .map(|(p, q)| {
-            let o: [f64; 3] = std::array::from_fn(|j| p[j] as f64 + (q[j] - p[j]) as f64 * morph);
+            let o: [f64; 3] = std::array::from_fn(|j| p[j] + (q[j] - p[j]) * morph);
             std::array::from_fn(|i| {
                 (0..3).map(|j| r[i][j] * o[j]).sum::<f64>() + f.translation[i] as f64
             })
@@ -332,7 +333,8 @@ impl Water {
     /// part-3 second `first`.
     pub fn ripples(
         &self,
-        tables: &HdDotsTables,
+        objects: &[Vec<[f64; 3]>],
+        order: &[usize; 8],
         dot_frames: &[DotFrame],
         first: f64,
     ) -> Vec<Ripple> {
@@ -379,9 +381,9 @@ impl Water {
         };
         let frame = |k: usize| {
             let level = self.at(first + k as f64 / rate);
-            (level, camera_points(tables, &dot_frames[k]))
+            (level, camera_points(objects, order, &dot_frames[k]))
         };
-        let mut open: Vec<Option<Stretch>> = vec![None; tables.objects[0].len()];
+        let mut open: Vec<Option<Stretch>> = vec![None; objects[0].len()];
         let mut before = frame(0);
         for k in 1..dot_frames.len() {
             let after = frame(k);
@@ -498,7 +500,7 @@ impl DotsPreview {
         }
         self.ripples = self
             .water
-            .ripples(&self.tables, &self.dot_frames, self.events.dots);
+            .ripples(&self.objects, &self.tables.order, &self.dot_frames, self.events.dots);
         format!("Part 3 water: {}", self.level_title())
     }
 
@@ -600,7 +602,7 @@ impl DotsPreview {
         // each light weighed by how far it is in the water (wholly at the
         // surface or below, none from CONTACT above), so the glow moves on
         // smoothly as lights go in and out.
-        let points = camera_points(&self.tables, &frame);
+        let points = camera_points(&self.objects, &self.tables.order, &frame);
         let groups = points.chunks(UNDER_GROUP).filter_map(|group| {
             let (mut sum, mut weight) = ([0.0; 3], 0.0);
             for &c in group {
@@ -619,8 +621,10 @@ impl DotsPreview {
 
 #[cfg(test)]
 mod tests {
+    use super::super::dots::objects_of;
     use super::*;
     use crate::hd::clip::{Clip, ScrollerLighting};
+    use crate::scenes::dots::HdDotsTables;
 
     /// Invented tables: every stage's object one point at its centre, so a
     /// dot frame's light is where its translation puts it.
@@ -709,7 +713,8 @@ mod tests {
                 _ => frame(290.0, 1800.0),
             })
             .collect();
-        let ripples = water.ripples(&one_light(), &frames, 0.0);
+        let light = one_light();
+        let ripples = water.ripples(&objects_of(&light), &light.order, &frames, 0.0);
         assert!(ripples.len() >= 2, "{ripples:?}");
         let entered = (water.height - CONTACT - 200.0) / 10.0;
         assert!((ripples[0].at - entered).abs() < 1e-6, "{:?}", ripples[0]);
@@ -732,7 +737,7 @@ mod tests {
             .iter()
             .map(|f| frame(f.translation[1] + 30.0, f.translation[2]))
             .collect();
-        let faint = water.ripples(&one_light(), &deeper, 0.0);
+        let faint = water.ripples(&objects_of(&light), &light.order, &deeper, 0.0);
         let under = ripples.last().unwrap();
         assert!(under.at >= 10.0);
         assert!(
