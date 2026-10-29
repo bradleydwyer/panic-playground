@@ -641,9 +641,9 @@ white: its two greys and XOR, a flat print filling the screen under the
 neon, lit by it. As the tune first says "panic" (read from P.P: order 0A,
 row 0, at 58.16 s, first plays instrument 44, a voice sample, about 0.34 s
 long), the waves rise out of the print, lamps and reflections with them
-(authored; `PANIC_FADE`). When the rings fade out the lamps go
-out, but the waves stay, seen only by the neon they reflect.
-(`POOL_DARK_WAVES` at 0 lets them settle into a still black mirror instead.)
+(authored; `PANIC_FADE`). When it says it again (61.87 s), a colour picker's
+field tints the lamps and room, scrolling (authored). When the rings fade
+out the lamps go out, but the waves stay, seen only by the neon they reflect.
 It is exposed over a whole 60 Hz frame, its samples spread across each pixel
 as well, so the fringes don't flicker and the reflections stay sharp. It
 takes about 2 ms a frame at 2560 × 1440.

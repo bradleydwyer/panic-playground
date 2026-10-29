@@ -198,8 +198,11 @@ as the original's black and white, filling the screen under the neon, and
 as the tune first says "panic", at 58.16 seconds, they rise into two sets of
 waves interfering on a pool of liquid chrome, under a cool and a warm lamp.
 The waves mirror the neon far out across the pool, and when the rings fade
-out the lamps go, leaving the waves lit by the neon alone. In the app, **M**
-shows faithful HD, the original's look at display resolution. The
+out the lamps go, leaving the waves lit by the neon alone. When it says
+"panic" again, at 61.87, the lamps and the room take a field of colours
+across the screen, as a colour picker lays them out, scrolling round with
+the music. In the app, **M** shows faithful HD, the original's look at
+display resolution. The
 [renderer notes](rust/README.md#part-6-rings) say what is read from the port,
 what is interpreted and what is authored, and how to add a style.
 

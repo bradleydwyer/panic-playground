@@ -28,6 +28,12 @@
 //   shades), the softbox and room, the neon's height and everything else
 //   that is seen.
 //
+// When the tune says "panic" again (rings::PANIC_AGAIN_WINDOW, 61.87 s),
+// the lamps and the room take a field of colours across the screen, as a
+// colour picker lays them out (authored): the hues across, paler toward
+// the top and deeper toward the bottom, scrolling round as RGB lights
+// cycle, so the chrome's light runs through the spectrum across the pool.
+//
 // The timing follows the original exactly: black before the first symbol,
 // then the neon on black, with no pool, until the rings fade in. They come
 // up as the original's black and white, a flat print of its two greys and
@@ -96,6 +102,35 @@ const POOL_SHADOW=1.0;
 // The lamps' colours and power: the scroller's cool and warm extremes.
 const POOL_COOL=vec3f(.12,.52,1.0)*2.5;
 const POOL_WARM=vec3f(1.0,.27,.055)*2.2;
+// From the tune's second "panic", the colour field scrolls round once every
+// POOL_CYCLE seconds: 32 of its rows (speed 3 at tempo 130, read from P.P,
+// so 0.0577 s a row). The lamps take it at POOL_RGB's brightness, twice
+// theirs, and the room's walls POOL_RGB_ROOM times as bright as before.
+const POOL_CYCLE=1.846;
+const POOL_RGB=4.8;
+const POOL_RGB_ROOM=2.5;
+// The pure colour at hue h (turns): red, green and blue a third apart.
+fn hue_rgb(h:f32)->vec3f {
+    return clamp(abs(fract(h+vec3f(0,2.0/3.0,1.0/3.0))*6.0-3.0)-1.0,vec3f(0),vec3f(1));
+}
+// How far the colour field has come in: 0 until the tune says "panic"
+// again (u.rings_style[0].x, seconds since it, -1 before), 1 by the word's
+// end.
+fn pool_rgb()->f32 {return smoothstep(0.0,.34,u.rings_style[0].x);}
+// The colour field at the pixel being drawn (pool_surface sets it): the
+// hue across the screen, scrolling, white toward the top and dimmer
+// toward the bottom.
+var<private> pool_field:vec3f=vec3f(1);
+fn colour_field(uv:vec2f)->vec3f {
+    let c=hue_rgb(uv.x+max(u.rings_style[0].x,0.0)/POOL_CYCLE);
+    return mix(vec3f(1),c,smoothstep(0.0,.45,uv.y))*mix(1.0,.45,smoothstep(.55,1.0,uv.y));
+}
+// A lamp's colour: cool or warm, then, over the word, the colour field's.
+fn pool_lamp_colour(layer:u32)->vec3f {
+    let lamp=select(POOL_COOL,POOL_WARM,layer==1u);
+    if u.rings_style[0].x<0.0 {return lamp;}
+    return mix(lamp,pool_field*POOL_RGB,pool_rgb());
+}
 // A neutral studio softbox above left, seen by the waves' flanks, and a dim
 // room round the pool: black overhead, so the level surface stays black, a
 // faint glow on the walls, cool on the left and warm on the right.
@@ -202,8 +237,18 @@ fn pool_lamp_light(n:vec3f,v:vec3f,p:vec3f,lamp:vec3f,alpha:f32)->vec3f {
 fn pool_room(r:vec3f,alpha:f32)->vec3f {
     let box=smoothstep(.96-alpha*.6,.97,dot(r,normalize(POOL_SOFTBOX_AT)));
     let side=r.x/max(length(r.xy),1e-4);
-    let wall=mix(vec3f(.55,.75,1.0),vec3f(1.0,.75,.55),.5+.5*side)*(1.0-smoothstep(.55,.95,r.z));
-    return POOL_SOFTBOX*box+wall*POOL_ROOM;
+    var cool=vec3f(.55,.75,1.0);
+    var warm=vec3f(1.0,.75,.55);
+    var room=POOL_ROOM;
+    if u.rings_style[0].x>=0.0 {
+        // In the colour field, the walls take its colour.
+        let rgb=pool_rgb();
+        cool=mix(cool,pool_field,rgb);
+        warm=mix(warm,pool_field,rgb);
+        room*=mix(1.0,POOL_RGB_ROOM,rgb);
+    }
+    let wall=mix(cool,warm,.5+.5*side)*(1.0-smoothstep(.55,.95,r.z));
+    return POOL_SOFTBOX*box+wall*room;
 }
 // Lamp power (and the room's): on with the rings. With musical lighting
 // (L), it breathes with the music and swells on the bass (authored, from
@@ -240,6 +285,7 @@ fn pool_neon(p:vec3f,r:vec3f,pixel:f32,spread:f32)->vec3f {
 // ---- The pool ----------------------------------------------------------------
 // The pool's radiance at source point s, seen along the pixel's ray.
 fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
+    if u.rings_style[0].x>=0.0 {pool_field=colour_field(px.uv);}
     let ray=camera_ray(px.xy);
     let v=-ray;
     let flat_p=vec3f(scene_of_source(s),0.0);
@@ -262,8 +308,8 @@ fn pool_surface(px:RingsPixel,s:vec2f)->vec3f {
     let turn=sqrt(dot(wx,wx)/(e*e*COLUMN*COLUMN)+dot(wy,wy)/(e*e))*px.pixel;
     let alpha=sqrt(POOL_ROUGH*POOL_ROUGH+turn*turn);
     let power=pool_power();
-    let cool=POOL_COOL*pool_lit(s,here,pool_lamp(0u,.5*POOL_EXPOSURE))*power;
-    let warm=POOL_WARM*pool_lit(s,here,pool_lamp(1u,.5*POOL_EXPOSURE))*power;
+    let cool=pool_lamp_colour(0u)*pool_lit(s,here,pool_lamp(0u,.5*POOL_EXPOSURE))*power;
+    let warm=pool_lamp_colour(1u)*pool_lit(s,here,pool_lamp(1u,.5*POOL_EXPOSURE))*power;
     // The broad sheen, once, at the middle of the exposure.
     let mid_n=normalize(vec3f(-mid.yz,1));
     let sheen_alpha=max(alpha,POOL_SHEEN.y);

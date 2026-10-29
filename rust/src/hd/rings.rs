@@ -76,6 +76,11 @@ pub const PANIC_WINDOW: usize = NEW_SET_FIRST_WINDOW + 2 * PATTERN_WINDOWS;
 /// The word's length in seconds, over which the change runs: instrument
 /// 44's 5,137 samples, played at E-4 from its 12,000 Hz, take about 0.34 s.
 pub const PANIC_FADE: f64 = 0.34;
+/// The window in which the tune says "panic" again: order 0B plays pattern
+/// 51 again (read from P.P), so instrument 44 comes back on its row 0, as
+/// window 160 begins (61.87 s). From then on the pool's lamps cycle through
+/// the colours (authored; rings_pool.wgsl).
+pub const PANIC_AGAIN_WINDOW: usize = PANIC_WINDOW + PATTERN_WINDOWS;
 #[path = "rings_authored.rs"]
 mod authored;
 pub use authored::{
@@ -2004,7 +2009,7 @@ impl RingsPreview {
             ],
             rings_style: [[0.0; 4]; 4],
         };
-        controls.rings_style = (self.style.info().controls)(&controls, time);
+        controls.rings_style = (self.style.info().controls)(self, &controls, time);
         controls
     }
 }
@@ -2067,12 +2072,8 @@ pub struct StyleInfo {
     /// Run `style_prepass` first, at half the resolution each way, into the
     /// `prepass` texture that `style_color` can read.
     pub prepass: bool,
-    /// Values for `u.rings_style` at a clip time (all zero by default).
-    pub controls: fn(&RingsControls, f64) -> [[f32; 4]; 4],
-}
-
-fn no_controls(_: &RingsControls, _: f64) -> [[f32; 4]; 4] {
-    [[0.0; 4]; 4]
+    /// Values for `u.rings_style` at a clip time.
+    pub controls: fn(&RingsPreview, &RingsControls, f64) -> [[f32; 4]; 4],
 }
 
 // ---- Pool ------------------------------------------------------------------
@@ -2084,9 +2085,19 @@ pub static POOL: StyleInfo = StyleInfo {
     controls: pool_controls,
 };
 
-/// The pool style's `u.rings_style` values.
-fn pool_controls(controls: &RingsControls, time: f64) -> [[f32; 4]; 4] {
-    no_controls(controls, time)
+/// The pool style's `u.rings_style` values: the seconds since the tune
+/// said "panic" again (x of the first; -1 before, and throughout without
+/// that window).
+fn pool_controls(preview: &RingsPreview, _: &RingsControls, time: f64) -> [[f32; 4]; 4] {
+    let mut c = [[0.0; 4]; 4];
+    c[0][0] = -1.0;
+    if let Some(window) = preview.windows.get(PANIC_AGAIN_WINDOW) {
+        let said = (preview.start + window.start) as f64 / FRAME_RATE as f64;
+        if time >= said {
+            c[0][0] = (time - said) as f32;
+        }
+    }
+    c
 }
 
 // ---------------------------------------------------------------------------
@@ -2353,8 +2364,12 @@ mod tests {
                     .source
                     .contains("fn style_prepass(px:RingsPixel)->vec4f")
             );
+            // Without the tune's windows, no word to start anything.
             let controls = RingsControls::default();
-            assert_eq!((style.info().controls)(&controls, 60.0), [[0.0; 4]; 4]);
+            let preview = invented_preview(Vec::new());
+            let mut none = [[0.0; 4]; 4];
+            none[0][0] = -1.0;
+            assert_eq!((style.info().controls)(&preview, &controls, 60.0), none);
         }
     }
 
@@ -2429,8 +2444,9 @@ mod tests {
     #[test]
     fn the_pool_rises_as_the_tune_says_panic() {
         // Invented windows, 8 frames each from part-6 frame 100: the word
-        // comes as PANIC_WINDOW begins, at frame 100 + 8 * 128.
-        let windows: Vec<SymbolWindow> = (0..PANIC_WINDOW + 4)
+        // comes as PANIC_WINDOW begins, at frame 100 + 8 * 128, and again
+        // as PANIC_AGAIN_WINDOW does.
+        let windows: Vec<SymbolWindow> = (0..PANIC_AGAIN_WINDOW + 4)
             .map(|i| SymbolWindow {
                 mask: (i % 16) as u8,
                 start: 100 + 8 * i,
@@ -2447,6 +2463,11 @@ mod tests {
         assert!(at(said + 0.25 * PANIC_FADE) < half);
         assert_eq!(at(said + PANIC_FADE), 1.0);
         assert_eq!(at(said + 1.0), 1.0);
+        // The pool's lamps start cycling when it comes again.
+        let again = (100 + 8 * PANIC_AGAIN_WINDOW) as f64 / FRAME_RATE as f64;
+        let since = |t: f64| preview.controls(t).rings_style[0][0];
+        assert_eq!(since(again - 0.01), -1.0);
+        assert!((since(again + 0.5) - 0.5).abs() < 1e-5);
         // Without the word's window, the pool throughout.
         let short: Vec<SymbolWindow> = (0..4)
             .map(|i| SymbolWindow {
